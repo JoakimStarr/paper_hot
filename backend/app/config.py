@@ -1,12 +1,16 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+from pathlib import Path
 
+# 获取 backend 目录的绝对路径
+BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
     app_name: str = "PaperPulse"
     app_version: str = "1.0.0"
     
-    database_url: str = "sqlite+aiosqlite:///./paperpulse.db"
+    # 使用绝对路径
+    database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
     
     openai_api_key: Optional[str] = None
     

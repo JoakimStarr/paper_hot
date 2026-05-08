@@ -1,0 +1,16 @@
+- [x] cnki_paper.py 文件创建成功，无语法错误
+- [x] `_get_html()` 方法实现正确，支持 retry、timeout、headers
+- [x] `_get_journals()` 能正确获取期刊列表
+- [x] 期刊列表正确保存到 journals_list.json
+- [x] `_get_journal_issues()` 能正确获取期次列表
+- [x] 只获取 2025、2026 年的期次
+- [x] `_get_issue_papers()` 能正确获取论文列表
+- [x] `_get_paper_detail()` 能正确获取论文详情
+- [x] `_parse_title()` 正确解析标题
+- [x] `_parse_authors()` 正确解析作者
+- [x] `_parse_abstract()` 正确解析摘要
+- [x] `_parse_keywords()` 正确解析关键词
+- [x] `_parse_meta()` 正确解析 DOI、专辑、专题、分类号、在线公开时间
+- [x] `_save_paper()` 正确保存到数据库
+- [x] `run()` 方法完整实现，流程正确
+- [x] 日志输出清晰，包含当前期刊、年份、期次、论文信息

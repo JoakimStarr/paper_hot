@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional, Tuple
 from sqlalchemy import select, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,8 @@ import numpy as np
 
 from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
 from app.schemas import PaperCreate, CrawlLogCreate, CrawlLogUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class PaperCRUD:
@@ -25,6 +28,12 @@ class PaperCRUD:
             select(Paper).where(Paper.url == url)
         )
         return result.scalar_one_or_none()
+    
+    @staticmethod
+    async def get_all_paper_urls(db: AsyncSession) -> List[str]:
+        """获取所有论文URL列表"""
+        result = await db.execute(select(Paper.url))
+        return [row[0] for row in result.fetchall() if row[0]]
     
     @staticmethod
     async def get_paper_by_id(db: AsyncSession, paper_id: str) -> Optional[Paper]:
@@ -79,7 +88,7 @@ class PaperCRUD:
         total_result = await db.execute(count_query)
         total = total_result.scalar()
         
-        query = query.order_by(desc(Paper.created_at))
+        query = query.order_by(desc(Paper.published_at))
         query = query.offset((page - 1) * page_size).limit(page_size)
         
         result = await db.execute(query)
@@ -306,8 +315,8 @@ class PaperCRUD:
             # 创建默认的features
             features = PaperFeatures(
                 paper_id=db_paper.id,
-                summary_cn=paper_data.get('abstract', '')[:500],
-                keywords_cn=paper_data.get('keywords', []),
+                summary=paper_data.get('abstract', '')[:500],
+                keywords=paper_data.get('keywords', []),
                 topic=None  # CNKI论文不自动分类主题
             )
             db.add(features)
@@ -315,10 +324,9 @@ class PaperCRUD:
             # 创建默认的scores
             scores = PaperScore(
                 paper_id=db_paper.id,
-                novelty_score=0.5,
-                impact_score=0.5,
                 recency_score=0.5,
                 venue_score=0.7,
+                trend_score=0.5,
                 final_score=0.55
             )
             db.add(scores)

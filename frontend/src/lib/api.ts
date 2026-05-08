@@ -10,6 +10,21 @@ const apiClient = axios.create({
   },
 });
 
+// 添加请求拦截器，禁用缓存
+apiClient.interceptors.request.use((config) => {
+  // 添加时间戳参数，防止浏览器缓存
+  if (config.params) {
+    config.params._t = Date.now();
+  } else {
+    config.params = { _t: Date.now() };
+  }
+  // 添加禁用缓存的请求头
+  config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+  config.headers['Pragma'] = 'no-cache';
+  config.headers['Expires'] = '0';
+  return config;
+});
+
 export interface FilterStatistics {
   discipline_counts: Record<string, number>;
   subfield_counts: Record<string, number>;
