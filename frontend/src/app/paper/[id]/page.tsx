@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -26,6 +26,7 @@ export default function PaperDetailPage() {
   const params = useParams();
   const [paper, setPaper] = useState<PaperDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (params.id) {
@@ -35,11 +36,14 @@ export default function PaperDetailPage() {
 
   const fetchPaper = async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await papersApi.getPaperById(params.id as string);
       setPaper(response);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching paper:', error);
+      const errMsg = error.response?.data?.detail || error.message || '加载论文详情失败';
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -50,6 +54,21 @@ export default function PaperDetailPage() {
       <Layout>
         <div className="flex justify-center items-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error) {
+    return (
+      <Layout>
+        <div className="text-center py-12">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <p className="text-red-600 font-medium mb-2">加载失败</p>
+          <p className="text-gray-500 text-sm mb-4">{error}</p>
+          <Link href="/" className="text-primary-600 hover:underline mt-4 inline-block">
+            {t('nav.home')}
+          </Link>
         </div>
       </Layout>
     );

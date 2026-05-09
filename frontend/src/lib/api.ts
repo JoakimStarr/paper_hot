@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PaperListResponse, TrendingTopicsResponse, PaperDetailResponse } from '@/types/paper';
+import { PaperListResponse, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -60,6 +60,33 @@ export const papersApi = {
     const response = await apiClient.get<TrendingTopicsResponse>('/trending-topics', {
       params: { weeks_back },
     });
+    return response.data;
+  },
+
+  getAIAnalysis: async (): Promise<AIAnalysisResponse> => {
+    const response = await apiClient.get<AIAnalysisResponse>('/ai-analysis');
+    return response.data;
+  },
+
+  getAIAnalysisV2: async (): Promise<AIAnalysisResponseV2> => {
+    const response = await apiClient.get<AIAnalysisResponseV2>('/ai-analysis/v2');
+    return response.data;
+  },
+
+  startAIAnalysis: async (): Promise<AIAnalysisResponseV2> => {
+    const response = await apiClient.post<AIAnalysisResponseV2>('/ai-analysis/v2/analyze');
+    return response.data;
+  },
+
+  getAIAnalysisReports: async (limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
+    const response = await apiClient.get<{ reports: AIAnalysisReport[]; total: number }>('/ai-analysis/reports', {
+      params: { limit },
+    });
+    return response.data;
+  },
+
+  getAIAnalysisReportById: async (reportId: number): Promise<AIAnalysisReport> => {
+    const response = await apiClient.get<AIAnalysisReport>(`/ai-analysis/reports/${reportId}`);
     return response.data;
   },
 

@@ -149,10 +149,10 @@ class PaperScheduler:
         
         try:
             async with AsyncSessionLocal() as db:
-                keyword_frequencies = await PaperCRUD.get_keyword_frequencies(db, days_back=7)
-                previous_frequencies = await PaperCRUD.get_keyword_frequencies(db, days_back=14)
+                topic_count = await PaperCRUD.update_keyword_trends(db, months_back=6)
+                paper_count = await PaperCRUD.bulk_update_paper_trend_scores(db)
                 
-                logger.info("Trend scores updated")
+                logger.info(f"Trend scores updated: {topic_count} topics, {paper_count} papers")
                 
         except Exception as e:
             logger.error(f"Error in update_trend_scores: {e}")
@@ -384,8 +384,21 @@ class PaperScheduler:
                                 # 保存到数据库
                                 result = await PaperCRUD.create_paper_from_cnki(db, paper_data)
                                 if result:
+                                    # AI 处理：生成摘要、关键词、嵌入向量和主题
+                                    summary, keywords, embedding, topic = await self.ai_processor.process_paper(
+                                        detail.get('abstract', ''),
+                                        detail.get('title', '')
+                                    )
+                                    await PaperCRUD.create_paper_features(
+                                        db,
+                                        result.id,
+                                        summary,
+                                        keywords or [],
+                                        embedding,
+                                        topic
+                                    )
                                     papers_fetched += 1
-                                    logger.info(f"Saved paper: {detail['title'][:50]}...")
+                                    logger.info(f"Saved paper: {detail['title'][:50]}... → Topic: {topic}")
                                 
                                 fetcher._random_delay(2, 4)
                                 

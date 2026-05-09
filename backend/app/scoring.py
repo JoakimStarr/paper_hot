@@ -30,8 +30,30 @@ class ScoringSystem:
         self,
         keywords: list,
         keyword_frequencies: dict,
-        previous_frequencies: dict
+        previous_frequencies: dict,
+        topic_growth_rate: Optional[float] = None
     ) -> float:
+        """
+        计算趋势分数
+        
+        优先使用主题增长率（从 TopicTrend 表获取），
+        如果没有则回退到关键词频率计算
+        
+        使用 Sigmoid 函数平滑映射：
+        score = 0.5 + 0.5 * tanh(growth_rate)
+        
+        示例：
+        - growth_rate = 0（无增长）→ score = 0.5
+        - growth_rate = 1（100%增长）→ score = 0.88
+        - growth_rate = -0.5（下降50%）→ score = 0.27
+        """
+        # 优先使用主题增长率（更准确）
+        if topic_growth_rate is not None:
+            # 使用 tanh 函数平滑映射到 0-1 范围
+            score = 0.5 + 0.5 * math.tanh(topic_growth_rate)
+            return min(max(score, 0.0), 1.0)
+        
+        # 回退到关键词频率计算（旧逻辑）
         if not keywords:
             return 0.5
         
@@ -49,9 +71,10 @@ class ScoringSystem:
         
         avg_growth = sum(growth_rates) / len(growth_rates)
         
-        score = min(max(0.5 + avg_growth * 0.5, 0.0), 1.0)
+        # 使用新的 Sigmoid 映射
+        score = 0.5 + 0.5 * math.tanh(avg_growth)
         
-        return score
+        return min(max(score, 0.0), 1.0)
     
     def compute_final_score(
         self,

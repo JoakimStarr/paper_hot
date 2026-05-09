@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
     
     openai_api_key: Optional[str] = None
+    zhipu_api_key: Optional[str] = None
+    siliconflow_api_key: Optional[str] = None
     
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
     

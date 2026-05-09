@@ -738,7 +738,7 @@ class IncrementalCrawler:
         issues_to_crawl = []
         for issue in issues:
             year = issue['year']
-            issue_num = str(issue['issue_num'])  # 使用issue_num字段
+            issue_num = f"{issue['issue_num']:02d}"
             history = HistoryManager.load_papers_history()
             if (journal_name in history.get('papers', {}) and
                 year in history['papers'][journal_name] and
@@ -913,9 +913,6 @@ class IncrementalCrawler:
 
         print(f"\n    年份 {year} 共获取 {len(year_papers)} 篇论文，{len(crawled_issues)}/{target_issue_count} 个期次")
         return year_papers
-
-        print(f"\n期刊 {journal_name} 共获取 {len(all_papers)} 篇论文")
-        return all_papers
 
     async def crawl_paper_detail(self, paper_info: dict, journal_name: str = None) -> dict:
         """
@@ -1121,71 +1118,135 @@ class IncrementalCrawler:
 
             # 遍历每个期刊
             for journal_name, journal_info in journals.items():
-                # 步骤5-7: 获取论文链接
-                papers = await self.crawl_papers_for_journal(journal_name, journal_info)
-
-                if not papers:
-                    print(f"期刊 {journal_name} 未获取到论文，跳过")
-                    continue
-
-                print(f"\n{'=' * 60}")
-                print(f"步骤8: 获取论文详情 - {journal_name}")
-                print(f"{'=' * 60}")
-
-                # 按照 papers_history.json 的结构顺序获取论文详情
-                # 期刊 -> 年份 -> 期次 -> 论文列表
-                papers_history = HistoryManager.load_papers_history()
-                journal_data = papers_history.get('papers', {}).get(journal_name, {})
-
-                total_processed = 0
-                total_papers = 0
-
-                # 获取数据库中已存在的URL列表
-                existing_urls = set()
+                crawl_log_id = None
                 try:
-                    import sys
-                    sys.path.insert(0, str(BACKEND_DIR))
-                    
-                    from app.crud import PaperCRUD
+                    from app.schemas import CrawlLogCreate
+                    from app.crud import CrawlLogCRUD
                     from app.database import AsyncSessionLocal
-
                     async with AsyncSessionLocal() as db:
-                        existing_urls = set(await PaperCRUD.get_all_paper_urls(db))
-                        print(f"  数据库中已有 {len(existing_urls)} 篇论文")
+                        crawl_log_data = CrawlLogCreate(
+                            journal_name=journal_name,
+                            crawl_start_time=datetime.now()
+                        )
+                        crawl_log = await CrawlLogCRUD.create_crawl_log(db, crawl_log_data)
+                        crawl_log_id = crawl_log.id
+                        await db.commit()
                 except Exception as e:
-                    print(f"  获取数据库已有论文失败: {e}")
+                    print(f"  创建爬取日志失败: {e}")
 
-                # 按年份排序（降序，最新的年份在前）
-                for year in sorted(journal_data.keys(), reverse=True):
-                    year_data = journal_data[year]
-                    # 按期次排序（降序，最新的期次在前）
-                    for issue in sorted(year_data.keys(), reverse=True):
-                        issue_data = year_data[issue]
-                        papers_list = issue_data.get('papers', [])
-                        total_papers += len(papers_list)
+                crawl_error = None
+                try:
+                    # 步骤5-7: 获取论文链接
+                    papers = await self.crawl_papers_for_journal(journal_name, journal_info)
 
-                        # 过滤掉数据库中已存在的论文
-                        papers_to_process = [p for p in papers_list if p['url'] not in existing_urls]
+                    if not papers:
+                        print(f"期刊 {journal_name} 未获取到论文，跳过")
+                        continue
 
-                        if not papers_to_process:
-                            print(f"  {year}年{issue}期: 所有论文已在数据库中，跳过")
-                            continue
+                    print(f"\n{'=' * 60}")
+                    print(f"步骤8: 获取论文详情 - {journal_name}")
+                    print(f"{'=' * 60}")
 
-                        print(f"\n  {year}年{issue}期: 需要处理 {len(papers_to_process)}/{len(papers_list)} 篇论文")
+                    # 按照 papers_history.json 的结构顺序获取论文详情
+                    # 期刊 -> 年份 -> 期次 -> 论文列表
+                    papers_history = HistoryManager.load_papers_history()
+                    journal_data = papers_history.get('papers', {}).get(journal_name, {})
 
-                        # 按照 papers_history.json 中的顺序（从上到下）获取论文详情
-                        for i, paper in enumerate(papers_to_process, 1):
-                            print(f"\n  [{i}/{len(papers_to_process)}] {paper['title'][:50]}...")
-                            detail = await self.crawl_paper_detail(paper, journal_name)
+                    total_processed = 0
+                    total_papers = 0
 
-                            if 'error' not in detail:
-                                # 异步保存到数据库，传递期刊名称
-                                await self.save_to_database(detail, journal_name)
-                                total_processed += 1
+                    # 获取数据库中已存在的URL列表
+                    existing_urls = set()
+                    try:
+                        import sys
+                        sys.path.insert(0, str(BACKEND_DIR))
+                        
+                        from app.crud import PaperCRUD
+                        from app.database import AsyncSessionLocal
 
-                            await asyncio.sleep(random.uniform(3, 6))
+                        async with AsyncSessionLocal() as db:
+                            existing_urls = set(await PaperCRUD.get_all_paper_urls(db))
+                            print(f"  数据库中已有 {len(existing_urls)} 篇论文")
+                    except Exception as e:
+                        print(f"  获取数据库已有论文失败: {e}")
 
-                print(f"\n期刊 {journal_name} 处理完成: {total_processed}/{total_papers} 篇论文")
+                    # 按年份排序（降序，最新的年份在前）
+                    for year in sorted(journal_data.keys(), reverse=True):
+                        year_data = journal_data[year]
+                        # 按期次排序（降序，最新的期次在前）
+                        for issue in sorted(year_data.keys(), reverse=True):
+                            issue_data = year_data[issue]
+                            papers_list = issue_data.get('papers', [])
+                            total_papers += len(papers_list)
+
+                            # 过滤掉数据库中已存在的论文
+                            papers_to_process = [p for p in papers_list if p['url'] not in existing_urls]
+
+                            if not papers_to_process:
+                                print(f"  {year}年{issue}期: 所有论文已在数据库中，跳过")
+                                continue
+
+                            print(f"\n  {year}年{issue}期: 需要处理 {len(papers_to_process)}/{len(papers_list)} 篇论文")
+
+                            # 按照 papers_history.json 中的顺序（从上到下）获取论文详情
+                            for i, paper in enumerate(papers_to_process, 1):
+                                print(f"\n  [{i}/{len(papers_to_process)}] {paper['title'][:50]}...")
+                                detail = await self.crawl_paper_detail(paper, journal_name)
+
+                                if 'error' not in detail:
+                                    # 异步保存到数据库，传递期刊名称
+                                    await self.save_to_database(detail, journal_name)
+                                    total_processed += 1
+
+                                await asyncio.sleep(random.uniform(3, 6))
+
+                    print(f"\n期刊 {journal_name} 处理完成: {total_processed}/{total_papers} 篇论文")
+
+                    # 更新爬取日志为成功
+                    if crawl_log_id:
+                        try:
+                            import sys
+                            sys.path.insert(0, str(BACKEND_DIR))
+                            from app.crud import CrawlLogCRUD
+                            from app.database import AsyncSessionLocal
+                            async with AsyncSessionLocal() as db:
+                                await CrawlLogCRUD.update_crawl_log(
+                                    db, crawl_log_id,
+                                    crawl_end_time=datetime.now(),
+                                    papers_fetched=total_processed,
+                                    papers_failed=total_papers - total_processed,
+                                    status="completed"
+                                )
+                                await db.commit()
+                        except Exception as e:
+                            print(f"  更新爬取日志失败: {e}")
+
+                except Exception as e:
+                    crawl_error = e
+                    print(f"  处理期刊 {journal_name} 时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                    # 更新爬取日志为失败
+                    if crawl_log_id:
+                        try:
+                            import sys
+                            sys.path.insert(0, str(BACKEND_DIR))
+                            from app.crud import CrawlLogCRUD
+                            from app.database import AsyncSessionLocal
+                            async with AsyncSessionLocal() as db:
+                                await CrawlLogCRUD.update_crawl_log(
+                                    db, crawl_log_id,
+                                    crawl_end_time=datetime.now(),
+                                    status="failed",
+                                    error_message=str(e)
+                                )
+                                await db.commit()
+                        except Exception:
+                            pass
+
+                if crawl_error:
+                    continue
 
             print("\n" + "=" * 60)
             print("所有期刊处理完成")

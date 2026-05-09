@@ -34,6 +34,7 @@ PAPERS_HISTORY_FILE = DATA_DIR / 'papers_history.json'
 
 class HistoryManager:
     """历史记录管理器"""
+    _lock = threading.Lock()
 
     @staticmethod
     def load_journals_history() -> dict:
@@ -121,19 +122,20 @@ class HistoryManager:
     @staticmethod
     def add_papers_for_journal_issue(journal_name: str, year: str, issue: str, papers: list):
         """添加期刊某期次的论文链接"""
-        history = HistoryManager.load_papers_history()
-        if 'papers' not in history:
-            history['papers'] = {}
-        if journal_name not in history['papers']:
-            history['papers'][journal_name] = {}
-        if year not in history['papers'][journal_name]:
-            history['papers'][journal_name][year] = {}
+        with HistoryManager._lock:
+            history = HistoryManager.load_papers_history()
+            if 'papers' not in history:
+                history['papers'] = {}
+            if journal_name not in history['papers']:
+                history['papers'][journal_name] = {}
+            if year not in history['papers'][journal_name]:
+                history['papers'][journal_name][year] = {}
 
-        history['papers'][journal_name][year][issue] = {
-            'last_crawled': datetime.now().isoformat(),
-            'papers': papers
-        }
-        HistoryManager.save_papers_history(history['papers'])
+            history['papers'][journal_name][year][issue] = {
+                'last_crawled': datetime.now().isoformat(),
+                'papers': papers
+            }
+            HistoryManager.save_papers_history(history['papers'])
 
 
 class JournalCrawler:
@@ -493,7 +495,7 @@ class JournalCrawler:
         issues_to_crawl = []
         for issue in issues:
             year = issue['year']
-            issue_num = str(issue['issue_num'])
+            issue_num = f"{issue['issue_num']:02d}"
             history = HistoryManager.load_papers_history()
             if (journal_name in history.get('papers', {}) and
                 year in history['papers'][journal_name] and
@@ -717,6 +719,7 @@ class JournalCrawler:
 
     async def process_journal(self, journal_name: str, journal_info: dict):
         """处理单个期刊（线程入口）"""
+        crawl_log_id = None
         try:
             await self.init_browser()
 
@@ -725,6 +728,24 @@ class JournalCrawler:
             if not papers:
                 print(f"[线程{self.thread_id}] 期刊 {journal_name} 未获取到论文")
                 return
+
+            # 创建爬取日志
+            try:
+                import sys
+                sys.path.insert(0, str(BACKEND_DIR))
+                from app.schemas import CrawlLogCreate
+                from app.crud import CrawlLogCRUD
+                from app.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    crawl_log_data = CrawlLogCreate(
+                        journal_name=journal_name,
+                        crawl_start_time=datetime.now()
+                    )
+                    crawl_log = await CrawlLogCRUD.create_crawl_log(db, crawl_log_data)
+                    crawl_log_id = crawl_log.id
+                    await db.commit()
+            except Exception as e:
+                print(f"  [线程{self.thread_id}] 创建爬取日志失败: {e}")
 
             print(f"\n[线程{self.thread_id}] {'=' * 60}")
             print(f"[线程{self.thread_id}] 步骤8: 获取论文详情 - {journal_name}")
@@ -776,10 +797,47 @@ class JournalCrawler:
 
             print(f"\n[线程{self.thread_id}] 期刊 {journal_name} 处理完成: {total_processed}/{total_papers} 篇论文")
 
+            # 更新爬取日志为成功
+            if crawl_log_id:
+                try:
+                    import sys
+                    sys.path.insert(0, str(BACKEND_DIR))
+                    from app.crud import CrawlLogCRUD
+                    from app.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as db:
+                        await CrawlLogCRUD.update_crawl_log(
+                            db, crawl_log_id,
+                            crawl_end_time=datetime.now(),
+                            papers_fetched=total_processed,
+                            papers_failed=total_papers - total_processed,
+                            status="completed"
+                        )
+                        await db.commit()
+                except Exception as e:
+                    print(f"  [线程{self.thread_id}] 更新爬取日志失败: {e}")
+
         except Exception as e:
             print(f"[线程{self.thread_id}] 处理期刊 {journal_name} 时出错: {e}")
             import traceback
             traceback.print_exc()
+
+            # 更新爬取日志为失败
+            if crawl_log_id:
+                try:
+                    import sys
+                    sys.path.insert(0, str(BACKEND_DIR))
+                    from app.crud import CrawlLogCRUD
+                    from app.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as db:
+                        await CrawlLogCRUD.update_crawl_log(
+                            db, crawl_log_id,
+                            crawl_end_time=datetime.now(),
+                            status="failed",
+                            error_message=str(e)
+                        )
+                        await db.commit()
+                except Exception:
+                    pass
 
         finally:
             await self.close_browser()
@@ -898,7 +956,7 @@ class MultiThreadedCrawler:
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = []
             for i, (journal_name, journal_info) in enumerate(journal_list):
-                thread_id = i % self.max_workers + 1
+                thread_id = i + 1
                 future = executor.submit(
                     self.run_thread,
                     journal_name,

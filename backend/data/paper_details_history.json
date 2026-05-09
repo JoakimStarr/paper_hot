@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-08T22:23:25.212656",
+  "last_updated": "2026-05-09T08:54:10.059585",
   "details": {
     "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nwRZAUsAB-lOi37KKvmVfjCUPBE72tCNzJ8-6MJZENF5lGTqIj5sBBDjHKrtgsmP3rm9I8Veo00NfXpI08eRSXH1al8IAArOuuCv0zi9-6mAFHonDTdCFBswO0g4947ofC0d4CTS4GNsOWNwIVKgHD_WYcUKck2z0fge3fbzWamTQ==&uniplatform=NZKPT&language=CHS": {
       "status": 1,
@@ -1690,6 +1690,286 @@
         "subject": "企业经济",
         "classification": "F279.2",
         "online_date": "2025-09-28 11:43"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nw5nk7alJ_LX8RnOee5t6Lf_Y4R9AUvBKvENCoWL2OCe8bnqst7POEzDYgSNy2K1JLrMhyB1rSWR2O2oykqH0T880m5itiMjKBydvS0F8WPf02zEZ5_5oTxeMIvl9DlQ79UvoEt64tB7BZL41qQSZkqdgxrqRcBamJytQyzKDoWLQ==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-08T22:35:22.339716",
+      "data": {
+        "title": "人工智能时代中国经济学自主知识体系建构的目标与路径刍议",
+        "authors": [
+          "戚聿东",
+          "朱正浩",
+          "赵志栋"
+        ],
+        "abstract": "人工智能技术的发展和扩散具有引发新技术经济范式的巨大潜能，同时也推动了经济学研究范式变革。人工智能时代与中国式现代化进程交汇，对中国经济学发展提出了中国特色鲜明和时代引领性强的建构要求。然而，当前中国经济学发展在学科建设、理论建构和叙事模式等方面与时代需求存在明显脱节。本文聚焦人工智能时代中国经济学建设“何以自主”这一关键问题，基于“以中国理解中国、以中国理解世界、以世界理解中国、以世界理解世界”的“四重理解”建构逻辑，从学科体系、学术体系、话语体系协同视角展开了整体性研究。面对人工智能时代的挑战和机遇，中国经济学自主知识体系的建构目标是以马克思主义为指导，以“两个结合”为根本遵循，以习近平经济思想为旗帜和灵魂，以人民为中心，扎根中国实践，汲取中华优秀传统文化的思想智慧，建构中国特色鲜明、时代引领性强的理论体系。中国经济学建构需要遵循“以我为主、博采众长、与时俱进、融合提炼、自成一家”的总体思路，建构路径包括明晰学科设置主线和重构学科体系，推动理论和方法创新，提炼标识性概念，建构多层次理论叙事模式等。",
+        "keywords": [
+          "人工智能时代",
+          "中国经济学",
+          "“两个结合”",
+          "自主知识体系"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nw5nk7alJ_LX8RnOee5t6Lf_Y4R9AUvBKvENCoWL2OCe8bnqst7POEzDYgSNy2K1JLrMhyB1rSWR2O2oykqH0T880m5itiMjKBydvS0F8WPf02zEZ5_5oTxeMIvl9DlQ79UvoEt64tB7BZL41qQSZkqdgxrqRcBamJytQyzKDoWLQ==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.001",
+        "album": "经济与管理科学",
+        "subject": "经济理论及经济思想史;经济体制改革",
+        "classification": "F092.7;F124",
+        "online_date": "2025-09-02 10:44"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxZ3yhFUUa01kKYhnjNFaUQHcEQN7tRyjaeBQ9zT_NYps8YezndOf4LJA5q-knXgdz69OzXD7YAEMDgIbn5iTiMJHDEFX7Hy6oIKNqgIQrRrWRJC9IdgH01ovof5Gxbjw_2N__PySZmBLbSHppNleRoFlYXrj2THgA8S-G_sK24-w==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:49:31.288361",
+      "data": {
+        "title": "气候政策分化、资本市场响应与跨境资本流动",
+        "authors": [
+          "尹智超",
+          "房芳",
+          "肖祖沔"
+        ],
+        "abstract": "发展中国家与发达国家间的气候政策分化正通过资本市场传导机制重塑国际资本流动格局，进而引发环境目标与经济发展间的深层矛盾。资本跨境流动不仅是经济因素的单纯反应，也是各国气候政策分化外溢效应的体现。为验证这一问题，本文构建了包含环境因素的动态随机一般均衡模型，结合2010—2024年48个经济体的跨境资本流动数据，系统揭示了碳减排目标分化、低碳补贴分化与碳税分化对资本配置的作用机理。研究发现：气候政策分化使发达国家通过风险溢价重构形成资本虹吸效应，而发展中国家面临合规成本转嫁与融资约束收紧的双重挤压，导致全球减排责任与资本收益错配；低碳补贴分化引发短期资本套利流动，碳税分化驱动长期资本向规制严格区域集中，碳减排目标分化通过政策信号改变市场预期，三者叠加引致气候风险向金融体系传导。本文揭示了气候政策分化背景下资本市场的响应机制以及跨境资本流动特征，强调了加强全球气候问题协同治理和优化资本市场管理的重要性，为推动气候政策协调、完善气候风险对冲工具、强化发展中国家气候融资能力提供了重要启示。",
+        "keywords": [
+          "气候政策分化",
+          "资本市场",
+          "跨境资本流动",
+          "动态随机一般均衡模型"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxZ3yhFUUa01kKYhnjNFaUQHcEQN7tRyjaeBQ9zT_NYps8YezndOf4LJA5q-knXgdz69OzXD7YAEMDgIbn5iTiMJHDEFX7Hy6oIKNqgIQrRrWRJC9IdgH01ovof5Gxbjw_2N__PySZmBLbSHppNleRoFlYXrj2THgA8S-G_sK24-w==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.006",
+        "album": "经济与管理科学;基础科学;工程科技Ⅰ辑",
+        "subject": "气象学;环境科学与资源利用;金融;市场研究与信息",
+        "classification": "F831.6;P467;X22",
+        "online_date": "2025-09-02 10:44"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyFjUoA3kQZ1ntMrlXnrAdX3xBlrmQQNxeiuRX5bn8GcsU_ipw_fqkhChV5m1c1zF_0O6byM48gpiMwoy6bPM071AdqUgjOOSeoyuAmegYvNaqvDWduIdniPp-DyOrgAFvJeBC6wxiHT_D4pe8zuPJhapg-Fdivwz5PC704uWK57g==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:49:59.261716",
+      "data": {
+        "title": "文化包容性与数字普惠金融发展",
+        "authors": [
+          "刘毓芸",
+          "曾燕",
+          "汪寿阳",
+          "严翠欣"
+        ],
+        "abstract": "包容性是中华文明五个突出特性之一，其兼收并蓄的精神内核有助于从需求端促进数字普惠金融发展。本文主要考察文化包容性在数字普惠金融发展中的作用，认为其一方面推动了金融交易摆脱熟人关系构建的短半径投融资网络，转向交易半径更长的数字普惠金融工具；另一方面，促使信息和数据传输突破社交强关系网，为数字普惠金融发展提供数据基础。本文利用微观调查问卷度量的中国297个地级行政单位的文化包容性程度，结合2017—2023年北京大学数字普惠金融指数，实证检验发现：文化包容性越高的地区数字普惠金融发展越好；文化越包容时，人们越不依赖熟人、宗族等短半径投融资渠道，而越倾向选择交易半径长的数字普惠金融工具；在文化越包容的地区，数字普惠金融平台被用户授权了更多数据，企业、平台、机构之间数据授权与安全传输所依赖的区块链技术获得了更多投资，企业也更加重视数据共享与数据资产。本文为理解数字普惠金融发展中存在的普惠性不足问题提供了需求侧解释，为理解中华文化在数字经济时代的作用提供了新的理论机制，也为发挥政府的“有为”作用推动数字普惠金融发展与中华文化传承发展提供了政策依据。",
+        "keywords": [
+          "文化包容性",
+          "数字普惠金融",
+          "交易半径",
+          "数据要素供给"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyFjUoA3kQZ1ntMrlXnrAdX3xBlrmQQNxeiuRX5bn8GcsU_ipw_fqkhChV5m1c1zF_0O6byM48gpiMwoy6bPM071AdqUgjOOSeoyuAmegYvNaqvDWduIdniPp-DyOrgAFvJeBC6wxiHT_D4pe8zuPJhapg-Fdivwz5PC704uWK57g==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.002",
+        "album": "经济与管理科学;哲学与人文科学",
+        "subject": "文化;信息经济与邮政经济;金融",
+        "classification": "G122;F49;F832",
+        "online_date": "2025-09-02 10:40"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyh1sCGTV6J7RkXqVXX1SP3JmXl9eC5_93qOZI31tLPfQoiv3xRKhvD1vcUxG3e_bzELCrgana6gSfNS2dTO1k2lUsC1iUp99eY4uVaAh3g75ifYhd30lyDQTwHKUA4jE92pTgsvY2IgQD5beluAkg9GueZPlw8ohyhkrJs7CIw5Q==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:50:26.460977",
+      "data": {
+        "title": "数智化、价值链贸易与全球生产网络",
+        "authors": [
+          "谢杰",
+          "卢东子",
+          "刘艳平",
+          "陈菲菲"
+        ],
+        "abstract": "大数据算法、生成式人工智能和移动机器人等技术正加速替代非常规任务，推动服务业加速数智化。随着制造与服务边界日益模糊，人机协作普遍兴起，数智化正迈向通用人工智能，并深刻重塑全球生产网络（GPN）。本文构建了一个多国多部门结构估计模型，设置数智化产品价格下降的反事实冲击，模拟其对价值链贸易与网络演化的潜在影响；在简约估计模型部分，运用Bartik工具变量识别了数智化投入变化对价值链贸易的影响，并检验了GPN结构的调节效应。研究发现，数智化普遍促进价值链贸易，其作用在网络密度、互惠性与中心性较高的国家更为显著；在就业与工资层面，呈现出明显的阈值效应，劳动力过剩国家的响应门槛更高。同时，数智化加快推动GPN向着更高的稠密性、韧性与集中度演化，强化了核心经济体的连接性与地位。实证检验证实，GPN结构对数智化的边际影响存在正向调节效应。本文的研究有助于系统理解数智化对价值链流动、就业结构和GPN的重塑机制，为相关政策制定提供理论支持。",
+        "keywords": [
+          "数智化",
+          "价值链贸易",
+          "全球生产网络",
+          "结构估计模型",
+          "反事实模拟"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyh1sCGTV6J7RkXqVXX1SP3JmXl9eC5_93qOZI31tLPfQoiv3xRKhvD1vcUxG3e_bzELCrgana6gSfNS2dTO1k2lUsC1iUp99eY4uVaAh3g75ifYhd30lyDQTwHKUA4jE92pTgsvY2IgQD5beluAkg9GueZPlw8ohyhkrJs7CIw5Q==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.003",
+        "album": "经济与管理科学",
+        "subject": "经济体制改革",
+        "classification": "F113",
+        "online_date": "2025-09-02 12:11"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxSv2cbucbFkDY-AGJOrjuUHrsYd8ZBK8XvrA7OiXM7bk8DvAMkJnc4BG7L-g8aIq7IgCue5scsE9kFQmIT6AkUjcxzYy1Z8BM4GAokVbQD4LHcxdZrjJKQ39qWxAOyel7smypsyZXdQIY6TfxHmQ0MUkgRR5Sh5UIuzsjLa_2AdQ==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:50:55.374592",
+      "data": {
+        "title": "全球供应链重构与中国企业成本加成",
+        "authors": [
+          "张鹏杨",
+          "孙德月",
+          "张瀚元",
+          "邢李志"
+        ],
+        "abstract": "美国“近岸友岸化外包”政策是全球供应链重构的最重要体现之一，本文以该政策为抓手，研究全球供应链重构对中国企业成本加成的影响并挖掘作用渠道。本文首先在简化的三国贸易模型中引入“近岸友岸化外包”政策，从理论上探讨其对企业成本加成的影响；随后，在量化美国“近岸友岸化外包”政策实施强度的基础上，对理论推断进行实证检验。结果表明，全球供应链重构对中国企业的成本加成产生了负向影响，但随着企业对政策的不断适应，该负向影响逐渐弱化；非外向型企业、高技术行业、国际竞争力较强和数字化程度较高行业内的企业表现出较强的风险应对能力。机制检验显示，“近岸友岸化外包”政策一方面影响了企业产出规模，进而通过“规模—成本”和“规模—价格”渠道影响企业成本加成；另一方面影响了企业获得的技术溢出，进而通过“技术溢出—成本”和“技术溢出—价格”渠道影响企业成本加成。进一步分析表明，“近岸友岸化外包”政策在国内生产网络上的后向溢出效应显著，对上游企业产生了负向影响，而前向溢出效应并不显著。本文研究为中国在全球供应链重构背景下，有效应对外部风险、稳定市场主体、完善高水平对外开放体制机制提供了政策依据。",
+        "keywords": [
+          "全球供应链重构",
+          "企业成本加成",
+          "近岸友岸化外包",
+          "技术溢出",
+          "生产网络溢出"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxSv2cbucbFkDY-AGJOrjuUHrsYd8ZBK8XvrA7OiXM7bk8DvAMkJnc4BG7L-g8aIq7IgCue5scsE9kFQmIT6AkUjcxzYy1Z8BM4GAokVbQD4LHcxdZrjJKQ39qWxAOyel7smypsyZXdQIY6TfxHmQ0MUkgRR5Sh5UIuzsjLa_2AdQ==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.004",
+        "album": "经济与管理科学",
+        "subject": "企业经济",
+        "classification": "F279.2;F274",
+        "online_date": "2025-09-02 09:51"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyZDPMI-wsetRvLM4CSL1JYeGn7i_slIOZiFhYxIJSX_dCXGgXRoq-o5Sf0SVs72GN9wILxS3t00idLo_Z1c-dixKnn3nNOKZSHyhNKXEW_2udfE0ci2jfdpxgEBK4U6Q5OAtGV2gEVP83-qGTrOjSfUga1LnR9VgqVHgaGWPkw8g==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:51:25.595142",
+      "data": {
+        "title": "中间品企业跨越中等技术陷阱：基于应用基础研究传导的视角",
+        "authors": [
+          "白雪洁",
+          "程钰娇"
+        ],
+        "abstract": "中间品企业跨越中等技术陷阱是中国从中等收入迈向高收入经济体的关键所在，而与产业需求相匹配、能够支撑产业可持续技术升级的企业应用基础研究能力是摆脱中等技术陷阱的必备条件之一。在中间品与供应链的适配性要求下，企业应用基础研究的供应链传导是化解中间品企业创新难题的重要方式。本文基于中国A股上市企业采购和销售数据，考察了上下游企业应用基础研究对中间品企业创新效率的影响及作用机理。研究发现：首先，下游企业应用基础研究显著提高中间品企业的创新效率，而上游企业的影响效果不显著，即企业应用基础研究具有后向传导效应。其次，上下游企业应用基础研究主要通过技术协同效应和竞争效应影响中间品企业创新效率。就后者而言，上游企业“熊彼特效应”占优，而下游企业“逃离竞争效应”占优，两种不同的主导竞争效应导致企业应用基础研究前后向传导效果存在差异。同时，中间品企业采购对象的去中心化和区域分布多元化有助于打破上游—中间品企业创新传导阻碍。再次，当下游企业为产业链龙头企业，或者中间品企业未受到政府创新支持、面临的营商环境较好、与下游企业地理距离较近时，企业应用基础研究的传导效应更明显，且数字化转型能够打破地理距离对创新传导...",
+        "keywords": [
+          "中等技术陷阱",
+          "应用基础研究",
+          "创新效率",
+          "供应链布局"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyZDPMI-wsetRvLM4CSL1JYeGn7i_slIOZiFhYxIJSX_dCXGgXRoq-o5Sf0SVs72GN9wILxS3t00idLo_Z1c-dixKnn3nNOKZSHyhNKXEW_2udfE0ci2jfdpxgEBK4U6Q5OAtGV2gEVP83-qGTrOjSfUga1LnR9VgqVHgaGWPkw8g==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.005",
+        "album": "经济与管理科学",
+        "subject": "企业经济;金融;证券;投资",
+        "classification": "F273.1;F832.51",
+        "online_date": "2025-09-02 09:59"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxoKLh95PB7aCqHtd9nFhntFGjwyzZUzfmcUB5x6iz-GyhNwdc1VfMiO761yuxBTRtlSdIXP6La2-8kftaPMxP-5RPqET8lxJZ3prCh-wPErDWuH5DOHkhBoZuJZM2sMoAe0OSEGdRr8H1kpbVUR39fNZmtFjb9qaYod5uz0Pe1sw==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:51:56.874843",
+      "data": {
+        "title": "双循环中的结构性“托举效应”与制造业价值链高端攀升——基于创新能力提升视角",
+        "authors": [
+          "刘天琦",
+          "傅卿"
+        ],
+        "abstract": "国内国际双循环被视为突破中国制造业价值链“低端锁定”困境实现高端攀升的可行途径，但其实现路径与内在机制仍有待充分验证。本文使用2003—2020年OECD世界投入产出表匹配国内多个相关数据库数据，从创新能力提升视角展开研究。实证结果显示，中国制造业的国内循环和国际循环对全球价值链攀升的影响均表现为倒U型演变特征，其促进作用总体上呈现出先增强后减弱且在达到阈值后转为边际负向效应的趋势。拓展研究发现，国内循环促进制造业价值链高端攀升存在阶段性“中高端抑制困境”，但这种困境可以随着制造业国内循环的结构演进得到消解。国内循环中的低技术制造业具有促进价值链高端攀升的结构性“托举效应”，表明中国制造业价值链高端攀升需要依托低技术制造业的基础支撑。中国制造业国内国际双循环通过自主研发效应、出口中学效应以及知识产权保护效应的多重中介机制影响全球价值链位置攀升。本文从一个新的视角揭示了国内国际双循环促进中国制造业价值链高端攀升的特征规律与实现条件，为相关政策制定提供了经验证据与决策依据。",
+        "keywords": [
+          "双循环",
+          "价值链升级",
+          "创新能力",
+          "托举效应"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxoKLh95PB7aCqHtd9nFhntFGjwyzZUzfmcUB5x6iz-GyhNwdc1VfMiO761yuxBTRtlSdIXP6La2-8kftaPMxP-5RPqET8lxJZ3prCh-wPErDWuH5DOHkhBoZuJZM2sMoAe0OSEGdRr8H1kpbVUR39fNZmtFjb9qaYod5uz0Pe1sw==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.012",
+        "album": "经济与管理科学",
+        "subject": "工业经济",
+        "classification": "F424",
+        "online_date": "2025-09-22 15:37"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyEKR1ei5iKdWZuxEBIPQvTCCfWvNh4R05h8aUVaxNqX8WuqcZS79jwA-EgdyDndYJR0m3Ad_Re_3tcrBjZ1BFyJ1_foZyQubw9JO6A9YwBxpZM45hA3DFecmsA5XREnH1x5miKX1E701yM0d30GS4fsv8SwLdPqCxk6JVLO7VBwQ==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:52:34.144587",
+      "data": {
+        "title": "高管股权激励与企业碳排放：绿色发展背景下的企业激励机制研究",
+        "authors": [
+          "吴超鹏",
+          "郭靖俞"
+        ],
+        "abstract": "在全球气候变化加剧、碳排放政策日益严格的背景下，推动企业碳减排已成为国家实现“双碳”目标的重要任务。然而，企业碳减排通常面临较高的投资成本和不确定性风险，导致高管普遍缺乏减碳动力，因此，如何激励高管积极减少企业碳排放成为亟待解决的重要问题。本文基于中国上市企业数据，研究高管股权激励对企业碳减排的影响。研究发现，授予高管较多股权激励的企业，其碳排放强度和总量显著降低，表明高管股权激励对企业碳减排具有积极影响。影响机制检验发现，高管股权激励通过抑制管理者短视倾向、提升风险承担度及增强管理团队稳定性，进而促进企业实现碳减排。异质性分析表明，在激励方案设计方面，行权期限越长、长期业绩门槛越高，高管股权激励的减碳效果越显著；在外部条件方面，位于极端气候频发地区以及碳排放权交易试点地区的企业，高管股权激励对碳减排的促进作用更强。在实现路径方面，高管主要通过绿色低碳技术研发和并购以及高碳资产剥离来实现碳减排。本文拓展了企业碳减排影响因素的研究，为企业优化激励机制、推动绿色低碳转型提供了实践参考，并为政府完善碳监管政策提供了决策依据。",
+        "keywords": [
+          "高管股权激励",
+          "碳减排",
+          "绿色创新",
+          "绿色并购"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nyEKR1ei5iKdWZuxEBIPQvTCCfWvNh4R05h8aUVaxNqX8WuqcZS79jwA-EgdyDndYJR0m3Ad_Re_3tcrBjZ1BFyJ1_foZyQubw9JO6A9YwBxpZM45hA3DFecmsA5XREnH1x5miKX1E701yM0d30GS4fsv8SwLdPqCxk6JVLO7VBwQ==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.008",
+        "album": "经济与管理科学;工程科技Ⅰ辑",
+        "subject": "环境科学与资源利用;企业经济",
+        "classification": "F272.92;F279.2;X322",
+        "online_date": "2025-09-02 12:13"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxFU-MMsKKdfn4hR9tzPn_RPe5tVoj-MhWU-s3PrAV3gKv6ykrEem9AzVDFhdYXjjSLGzByS3HKYVekURpRy2xEI6xolLEQEIgyPsSVhqFhwbF58Z-v7RYLTqpsiyKUoWb7HuJnot7p_aEFtAGYzdAN0IuntEIyUeyTMqhqKNsy0g==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:53:13.431268",
+      "data": {
+        "title": "战略主动视角下产学研合作创新的驱动因素研究",
+        "authors": [
+          "倪红福",
+          "彭思仪",
+          "钟道诚"
+        ],
+        "abstract": "构建企业主导的产学研深度融合的创新体系，是实现创新驱动发展战略的重要组成部分。本文以近年来美国对华实体清单事件为准实验，利用2013—2022年A股上市公司产学研合作创新专利、上市公司年报等数据，探讨企业在面临外部环境变化时是否主动调整创新策略以提升产学研合作创新水平，并重点分析企业和政府两方面的战略主动调整机制。研究发现，当面临外部环境变化时，企业主动调整创新策略，积极加强产学研合作创新，产学研合作创新水平显著提高。机制分析发现，外部环境变化后，企业对供应链风险的感知程度显著增强，进而促进其主动开展产学研合作创新；进一步地，政府更为积极和主动地为受到外部环境变化影响的企业提供政策支持，进而支撑其创新策略调整；同时排除了市场规模缩减对企业产学研合作创新抑制作用的竞争性假说。异质性分析表明，生产率越高、供应商集中度越高、地区—行业层面风险敞口越高的企业，高技术企业和国有企业在面临外部环境变化时更倾向于提高产学研合作创新水平。",
+        "keywords": [
+          "产学研",
+          "供应链风险",
+          "政府支持",
+          "文本分析方法"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxFU-MMsKKdfn4hR9tzPn_RPe5tVoj-MhWU-s3PrAV3gKv6ykrEem9AzVDFhdYXjjSLGzByS3HKYVekURpRy2xEI6xolLEQEIgyPsSVhqFhwbF58Z-v7RYLTqpsiyKUoWb7HuJnot7p_aEFtAGYzdAN0IuntEIyUeyTMqhqKNsy0g==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.009",
+        "album": "经济与管理科学",
+        "subject": "企业经济;金融;证券",
+        "classification": "F832.51;F273.1",
+        "online_date": "2025-09-02 12:14"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nz9paXkb_IXDzLKaVnYhp_tgsDUZJRWiuNn4XvEQFogDD8BZm4WYEpQEMHLz6qSA6tnWlCeLQFw0SDdvK8kFnbK9bMFOgiFLpL_iKr3ZTzSRNDDpGdvEJIfAo8xkyP968lJPdlgIXU-k95K8n_PouAXgyGhrAShDznrZiszywra_w==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:53:41.376057",
+      "data": {
+        "title": "育活力于秩序：行政执法规范与中小企业跨地区流入",
+        "authors": [
+          "亓寿伟",
+          "陈雅婷",
+          "马光荣",
+          "刘潘"
+        ],
+        "abstract": "公开公平公正的市场经济秩序对于激发企业，尤其是中小企业的市场活力至关重要。本文基于各地行政处罚领域的行政裁量权基准制度构建双重差分模型，利用全国工商企业变更登记信息、行政处罚微观数据、全国税收调查数据和裁判文书等多维数据，实证检验了地方行政执法规范对中小企业跨地区流入的影响及作用机制。研究结果表明，行政裁量权基准制度的推行促进了中小企业跨地区流入，激发了本地市场活力。降低制度性交易成本是行政裁量权基准制度激发市场活力的重要机制：通过提升执法过程中执法依据的公开性、横向主体的公平性和处罚结果的公正性，优化了本地制度环境，并直接降低了实体企业的费用负担。此外，行政裁量权基准制度未增加企业税收负担，反而促进本地企业提“质”和增“量”，在集约边际上扩大投资，最终带来税收增长效应。本文借助微观数据刻画了行政执法行为，丰富了行政执法与企业行为的相关研究，对行政执法规范和财税政策协调具有重要启示。",
+        "keywords": [
+          "市场活力",
+          "行政裁量权",
+          "行政处罚",
+          "公开公平公正",
+          "制度性交易成本"
+        ],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nz9paXkb_IXDzLKaVnYhp_tgsDUZJRWiuNn4XvEQFogDD8BZm4WYEpQEMHLz6qSA6tnWlCeLQFw0SDdvK8kFnbK9bMFOgiFLpL_iKr3ZTzSRNDDpGdvEJIfAo8xkyP968lJPdlgIXU-k95K8n_PouAXgyGhrAShDznrZiszywra_w==&uniplatform=NZKPT&language=CHS",
+        "doi": "10.19581/j.cnki.ciejournal.2025.08.010",
+        "album": "经济与管理科学;社会科学Ⅰ辑",
+        "subject": "行政法及地方法制;企业经济",
+        "classification": "D922.11;F276.3",
+        "online_date": "2025-09-02 12:15"
+      },
+      "journal_name": "中国工业经济"
+    },
+    "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxSv2cbucbFkDY-AGJOrjuUHrsYd8ZBK8XvrA7OiXM7bk8DvAMkJnc4kbKk4gbTJVnZuQ0VgZCI5e0GLZUoAO_cfRT1QWaTJZvXuShxVgi08-N3iApCIide-Bm7TCeqt2QFDddDFEiMZ_2bD7vyV74E6KEcYFveOW_-06BwKCzH9g==&uniplatform=NZKPT&language=CHS": {
+      "status": 1,
+      "crawled_at": "2026-05-09T08:54:10.059548",
+      "data": {
+        "title": "中国工业发展报告（2024）",
+        "authors": [],
+        "abstract": "<正>《中国工业发展报告》是中国社会科学院工业经济研究所自1996年起连续20余年撰写的学术报告，聚焦工业经济研究所的研究领域，全面反映年度宏观经济、产业发展、区域经济和企业管理研究的最新成果及发展脉络，翔实记录了中国工业发展的过程和取得的成绩，出版以来得到业内广泛好评。“十五五”时期是中国从“工业大国”迈向“工业强国”的关键时期。《中国工业发展报告（2024）》（经济管理出版社，2025年5月版）围绕“‘十五五’展望”这一主题，重点从产业、区域、企业三个层面，",
+        "keywords": [],
+        "url": "https://kns.cnki.net/kcms2/article/abstract?v=ZMT4ddBD2nxSv2cbucbFkDY-AGJOrjuUHrsYd8ZBK8XvrA7OiXM7bk8DvAMkJnc4kbKk4gbTJVnZuQ0VgZCI5e0GLZUoAO_cfRT1QWaTJZvXuShxVgi08-N3iApCIide-Bm7TCeqt2QFDddDFEiMZ_2bD7vyV74E6KEcYFveOW_-06BwKCzH9g==&uniplatform=NZKPT&language=CHS",
+        "album": "经济与管理科学",
+        "subject": "工业经济",
+        "classification": "F424",
+        "online_date": "2025-09-22 16:38"
       },
       "journal_name": "中国工业经济"
     }

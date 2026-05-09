@@ -153,3 +153,41 @@ class CrawlLogListResponse(BaseModel):
     page: int
     page_size: int
     has_next: bool
+
+
+class StructuredAnalysis(BaseModel):
+    hot_topics: List[dict] = []
+    development_trends: List[dict] = []
+    keyword_insights: List[dict] = []
+    journal_insights: List[dict] = []
+    recommendations: List[dict] = []
+
+
+class AIAnalysisReportResponse(BaseModel):
+    id: int
+    summary: Optional[str] = None
+    hot_topics: Optional[List[dict]] = None
+    development_trends: Optional[List[dict]] = None
+    keyword_insights: Optional[List[dict]] = None
+    journal_insights: Optional[List[dict]] = None
+    recommendations: Optional[List[dict]] = None
+    raw_analysis: Optional[str] = None
+    model: Optional[str] = None
+    total_papers: int = 0
+    tokens_used: int = 0
+    processing_time_ms: int = 0
+    status: str = "success"
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class AIAnalysisReportListResponse(BaseModel):
+    reports: List[AIAnalysisReportResponse]
+    total: int
+
+
+class AIAnalysisResponseV2(BaseModel):
+    report: AIAnalysisReportResponse
+    cached: bool = False

@@ -41,6 +41,6 @@ async def get_db():
 
 
 async def init_db():
-    from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
+    from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog, AIAnalysisReport
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

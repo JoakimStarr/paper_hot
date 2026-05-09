@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List, Optional, Tuple
 from sqlalchemy import select, and_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ import numpy as np
 
 from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
 from app.schemas import PaperCreate, CrawlLogCreate, CrawlLogUpdate
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,38 @@ class PaperCRUD:
             select(Paper).where(Paper.url == url)
         )
         return result.scalar_one_or_none()
+    
+    @staticmethod
+    async def get_similar_papers(
+        db: AsyncSession,
+        paper_id: str,
+        limit: int = 5
+    ) -> List[Paper]:
+        paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+        if not paper:
+            return []
+        
+        conditions = []
+        
+        if paper.features and paper.features.topic:
+            conditions.append(
+                Paper.features.has(PaperFeatures.topic == paper.features.topic)
+            )
+        
+        from sqlalchemy import or_
+        query = (
+            select(Paper)
+            .options(selectinload(Paper.features), selectinload(Paper.scores))
+            .where(Paper.id != paper_id)
+        )
+        
+        if conditions:
+            query = query.where(or_(*conditions))
+        
+        query = query.order_by(Paper.published_at.desc()).limit(limit)
+        
+        result = await db.execute(query)
+        return list(result.scalars().all())
     
     @staticmethod
     async def get_all_paper_urls(db: AsyncSession) -> List[str]:
@@ -287,25 +321,50 @@ class PaperCRUD:
     async def create_paper_from_cnki(db: AsyncSession, paper_data: dict) -> Optional[Paper]:
         """从CNKI数据创建论文"""
         try:
-            # 检查是否已存在
             existing = await PaperCRUD.get_paper_by_url(db, paper_data['url'])
             if existing:
                 logger.info(f"Paper already exists: {paper_data['title'][:50]}...")
                 return None
             
-            # 创建论文对象
+            # 验证必需字段：作者和关键词
+            authors = paper_data.get('authors', [])
+            keywords = paper_data.get('keywords', [])
+            
+            if not authors or len(authors) == 0:
+                logger.warning(f"Skipping paper (no authors): {paper_data['title'][:50]}...")
+                return None
+            
+            if not keywords or len(keywords) == 0:
+                logger.warning(f"Skipping paper (no keywords): {paper_data['title'][:50]}...")
+                return None
+            
+            year = paper_data.get('year', datetime.now().year)
+            journal_issue = paper_data.get('journal_issue')
+            
+            if journal_issue:
+                issue_match = re.search(r'第(\d+)期', journal_issue)
+                if issue_match:
+                    issue_num = int(issue_match.group(1))
+                    month = min(issue_num, 12)
+                    published_at = datetime(year, month, 1)
+                else:
+                    published_at = datetime(year, 1, 1)
+            else:
+                published_at = datetime(year, 1, 1)
+            
             db_paper = Paper(
                 title=paper_data['title'],
                 abstract=paper_data.get('abstract', ''),
-                authors=paper_data.get('authors', []),
+                authors=authors,
                 url=paper_data['url'],
                 doi=paper_data.get('doi') or None,
                 source=paper_data.get('source', 'CNKI'),
                 venue=paper_data.get('journal_name', ''),
-                published_at=datetime(paper_data.get('year', datetime.now().year), 1, 1),
+                published_at=published_at,
                 discipline=paper_data.get('discipline', '经济学'),
                 journal_name=paper_data.get('journal_name', ''),
-                keywords_cn=paper_data.get('keywords', [])
+                journal_issue=journal_issue,
+                keywords_cn=keywords
             )
             
             db.add(db_paper)
@@ -316,7 +375,7 @@ class PaperCRUD:
             features = PaperFeatures(
                 paper_id=db_paper.id,
                 summary=paper_data.get('abstract', '')[:500],
-                keywords=paper_data.get('keywords', []),
+                keywords=keywords,
                 topic=None  # CNKI论文不自动分类主题
             )
             db.add(features)
@@ -338,6 +397,174 @@ class PaperCRUD:
         except Exception as e:
             logger.error(f"Error creating paper from CNKI data: {e}")
             return None
+
+    @staticmethod
+    async def get_keyword_monthly_counts(db: AsyncSession, months_back: int = 12) -> dict:
+        """
+        查询过去 N 个月的论文，按 (关键词, 月) 聚合论文数量
+        返回格式：{keyword: {month_start_date: count, ...}, ...}
+        支持 SQLite 和 PostgreSQL
+        """
+        from sqlalchemy import text
+        
+        # 使用更宽松的时间范围以包含所有历史数据
+        cutoff_date = datetime(2020, 1, 1)
+        
+        # 使用原生SQL查询，因为需要展开JSON数组
+        if settings.database_url.startswith("sqlite"):
+            # SQLite 使用 json_each 展开 JSON 数组
+            query = text("""
+                SELECT 
+                    value as keyword,
+                    strftime('%Y-%m', published_at) as month_start,
+                    COUNT(*) as count
+                FROM papers, json_each(keywords_cn)
+                WHERE published_at >= :cutoff_date
+                    AND keywords_cn IS NOT NULL
+                    AND json_array_length(keywords_cn) > 0
+                GROUP BY value, month_start
+                ORDER BY value, month_start
+            """)
+        else:
+            # PostgreSQL 使用 jsonb_array_elements_text
+            query = text("""
+                SELECT 
+                    keyword,
+                    DATE_TRUNC('month', published_at)::date as month_start,
+                    COUNT(*) as count
+                FROM papers,
+                jsonb_array_elements_text(keywords_cn::jsonb) as keyword
+                WHERE published_at >= :cutoff_date
+                    AND keywords_cn IS NOT NULL
+                GROUP BY keyword, DATE_TRUNC('month', published_at)
+                ORDER BY keyword, month_start
+            """)
+        
+        result = await db.execute(query, {"cutoff_date": cutoff_date})
+        
+        # 整理结果
+        keyword_monthly_counts = {}
+        for row in result:
+            keyword = row[0]
+            month_start = row[1]
+            count = row[2]
+            
+            if keyword not in keyword_monthly_counts:
+                keyword_monthly_counts[keyword] = {}
+            keyword_monthly_counts[keyword][month_start] = count
+        
+        return keyword_monthly_counts
+
+    @staticmethod
+    async def update_keyword_trends(db: AsyncSession, months_back: int = 6) -> int:
+        """
+        更新关键词趋势数据
+        1. 调用 get_keyword_monthly_counts 获取数据
+        2. 计算月增长率
+        3. 存储到 TopicTrend 表（复用该表，但存储的是关键词数据）
+        返回更新的记录数
+        """
+        monthly_counts = await PaperCRUD.get_keyword_monthly_counts(db, months_back)
+        updated_count = 0
+        
+        for keyword, month_data in monthly_counts.items():
+            # 按月排序
+            sorted_months = sorted(month_data.keys())
+            
+            for i, month_start in enumerate(sorted_months):
+                current_count = month_data[month_start]
+                
+                # 计算增长率
+                if i == 0 or sorted_months[i-1] not in month_data:
+                    # 第一个月或前一个月没有数据，增长率为 0
+                    growth_rate = 0.0
+                else:
+                    previous_count = month_data[sorted_months[i-1]]
+                    if previous_count == 0:
+                        growth_rate = 1.0 if current_count > 0 else 0.0
+                    else:
+                        growth_rate = (current_count - previous_count) / previous_count
+                
+                # 删除该月旧数据
+                delete_result = await db.execute(
+                    select(TopicTrend).where(
+                        and_(
+                            TopicTrend.topic == keyword,
+                            TopicTrend.week_start == month_start
+                        )
+                    )
+                )
+                existing = delete_result.scalar_one_or_none()
+                if existing:
+                    await db.delete(existing)
+                
+                # 创建新记录
+                trend = TopicTrend(
+                    topic=keyword,
+                    week_start=month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01", "%Y-%m-%d"),
+                    paper_count=current_count,
+                    growth_rate=growth_rate
+                )
+                db.add(trend)
+                updated_count += 1
+        
+        await db.flush()
+        return updated_count
+
+    @staticmethod
+    async def bulk_update_paper_trend_scores(db: AsyncSession) -> int:
+        """
+        批量更新论文趋势分数
+        1. 查询所有 topic 非空的论文及其 PaperScore
+        2. 从 TopicTrend 表获取每个主题的最新增长率
+        3. 使用公式 trend_score = 0.5 + 0.5 * tanh(growth_rate) 更新
+        返回更新的记录数
+        """
+        # 查询所有 topic 非空的论文及其 PaperScore
+        result = await db.execute(
+            select(Paper.id, PaperFeatures.topic, PaperScore.id.label('score_id'))
+            .join(PaperFeatures)
+            .join(PaperScore)
+            .where(PaperFeatures.topic.isnot(None))
+        )
+        
+        papers = result.fetchall()
+        if not papers:
+            return 0
+        
+        # 获取每个主题的最新增长率
+        topic_growth_rates = {}
+        topics = set(paper[1] for paper in papers)
+        
+        for topic in topics:
+            trend_result = await db.execute(
+                select(TopicTrend.growth_rate)
+                .where(TopicTrend.topic == topic)
+                .order_by(desc(TopicTrend.week_start))
+                .limit(1)
+            )
+            latest_growth = trend_result.scalar_one_or_none()
+            if latest_growth is not None:
+                topic_growth_rates[topic] = latest_growth
+        
+        # 更新论文趋势分数
+        updated_count = 0
+        for paper_id, topic, score_id in papers:
+            if topic in topic_growth_rates:
+                growth_rate = topic_growth_rates[topic]
+                trend_score = 0.5 + 0.5 * np.tanh(growth_rate)
+                
+                # 获取 PaperScore 记录并更新
+                score_result = await db.execute(
+                    select(PaperScore).where(PaperScore.id == score_id)
+                )
+                score = score_result.scalar_one_or_none()
+                if score:
+                    score.trend_score = trend_score
+                    updated_count += 1
+        
+        await db.flush()
+        return updated_count
 
 
 class CrawlLogCRUD:
@@ -435,4 +662,87 @@ class CrawlLogCRUD:
         query = query.order_by(desc(CrawlLog.crawl_start_time)).limit(1)
         
         result = await db.execute(query)
+        return result.scalar_one_or_none()
+
+
+class AIAnalysisReportCRUD:
+    @staticmethod
+    async def create_report(
+        db: AsyncSession,
+        summary: Optional[str],
+        hot_topics: Optional[list],
+        development_trends: Optional[list],
+        keyword_insights: Optional[list],
+        journal_insights: Optional[list],
+        recommendations: Optional[list],
+        raw_analysis: Optional[str],
+        model: Optional[str],
+        total_papers: int,
+        tokens_used: int,
+        processing_time_ms: int,
+        status: str = "success",
+        error_message: Optional[str] = None
+    ) -> "AIAnalysisReport":
+        from app.models import AIAnalysisReport
+        report = AIAnalysisReport(
+            summary=summary,
+            hot_topics=hot_topics,
+            development_trends=development_trends,
+            keyword_insights=keyword_insights,
+            journal_insights=journal_insights,
+            recommendations=recommendations,
+            raw_analysis=raw_analysis,
+            model=model,
+            total_papers=total_papers,
+            tokens_used=tokens_used,
+            processing_time_ms=processing_time_ms,
+            status=status,
+            error_message=error_message
+        )
+        db.add(report)
+        await db.flush()
+        await db.refresh(report)
+        return report
+
+    @staticmethod
+    async def get_latest_report(db: AsyncSession) -> Optional["AIAnalysisReport"]:
+        from app.models import AIAnalysisReport
+        from sqlalchemy import select
+        result = await db.execute(
+            select(AIAnalysisReport)
+            .where(AIAnalysisReport.status == "success")
+            .order_by(desc(AIAnalysisReport.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_recent_reports(db: AsyncSession, limit: int = 10) -> list:
+        from app.models import AIAnalysisReport
+        from sqlalchemy import select
+        result = await db.execute(
+            select(AIAnalysisReport)
+            .order_by(desc(AIAnalysisReport.created_at))
+            .limit(limit)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_report_by_id(db: AsyncSession, report_id: int) -> Optional["AIAnalysisReport"]:
+        from app.models import AIAnalysisReport
+        from sqlalchemy import select
+        result = await db.execute(
+            select(AIAnalysisReport).where(AIAnalysisReport.id == report_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_latest_running_report(db: AsyncSession) -> Optional["AIAnalysisReport"]:
+        from app.models import AIAnalysisReport
+        result = await db.execute(
+            select(AIAnalysisReport)
+            .where(AIAnalysisReport.status == "running")
+            .order_by(desc(AIAnalysisReport.created_at))
+            .limit(1)
+        )
         return result.scalar_one_or_none()

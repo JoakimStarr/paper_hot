@@ -89,3 +89,23 @@ class CrawlLog(Base):
     status = Column(String(20), nullable=False, default="running", index=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AIAnalysisReport(Base):
+    __tablename__ = "ai_analysis_reports"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    summary = Column(Text, nullable=True)
+    hot_topics = Column(JSON, nullable=True)
+    development_trends = Column(JSON, nullable=True)
+    keyword_insights = Column(JSON, nullable=True)
+    journal_insights = Column(JSON, nullable=True)
+    recommendations = Column(JSON, nullable=True)
+    raw_analysis = Column(Text, nullable=True)
+    model = Column(String(50), nullable=True)
+    total_papers = Column(Integer, default=0)
+    tokens_used = Column(Integer, default=0)
+    processing_time_ms = Column(Integer, default=0)
+    status = Column(String(20), default="success")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
