@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PaperListResponse, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -8,21 +8,6 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-});
-
-// 添加请求拦截器，禁用缓存
-apiClient.interceptors.request.use((config) => {
-  // 添加时间戳参数，防止浏览器缓存
-  if (config.params) {
-    config.params._t = Date.now();
-  } else {
-    config.params = { _t: Date.now() };
-  }
-  // 添加禁用缓存的请求头
-  config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
-  config.headers['Pragma'] = 'no-cache';
-  config.headers['Expires'] = '0';
-  return config;
 });
 
 export interface FilterStatistics {
@@ -46,8 +31,12 @@ export const papersApi = {
     discipline?: string;
     economics_subfield?: string;
     journal_name?: string;
-  }): Promise<PaperListResponse> => {
-    const response = await apiClient.get<PaperListResponse>('/papers', { params });
+    search?: string;
+    search_field?: string;
+    sort_by?: string;
+    sort_order?: string;
+  }): Promise<PaperCardListResponse> => {
+    const response = await apiClient.get<PaperCardListResponse>('/papers', { params });
     return response.data;
   },
 
@@ -94,4 +83,46 @@ export const papersApi = {
     const response = await apiClient.get<FilterStatistics>('/filter-statistics');
     return response.data;
   },
+
+  getSystemStats: async (): Promise<SystemStats> => {
+    const response = await apiClient.get<SystemStats>('/stats');
+    return response.data;
+  },
+
+  getAuthorNetwork: async (limit: number = 50): Promise<NetworkData> => {
+    const response = await apiClient.get<NetworkData>('/network/authors', { params: { limit } });
+    return response.data;
+  },
+
+  getKeywordNetwork: async (limit: number = 200): Promise<NetworkData> => {
+    const response = await apiClient.get<NetworkData>('/network/keywords', { params: { limit } });
+    return response.data;
+  },
+
+  getCrawlStatus: async (limit: number = 10): Promise<{ logs: CrawlLog[]; total: number }> => {
+    const response = await apiClient.get<{ logs: CrawlLog[]; total: number }>('/crawl/status', { params: { limit } });
+    return response.data;
+  },
+
+  startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: number; status: string; message: string }> => {
+    const response = await apiClient.post('/crawl/start', { journal_names: journalNames || null });
+    return response.data;
+  },
+
+  analyzePaper: async (paperId: string): Promise<{ analysis: string }> => {
+    const response = await apiClient.post<{ analysis: string }>(`/papers/${paperId}/analyze`);
+    return response.data;
+  },
+
+  getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; model?: string; created_at?: string }> => {
+    const response = await apiClient.get(`/papers/${paperId}/analyses/latest`);
+    return response.data;
+  },
+
+  getPaperAnalyses: async (paperId: string): Promise<Array<{ id: number; analysis: string; model: string; created_at: string }>> => {
+    const response = await apiClient.get(`/papers/${paperId}/analyses`);
+    return response.data;
+  },
 };
+
+export { API_BASE_URL };

@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Optional, Tuple
-from sqlalchemy import select, and_, desc, func
+from sqlalchemy import select, and_, desc, func, String, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
@@ -89,12 +89,31 @@ class PaperCRUD:
         days_back: Optional[int] = None,
         discipline: Optional[str] = None,
         economics_subfield: Optional[str] = None,
-        journal_name: Optional[str] = None
+        journal_name: Optional[str] = None,
+        search: Optional[str] = None,
+        search_field: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = "desc"
     ) -> Tuple[List[Paper], int]:
         query = (
             select(Paper)
             .options(selectinload(Paper.features), selectinload(Paper.scores))
         )
+        
+        if search:
+            keyword = f"%{search}%"
+            if search_field == "title":
+                query = query.where(Paper.title.ilike(keyword))
+            elif search_field == "author":
+                query = query.where(Paper.authors.cast(String).ilike(keyword))
+            elif search_field == "keyword":
+                query = query.where(Paper.keywords_cn.cast(String).ilike(keyword))
+            elif search_field == "abstract":
+                query = query.where(Paper.abstract.ilike(keyword))
+            else:
+                query = query.where(
+                    Paper.title.ilike(keyword) | Paper.abstract.ilike(keyword)
+                )
         
         if topic:
             query = query.join(PaperFeatures).where(PaperFeatures.topic == topic)
@@ -122,9 +141,22 @@ class PaperCRUD:
         total_result = await db.execute(count_query)
         total = total_result.scalar()
         
-        query = query.order_by(desc(Paper.published_at))
-        query = query.offset((page - 1) * page_size).limit(page_size)
+        if sort_by == "score":
+            query = query.join(PaperScore)
+            order_col = PaperScore.final_score
+        elif sort_by == "date":
+            order_col = Paper.published_at
+        elif sort_by == "title":
+            order_col = Paper.title
+        else:
+            order_col = Paper.published_at
         
+        if sort_order == "asc":
+            query = query.order_by(order_col.asc(), Paper.doi.asc())
+        else:
+            query = query.order_by(desc(order_col), desc(Paper.doi))
+        
+        query = query.offset((page - 1) * page_size).limit(page_size)
         result = await db.execute(query)
         papers = result.scalars().all()
         
@@ -565,6 +597,38 @@ class PaperCRUD:
         
         await db.flush()
         return updated_count
+
+
+class PaperAnalysisCRUD:
+    @staticmethod
+    async def save_analysis(db: AsyncSession, paper_id: str, analysis: str, model: str = "glm-4.5-air"):
+        from app.models import PaperAnalysis
+        record = PaperAnalysis(paper_id=paper_id, analysis=analysis, model=model)
+        db.add(record)
+        await db.flush()
+        return record
+
+    @staticmethod
+    async def get_latest(db: AsyncSession, paper_id: str):
+        from app.models import PaperAnalysis
+        result = await db.execute(
+            select(PaperAnalysis)
+            .where(PaperAnalysis.paper_id == paper_id)
+            .order_by(desc(PaperAnalysis.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_history(db: AsyncSession, paper_id: str, limit: int = 10):
+        from app.models import PaperAnalysis
+        result = await db.execute(
+            select(PaperAnalysis)
+            .where(PaperAnalysis.paper_id == paper_id)
+            .order_by(desc(PaperAnalysis.created_at))
+            .limit(limit)
+        )
+        return result.scalars().all()
 
 
 class CrawlLogCRUD:

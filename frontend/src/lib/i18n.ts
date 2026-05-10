@@ -15,6 +15,7 @@ export const translations = {
       home: '首页',
       trends: '趋势分析',
       system: '系统管理',
+      network: '关系网络',
     },
     
     // 首页
@@ -23,6 +24,7 @@ export const translations = {
       subtitle: '及时了解来自各大期刊的最新论文',
       showingPapers: '显示 {start}-{end} 共 {total} 篇论文',
       noPapers: '未找到符合条件的论文',
+      updating: '正在更新...',
       loadMore: '加载更多',
       previous: '上一页',
       next: '下一页',
@@ -128,6 +130,7 @@ export const translations = {
       home: 'Home',
       trends: 'Trends',
       system: 'System',
+      network: 'Network',
     },
     
     // Home
@@ -136,6 +139,7 @@ export const translations = {
       subtitle: 'Stay updated with the latest papers from top journals',
       showingPapers: 'Showing {start}-{end} of {total} papers',
       noPapers: 'No papers found matching your criteria',
+      updating: 'Updating...',
       loadMore: 'Load More',
       previous: 'Previous',
       next: 'Next',

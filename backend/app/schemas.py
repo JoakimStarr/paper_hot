@@ -84,6 +84,39 @@ class PaperListResponse(BaseModel):
     has_next: bool
 
 
+class PaperCardResponse(BaseModel):
+    id: str
+    title: str
+    abstract: Optional[str] = None
+    authors: List[str] = []
+    url: Optional[str] = None
+    source: Optional[str] = None
+    venue: Optional[str] = None
+    journal_name: Optional[str] = None
+    journal_issue: Optional[str] = None
+    economics_subfield: Optional[str] = None
+    doi: Optional[str] = None
+    keywords_cn: List[str] = []
+    published_at: Optional[datetime] = None
+    topic: Optional[str] = None
+    recency_score: float = 0.0
+    venue_score: float = 0.0
+    trend_score: float = 0.0
+    final_score: float = 0.0
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaperCardListResponse(BaseModel):
+    papers: List[PaperCardResponse]
+    total: int
+    page: int
+    page_size: int
+    has_next: bool
+
+
 class TrendingTopic(BaseModel):
     topic: str
     paper_count: int
@@ -102,6 +135,7 @@ class SimilarPaper(BaseModel):
     title: str
     similarity_score: float
     topic: Optional[str] = None
+    keywords_cn: List[str] = []
     
     class Config:
         from_attributes = True

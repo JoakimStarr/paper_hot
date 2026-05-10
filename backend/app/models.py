@@ -1,7 +1,20 @@
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, Float, JSON, ForeignKey, Integer, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.types import TypeDecorator
 import uuid
+import json as _json
+
+
+class UnicodeJSON(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return _json.dumps(value, ensure_ascii=False)
+        return value
 from app.database import Base
 from app.config import settings
 
@@ -20,7 +33,7 @@ class Paper(Base):
     id = get_uuid_column()
     title = Column(String(500), nullable=False, index=True)
     abstract = Column(Text, nullable=False)
-    authors = Column(JSON, default=list)
+    authors = Column(UnicodeJSON, default=list)
     url = Column(String(500), nullable=False, unique=True)
     source = Column(String(50), nullable=False, index=True)
     venue = Column(String(100), nullable=True)
@@ -30,12 +43,21 @@ class Paper(Base):
     journal_issue = Column(String(100), nullable=True)
     economics_subfield = Column(String(100), nullable=True, index=True)
     doi = Column(String(200), nullable=True, unique=True)
-    keywords_cn = Column(JSON, default=list)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+    keywords_cn = Column(UnicodeJSON, default=list)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     features = relationship("PaperFeatures", back_populates="paper", uselist=False, cascade="all, delete-orphan")
     scores = relationship("PaperScore", back_populates="paper", uselist=False, cascade="all, delete-orphan")
+
+
+class PaperAnalysis(Base):
+    __tablename__ = "paper_analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paper_id = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    analysis = Column(Text, nullable=False)
+    model = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class PaperFeatures(Base):
@@ -44,7 +66,7 @@ class PaperFeatures(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     paper_id = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), unique=True, nullable=False)
     summary = Column(Text, nullable=True)
-    keywords = Column(JSON, default=list)
+    keywords = Column(UnicodeJSON, default=list)
     embedding = Column(String, nullable=True)
     topic = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -88,7 +110,7 @@ class CrawlLog(Base):
     papers_failed = Column(Integer, default=0)
     status = Column(String(20), nullable=False, default="running", index=True)
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class AIAnalysisReport(Base):
@@ -96,11 +118,11 @@ class AIAnalysisReport(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     summary = Column(Text, nullable=True)
-    hot_topics = Column(JSON, nullable=True)
-    development_trends = Column(JSON, nullable=True)
-    keyword_insights = Column(JSON, nullable=True)
-    journal_insights = Column(JSON, nullable=True)
-    recommendations = Column(JSON, nullable=True)
+    hot_topics = Column(UnicodeJSON, nullable=True)
+    development_trends = Column(UnicodeJSON, nullable=True)
+    keyword_insights = Column(UnicodeJSON, nullable=True)
+    journal_insights = Column(UnicodeJSON, nullable=True)
+    recommendations = Column(UnicodeJSON, nullable=True)
     raw_analysis = Column(Text, nullable=True)
     model = Column(String(50), nullable=True)
     total_papers = Column(Integer, default=0)

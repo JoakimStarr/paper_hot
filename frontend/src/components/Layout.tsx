@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { FileText, TrendingUp, Home, Settings } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -35,6 +35,13 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <TrendingUp className="w-5 h-5" />
                 <span>{t('nav.trends')}</span>
+              </Link>
+              <Link
+                href="/network"
+                className="flex items-center gap-2 text-gray-600 hover:text-primary-600 transition-colors"
+              >
+                <Share2 className="w-5 h-5" />
+                <span>关系网络</span>
               </Link>
               <Link
                 href="/system"

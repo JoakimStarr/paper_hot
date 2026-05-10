@@ -1,21 +1,28 @@
 import logging
-from fastapi import APIRouter, Depends, Query, HTTPException, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, Body, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+import hashlib
+import json
 
 from app.database import get_db
-from app.schemas import (PaperResponse, PaperListResponse, TrendingTopicsResponse,
-                         TrendingTopic, PaperDetailResponse, SimilarPaper,
+from app.schemas import (PaperResponse, PaperListResponse,
+                         PaperCardResponse, PaperCardListResponse,
+                         TrendingTopicsResponse, TrendingTopic,
+                         PaperDetailResponse, SimilarPaper,
                          CrawlLogResponse, CrawlLogListResponse,
                          AIAnalysisReportResponse, AIAnalysisReportListResponse)
-from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD
+from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD
 from app.ai_processor import TrendAnalyzer
 from app.fetchers import VenueDataFetcher
 from app.ai_service import ai_trend_service
 from app.glm_analyzer import glm_analyzer
+from app.config import settings
 import asyncio
+import concurrent.futures
 import time
 
 logger = logging.getLogger(__name__)
@@ -48,7 +55,35 @@ class AIAnalysisV2Response(BaseModel):
     running_report_id: Optional[int] = None
 
 
-@router.get("/papers", response_model=PaperListResponse)
+def _paper_to_card(paper) -> PaperCardResponse:
+    return PaperCardResponse(
+        id=paper.id,
+        title=paper.title,
+        abstract=paper.abstract,
+        authors=paper.authors or [],
+        url=paper.url,
+        source=paper.source,
+        venue=paper.venue,
+        journal_name=paper.journal_name,
+        journal_issue=paper.journal_issue,
+        economics_subfield=paper.economics_subfield,
+        doi=paper.doi,
+        keywords_cn=paper.keywords_cn or [],
+        published_at=paper.published_at,
+        topic=paper.features.topic if paper.features else None,
+        recency_score=paper.scores.recency_score if paper.scores else 0.0,
+        venue_score=paper.scores.venue_score if paper.scores else 0.0,
+        trend_score=paper.scores.trend_score if paper.scores else 0.0,
+        final_score=paper.scores.final_score if paper.scores else 0.0,
+        created_at=paper.created_at
+    )
+
+
+def _compute_cache_key(prefix: str, total: int, page: int, page_size: int) -> str:
+    return hashlib.md5(f"{prefix}:{total}:{page}:{page_size}".encode()).hexdigest()
+
+
+@router.get("/papers")
 async def get_papers(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -59,6 +94,11 @@ async def get_papers(
     discipline: Optional[str] = Query(None),
     economics_subfield: Optional[str] = Query(None),
     journal_name: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    search_field: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query(None),
+    sort_order: Optional[str] = Query("desc"),
+    request: Request = None,
     db: AsyncSession = Depends(get_db)
 ):
     papers, total = await PaperCRUD.get_papers(
@@ -71,15 +111,32 @@ async def get_papers(
         days_back=days_back,
         discipline=discipline,
         economics_subfield=economics_subfield,
-        journal_name=journal_name
+        journal_name=journal_name,
+        search=search,
+        search_field=search_field,
+        sort_by=sort_by,
+        sort_order=sort_order
     )
 
-    return PaperListResponse(
-        papers=[PaperResponse.model_validate(paper) for paper in papers],
+    etag = _compute_cache_key("papers", total, page, page_size)
+
+    if request and request.headers.get("if-none-match") == etag:
+        return JSONResponse(status_code=304, content=None)
+
+    response_data = PaperCardListResponse(
+        papers=[_paper_to_card(paper) for paper in papers],
         total=total,
         page=page,
         page_size=page_size,
         has_next=(page * page_size) < total
+    )
+
+    return JSONResponse(
+        content=json.loads(response_data.model_dump_json()),
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "ETag": etag,
+        }
     )
 
 
@@ -105,7 +162,8 @@ async def get_paper(
                 id=p.id,
                 title=p.title,
                 similarity_score=0.85,
-                topic=p.features.topic if p.features else None
+                topic=p.features.topic if p.features else None,
+                keywords_cn=p.keywords_cn or []
             )
             for p in similar_papers
         ],
@@ -117,6 +175,162 @@ async def get_paper(
 async def get_filter_statistics(db: AsyncSession = Depends(get_db)):
     stats = await PaperCRUD.get_filter_statistics(db)
     return stats
+
+
+@router.get("/stats")
+async def get_system_stats(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import func
+    from sqlalchemy import select as sa_select
+    from app.models import Paper, CrawlLog
+    import datetime as dt
+
+    try:
+        total_papers_result = await db.execute(sa_select(func.count()).select_from(Paper))
+        total_papers = total_papers_result.scalar()
+
+        journal_count_result = await db.execute(
+            sa_select(func.count(func.distinct(Paper.journal_name)))
+            .where(Paper.journal_name.isnot(None))
+        )
+        journal_count = journal_count_result.scalar()
+
+        author_count_result = await db.execute(
+            sa_select(func.count(func.distinct(Paper.keywords_cn)))
+            .where(Paper.keywords_cn.isnot(None))
+        )
+        keyword_count = author_count_result.scalar()
+
+        latest_paper_result = await db.execute(
+            sa_select(Paper.created_at).order_by(Paper.created_at.desc()).limit(1)
+        )
+        latest_created_at = latest_paper_result.scalar()
+
+        latest_crawl_result = await db.execute(
+            sa_select(CrawlLog.created_at).order_by(CrawlLog.created_at.desc()).limit(1)
+        )
+        latest_crawl_at = latest_crawl_result.scalar()
+
+        sources_result = await db.execute(
+            sa_select(Paper.source, func.count(Paper.id))
+            .group_by(Paper.source)
+        )
+        source_counts = {row[0]: row[1] for row in sources_result}
+
+        years_result = await db.execute(
+            sa_select(func.substr(Paper.published_at, 1, 4), func.count(Paper.id))
+            .where(Paper.published_at.isnot(None))
+            .group_by(func.substr(Paper.published_at, 1, 4))
+            .order_by(func.substr(Paper.published_at, 1, 4).desc())
+        )
+        year_counts = {}
+        for row in years_result:
+            year_counts[row[0]] = row[1]
+
+        journals_result = await db.execute(
+            sa_select(Paper.journal_name, func.count(Paper.id))
+            .where(Paper.journal_name.isnot(None))
+            .group_by(Paper.journal_name)
+            .order_by(func.count(Paper.id).desc())
+            .limit(10)
+        )
+        top_journals = {}
+        for row in journals_result:
+            top_journals[row[0]] = row[1]
+
+        return {
+            "total_papers": total_papers,
+            "journal_count": journal_count,
+            "keyword_count": keyword_count,
+            "latest_paper_at": latest_created_at.isoformat() if latest_created_at else None,
+            "latest_crawl_at": latest_crawl_at.isoformat() if latest_crawl_at else None,
+            "source_counts": source_counts,
+            "year_counts": year_counts,
+            "top_journals": top_journals,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get system stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/network/authors")
+async def get_author_network(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import select as sa_select, func
+    from app.models import Paper
+
+    result = await db.execute(
+        sa_select(Paper.id, Paper.title, Paper.authors)
+        .where(Paper.authors.isnot(None))
+        .order_by(Paper.published_at.desc())
+        .limit(limit)
+    )
+
+    nodes_map = {}
+    links_map = {}
+
+    for row in result:
+        paper_id, title, authors = row
+        names = authors if authors else []
+        for name in names:
+            if name and name not in nodes_map:
+                nodes_map[name] = {"id": name, "name": name, "papers": 0, "group": "author"}
+            if name:
+                nodes_map[name]["papers"] += 1
+
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                pair = tuple(sorted([names[i], names[j]]))
+                if pair not in links_map:
+                    links_map[pair] = {"source": pair[0], "target": pair[1], "value": 0}
+                links_map[pair]["value"] += 1
+
+    nodes = [v for v in nodes_map.values() if v["papers"] >= 1][:100]
+    links = list(links_map.values())[:300]
+
+    return {"nodes": nodes, "links": links}
+
+
+@router.get("/network/keywords")
+async def get_keyword_network(
+    limit: int = Query(200, ge=1, le=500),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import select as sa_select
+    from app.models import PaperFeatures, Paper
+
+    result = await db.execute(
+        sa_select(PaperFeatures.keywords)
+        .join(Paper)
+        .where(PaperFeatures.keywords.isnot(None))
+        .order_by(Paper.published_at.desc())
+        .limit(limit)
+    )
+
+    nodes_map = {}
+    links_map = {}
+
+    for row in result:
+        keywords = row[0] if row[0] else []
+        for kw in keywords:
+            if kw and kw not in nodes_map:
+                nodes_map[kw] = {"id": kw, "name": kw, "count": 0, "group": "keyword"}
+            if kw:
+                nodes_map[kw]["count"] += 1
+
+        for i in range(len(keywords)):
+            for j in range(i + 1, len(keywords)):
+                pair = tuple(sorted([keywords[i], keywords[j]]))
+                if pair not in links_map:
+                    links_map[pair] = {"source": pair[0], "target": pair[1], "value": 0}
+                links_map[pair]["value"] += 1
+
+    nodes = sorted(nodes_map.values(), key=lambda x: x["count"], reverse=True)[:80]
+    node_ids = {n["id"] for n in nodes}
+    links = [l for l in links_map.values() if l["source"] in node_ids and l["target"] in node_ids][:400]
+
+    return {"nodes": nodes, "links": links}
 
 
 @router.get("/trending-topics", response_model=TrendingTopicsResponse)
@@ -497,8 +711,138 @@ async def get_crawl_status(
 async def update_trend_scores(db: AsyncSession = Depends(get_db)):
     """手动触发趋势分数更新"""
     try:
-        await PaperCRUD.update_paper_trend_scores(db)
+        await PaperCRUD.bulk_update_paper_trend_scores(db)
         await db.commit()
         return {"status": "success", "message": "Trend scores updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_glm_client():
+    from zai import ZhipuAiClient
+    api_key = settings.zhipu_api_key
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Zhipu API key not configured")
+    return ZhipuAiClient(api_key=api_key)
+
+
+@router.post("/papers/{paper_id}/analyze")
+async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    authors = ", ".join(paper.authors) if paper.authors else "未知"
+    keywords = ", ".join(paper.keywords_cn) if paper.keywords_cn else "未知"
+    journal = paper.journal_name or "未知"
+
+    prompt = f"""请从学术角度分析以下论文：
+
+标题：{paper.title}
+作者：{authors}
+期刊：{journal}
+关键词：{keywords}
+摘要：{paper.abstract or '无'}
+
+请从以下方面进行分析：
+1. 研究背景与核心问题
+2. 研究方法与创新点
+3. 主要发现与结论
+4. 研究意义与局限性
+
+请用中文回答，结构清晰。"""
+
+    try:
+        client = _get_glm_client()
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="glm-4.5-air",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4096,
+        )
+        analysis_text = response.choices[0].message.content
+        await PaperAnalysisCRUD.save_analysis(db, paper_id, analysis_text)
+        await db.commit()
+        return {"analysis": analysis_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+
+
+@router.get("/papers/{paper_id}/analyses")
+async def get_paper_analyses(paper_id: str, db: AsyncSession = Depends(get_db)):
+    records = await PaperAnalysisCRUD.get_history(db, paper_id)
+    return [{"id": r.id, "analysis": r.analysis, "model": r.model, "created_at": r.created_at.isoformat()} for r in records]
+
+
+@router.get("/papers/{paper_id}/analyses/latest")
+async def get_latest_analysis(paper_id: str, db: AsyncSession = Depends(get_db)):
+    record = await PaperAnalysisCRUD.get_latest(db, paper_id)
+    if not record:
+        return {"analysis": None}
+    return {"analysis": record.analysis, "model": record.model, "created_at": record.created_at.isoformat()}
+
+
+class ChatRequest(BaseModel):
+    messages: List[dict]
+
+
+@router.post("/papers/{paper_id}/chat")
+async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = Depends(get_db)):
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    authors = ", ".join(paper.authors) if paper.authors else "未知"
+    keywords = ", ".join(paper.keywords_cn) if paper.keywords_cn else "未知"
+    journal = paper.journal_name or "未知"
+
+    system_prompt = f"""你是一个学术论文分析助手。以下是当前讨论的论文信息：
+
+标题：{paper.title}
+作者：{authors}
+期刊：{journal}
+关键词：{keywords}
+摘要：{paper.abstract or '无'}
+
+请基于以上论文信息回答用户的问题，如果问题超出论文范围，请诚实说明。用中文回答。"""
+
+    messages = [{"role": "system", "content": system_prompt}] + body.messages
+
+    try:
+        client = _get_glm_client()
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="Zhipu API key not configured")
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def run_stream():
+            try:
+                response = client.chat.completions.create(
+                    model="glm-4.5-air",
+                    messages=messages,
+                    stream=True,
+                    max_tokens=4096,
+                )
+                for chunk in response:
+                    if chunk.choices:
+                        delta = chunk.choices[0].delta
+                        content = getattr(delta, "content", None)
+                        if content:
+                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}")
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(run_stream)
+            while True:
+                item = await queue.get()
+                if item is None:
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    break
+                yield f"data: {json.dumps({'content': item})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

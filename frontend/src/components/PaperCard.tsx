@@ -2,13 +2,34 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Paper } from '@/types/paper';
+import { PaperCard as PaperCardType } from '@/types/paper';
 import { ExternalLink, Calendar, TrendingUp, Award } from 'lucide-react';
 import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 interface PaperCardProps {
-  paper: Paper;
+  paper: PaperCardType;
+}
+
+function getIssuePeriod(doi: string | null, publishedAt: string | null): string {
+  if (doi) {
+    const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
+    if (mm) {
+      return `${mm[1]}年 第${parseInt(mm[2], 10)}期`;
+    }
+    const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
+    if (ymd) {
+      return `${ymd[1]}年 第${parseInt(ymd[2], 10)}期`;
+    }
+    const fy = doi.match(/f\.(\d{4})\.\d+$/);
+    if (fy) {
+      return `${fy[1]}年`;
+    }
+  }
+  if (publishedAt) {
+    return `${new Date(publishedAt).getFullYear()}年`;
+  }
+  return '';
 }
 
 const topicColors: Record<string, string> = {
@@ -34,9 +55,9 @@ const subfieldColors: Record<string, string> = {
 
 export default function PaperCard({ paper }: PaperCardProps) {
   const { t } = useLanguage();
-  const score = paper.scores?.final_score || 0;
+  const score = paper.final_score;
   const isHighScore = score >= 0.7;
-  const isTrending = paper.scores?.trend_score && paper.scores.trend_score >= 0.6;
+  const isTrending = paper.trend_score >= 0.6;
 
   return (
     <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-6 border border-gray-200">
@@ -64,16 +85,16 @@ export default function PaperCard({ paper }: PaperCardProps) {
         </div>
       </div>
 
-      {paper.features?.summary && (
+      {paper.abstract && (
         <p className="text-gray-600 text-sm mb-3 line-clamp-2">
-          {paper.features.summary}
+          {paper.abstract}
         </p>
       )}
 
       <div className="flex flex-wrap gap-2 mb-3">
-        {paper.features?.topic && (
-          <span className={`text-xs font-medium px-2 py-1 rounded ${topicColors[paper.features.topic] || topicColors.Other}`}>
-            {paper.features.topic}
+        {paper.topic && (
+          <span className={`text-xs font-medium px-2 py-1 rounded ${topicColors[paper.topic] || topicColors.Other}`}>
+            {paper.topic}
           </span>
         )}
         {paper.economics_subfield && (
@@ -81,7 +102,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
             {paper.economics_subfield}
           </span>
         )}
-        {paper.features?.keywords?.slice(0, 3).map((keyword, index) => (
+        {paper.keywords_cn?.slice(0, 3).map((keyword, index) => (
           <span key={index} className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded">
             {keyword}
           </span>
@@ -92,7 +113,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
         <div className="flex items-center gap-4 flex-wrap">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
-            {paper.published_at ? format(new Date(paper.published_at), 'MMM d, yyyy') : 'Unknown'}
+            {getIssuePeriod(paper.doi, paper.published_at) || 'Unknown'}
           </span>
           <span className="bg-gray-100 px-2 py-1 rounded text-xs">
             {paper.source}

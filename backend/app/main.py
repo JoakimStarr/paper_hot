@@ -54,10 +54,10 @@ app.add_middleware(
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
-    # 添加禁用缓存的响应头
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
+    if "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
 app.include_router(api_router, prefix="/api")

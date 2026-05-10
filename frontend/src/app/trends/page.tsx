@@ -175,20 +175,33 @@ export default function TrendsPage() {
     }
   };
 
+  const parseDate = (dateStr: string): Date => {
+    if (!/[+\-Z]/i.test(dateStr)) {
+      return new Date(dateStr + 'Z');
+    }
+    return new Date(dateStr);
+  };
+
   const formatTimeAgo = (dateStr: string) => {
+    const date = parseDate(dateStr);
     const now = new Date();
-    const date = new Date(dateStr);
     const diffMs = now.getTime() - date.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
-    if (diffHours > 24) {
-      return `${Math.floor(diffHours / 24)}天前`;
-    } else if (diffHours > 0) {
+    if (diffHours >= 12) {
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+    }
+    if (diffHours >= 1) {
       return `${diffHours}小时前`;
-    } else {
+    }
+    if (diffMinutes >= 1) {
       return `${diffMinutes}分钟前`;
     }
+    return '刚刚';
   };
 
   const renderSection = (title: string, icon: string, items: StructuredAnalysisItem[] | null | undefined, renderItem: (item: StructuredAnalysisItem, index: number) => React.ReactNode) => {
