@@ -15,6 +15,14 @@ class UnicodeJSON(TypeDecorator):
         if value is not None:
             return _json.dumps(value, ensure_ascii=False)
         return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and isinstance(value, str):
+            try:
+                return _json.loads(value)
+            except (_json.JSONDecodeError, TypeError):
+                return value
+        return value
 from app.database import Base
 from app.config import settings
 
@@ -55,9 +63,30 @@ class PaperAnalysis(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     paper_id = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
-    analysis = Column(Text, nullable=False)
+    analysis = Column(Text, nullable=True)
     model = Column(String(50), nullable=True)
+    status = Column(String(20), default="success", index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class PaperChat(Base):
+    __tablename__ = "paper_chats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paper_id = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class PaperSimilarity(Base):
+    __tablename__ = "paper_similarities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paper_id_a = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id_b = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    similarity_score = Column(Float, nullable=False)
+    computed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class PaperFeatures(Base):

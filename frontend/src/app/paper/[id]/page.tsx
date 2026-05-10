@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi, API_BASE_URL } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot } from 'lucide-react';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
 import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -21,8 +22,14 @@ const topicColors: Record<string, string> = {
   Other: 'bg-gray-100 text-gray-800',
 };
 
-function getIssuePeriod(doi: string | null, publishedAt: string | null): string {
+function getIssuePeriod(doi: string | null, publishedAt: string | null, journalIssue: string | null): string {
+  if (journalIssue) return journalIssue;
   if (doi) {
+    const fy = doi.match(/f\.(\d{4})\.(\d+)$/);
+    if (fy && fy[2].length === 4) {
+      const issue = Math.min(Math.ceil(parseInt(fy[2], 10) / 5), 12);
+      return `${fy[1]}年 第${issue}期`;
+    }
     const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
     if (mm) {
       return `${mm[1]}年 第${parseInt(mm[2], 10)}期`;
@@ -30,10 +37,6 @@ function getIssuePeriod(doi: string | null, publishedAt: string | null): string 
     const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
     if (ymd) {
       return `${ymd[1]}年 第${parseInt(ymd[2], 10)}期`;
-    }
-    const fy = doi.match(/f\.(\d{4})\.\d+$/);
-    if (fy) {
-      return `${fy[1]}年`;
     }
   }
   if (publishedAt) {
@@ -45,6 +48,7 @@ function getIssuePeriod(doi: string | null, publishedAt: string | null): string 
 export default function PaperDetailPage() {
   const { t } = useLanguage();
   const params = useParams();
+  const router = useRouter();
   const [paper, setPaper] = useState<PaperDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,19 +70,47 @@ export default function PaperDetailPage() {
   }, [params.id]);
 
   useEffect(() => {
-    if (paper?.id) {
-      loadLatestAnalysis();
-    }
-  }, [paper?.id]);
-
-  const loadLatestAnalysis = async () => {
-    try {
-      const result = await papersApi.getLatestAnalysis(paper!.id);
-      if (result.analysis) {
+    if (!paper) return;
+    const loadAnalysis = async () => {
+      const result = await papersApi.getLatestAnalysis(paper.id);
+      if (result.status === "pending") {
+        setAiAnalyzing(true);
+        return true;
+      } else if (result.status === "success" && result.analysis) {
         setAiAnalysis(result.analysis);
+        setAiAnalyzing(false);
+      } else if (result.status === "failed") {
+        setAiAnalysis(result.analysis);
+        setAiError("上次分析失败，请重试");
+        setAiAnalyzing(false);
       }
-    } catch {}
-  };
+      return false;
+    };
+
+    const loadChats = async () => {
+      try {
+        const chats = await papersApi.getChats(paper.id);
+        if (chats.length > 0) {
+          setChatMessages(chats.map(c => ({ role: c.role, content: c.content })));
+        }
+      } catch {}
+    };
+
+    let timer: ReturnType<typeof setInterval>;
+    const start = async () => {
+      const [isPending, _chats] = await Promise.all([loadAnalysis(), loadChats()]);
+      if (isPending) {
+        timer = setInterval(async () => {
+          const stillPending = await loadAnalysis();
+          if (!stillPending) {
+            clearInterval(timer);
+          }
+        }, 2000);
+      }
+    };
+    start();
+    return () => clearInterval(timer);
+  }, [paper]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -108,11 +140,27 @@ export default function PaperDetailPage() {
     setStreamContent('');
     try {
       const result = await papersApi.analyzePaper(params.id as string);
+      if (result.status === "pending") {
+        const timer = setInterval(async () => {
+          const latest = await papersApi.getLatestAnalysis(params.id as string);
+          if (latest.status === "success" && latest.analysis) {
+            setAiAnalysis(latest.analysis);
+            setAiAnalyzing(false);
+            clearInterval(timer);
+          } else if (latest.status === "failed") {
+            setAiAnalysis(latest.analysis);
+            setAiError("分析失败，请重试");
+            setAiAnalyzing(false);
+            clearInterval(timer);
+          }
+        }, 2000);
+        return;
+      }
       setAiAnalysis(result.analysis);
+      setAiAnalyzing(false);
     } catch (e: any) {
       const msg = e.response?.data?.detail || e.message || 'AI analysis failed';
       setAiError(msg);
-    } finally {
       setAiAnalyzing(false);
     }
   };
@@ -161,6 +209,10 @@ export default function PaperDetailPage() {
               if (data.done) {
                 setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
                 setStreamContent('');
+                papersApi.saveChats(paper.id, [
+                  userMsg,
+                  { role: 'assistant', content: fullContent }
+                ]);
               } else if (data.content) {
                 fullContent += data.content;
                 setStreamContent(fullContent);
@@ -248,16 +300,20 @@ export default function PaperDetailPage() {
             </span>
           )}
           {paper.keywords_cn?.slice(0, 5).map((keyword, index) => (
-            <span key={index} className="bg-gray-100 text-gray-700 text-sm px-3 py-1 rounded">
+            <button
+              key={index}
+              onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
+              className="bg-gray-100 text-gray-700 text-sm px-3 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+            >
               {keyword}
-            </span>
+            </button>
           ))}
         </div>
 
         <div className="flex items-center gap-6 text-sm text-gray-600 mb-6">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
-            {getIssuePeriod(paper.doi, paper.published_at) || 'Unknown'}
+            {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
           {paper.discipline && (
             <span className="bg-purple-50 text-purple-700 px-3 py-1 rounded">
@@ -311,9 +367,13 @@ export default function PaperDetailPage() {
             <h2 className="text-lg font-semibold text-gray-900 mb-2">{t('paper.keywords')}</h2>
             <div className="flex flex-wrap gap-2">
               {paper.keywords_cn.map((keyword, index) => (
-                <span key={index} className="bg-primary-100 text-primary-800 text-sm px-3 py-1 rounded-full">
+                <button
+                  key={index}
+                  onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
+                  className="bg-primary-100 text-primary-800 text-sm px-3 py-1 rounded-full hover:bg-primary-200 transition-colors cursor-pointer"
+                >
                   {keyword}
-                </span>
+                </button>
               ))}
             </div>
           </div>
@@ -390,9 +450,13 @@ export default function PaperDetailPage() {
                         </span>
                       )}
                       {similar.keywords_cn?.slice(0, 5).map((keyword, index) => (
-                        <span key={index} className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded">
+                        <button
+                          key={index}
+                          onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
+                          className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+                        >
                           {keyword}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -456,8 +520,8 @@ export default function PaperDetailPage() {
         )}
 
         {aiAnalysis && !aiAnalyzing && (
-          <div className="prose prose-gray max-w-none text-sm leading-relaxed whitespace-pre-wrap">
-            {aiAnalysis}
+          <div className="prose prose-gray max-w-none text-sm">
+            <ReactMarkdown>{aiAnalysis}</ReactMarkdown>
           </div>
         )}
 
@@ -482,7 +546,7 @@ export default function PaperDetailPage() {
                           : 'bg-gray-100 text-gray-800'
                       }`}
                     >
-                      {msg.content}
+                      {msg.role === 'user' ? msg.content : <ReactMarkdown>{msg.content}</ReactMarkdown>}
                     </div>
                   </div>
                 ))}
@@ -490,7 +554,7 @@ export default function PaperDetailPage() {
                 {chatStreaming && streamContent && (
                   <div className="flex justify-start">
                     <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 text-gray-800">
-                      {streamContent}
+                      <ReactMarkdown>{streamContent}</ReactMarkdown>
                       <span className="inline-block w-1.5 h-4 bg-primary-600 ml-0.5 animate-pulse align-middle" />
                     </div>
                   </div>

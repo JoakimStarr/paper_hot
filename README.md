@@ -1,271 +1,386 @@
 # PaperPulse
 
-A production-ready web application for discovering and understanding trending AI research papers. PaperPulse combines fast sources (arXiv) with high-quality venues (top conferences/journals) to help researchers stay updated with the latest developments in AI.
+A paper discovery and analysis platform for Chinese economics journals. Tracks 50+ top-tier journals and arXiv AI papers, provides AI-powered analysis, chat discussions, similarity matching, trend analysis, and network visualization.
+
+---
 
 ## Features
 
-- **Paper Discovery**: Browse AI research papers from arXiv and top venues
-- **Smart Scoring**: Papers ranked by recency, venue quality, and trend analysis
-- **AI-Powered Summaries**: Auto-generated plain English summaries
-- **Topic Classification**: Automatic categorization (LLM, Agent, CV, RL, etc.)
-- **Trend Analysis**: Track which topics are gaining momentum
-- **Similar Papers**: Find related research using embeddings
-- **"Should I Read This?" Score**: AI-generated recommendation score
+### Paper Discovery
+- **Multi-source Aggregation**: Covers CNKI Economics TOP50 journals, 6 site-specific crawlers (管理世界, 经济研究, 经济学季刊, 世界经济, 中国工业经济, American Economic Review), and arXiv AI papers
+- **Smart Multi-dimensional Filters**: Filter by journal, discipline, economics subfield, keyword search, score range, time range; Enter key search support
+- **Sorting & Pagination**: Sort by publish time + issue number, or composite score; pre-fetch first 3 pages with localStorage caching for instant loading
+- **Dedicated Search Page**: Standalone search page with full-field keyword search
 
-## Architecture
+### Paper Detail
+- **Complete Metadata**: Title, authors, abstract, keywords, journal name + issue, DOI (clickable to original), publication date
+- **AI Analysis**: In-depth single-paper analysis powered by Zhipu GLM-4.5-Air, covering research background, methodological innovation, key findings, and research significance
+- **Status Tracking**: Persistent analysis status (pending → success/failed), survives page refresh
+- **Follow-up Chat**: SSE streaming Q&A conversation, Markdown rendering, automatic chat history persistence
+- **Similar Papers**: jieba tokenization + TF-IDF cosine similarity, real-time TOP 5 related papers with similarity scores
 
-### Backend (FastAPI)
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **Data Fetching**: Scheduled jobs to fetch papers from arXiv
-- **AI Processing**: OpenAI API for summaries, keywords, and embeddings
-- **Scoring System**: Multi-factor ranking algorithm
-- **Trend Analysis**: Clustering and growth rate computation
+### Trend Analysis
+- **Trending Topics**: Dynamic topic trends based on keyword frequency growth rates, with rising/stable/declining status markers
+- **AI Trend Reports**: Async background GLM AI analysis generating structured trend reports (hot topics, development trends, keyword insights, journal insights, research recommendations), with polling status support
 
-### Frontend (Next.js)
-- **UI**: Clean, responsive dashboard
-- **Pages**: Home, Trends, Paper Detail
-- **Components**: Paper cards, filters, trend charts
-- **Real-time Updates**: Live data fetching
+### Network Visualization
+- **Keyword Co-occurrence Network**: D3.js interactive force-directed graph visualizing keyword co-occurrence relationships, with zoom and drag support
+- **Author Collaboration Network**: D3.js interactive author collaboration graph showing academic collaboration ecosystems
+
+### Crawler Management
+- **Multi-threaded CNKI Crawler**: DrissionPage-based crawler for automated batch scraping of Economics TOP50 journals
+- **Site-specific Crawlers**: 6 dedicated crawlers for key economics journals with resume support
+- **Captcha Handling**: Auto-detection + manual-assisted captcha resolution
+- **Crawl History**: URL deduplication, incremental crawling, persistent crawl logs
+
+### System Management
+- **Database Statistics**: System overview including total papers, journal distribution, year distribution, source statistics
+- **Crawl Logs**: Real-time crawl status and historical logs
+- **Manual Triggers**: Manual crawl task initiation, trend score updates, full similarity recomputation
+
+### Bilingual i18n
+- Full Chinese/English interface switching
+
+---
+
+## Data Sources
+
+| Source | Count | Description |
+|---|---|---|
+| CNKI | 50 | Economics TOP50 journals, crawled by priority tiers |
+| Site-specific Crawlers | 6 | 管理世界, 经济研究, 经济学季刊, 世界经济, 中国工业经济, AER |
+| arXiv | 4 categories | cs.AI, cs.CL, cs.LG, cs.CV |
+
+### CNKI Economics TOP50 Journals
+
+**Tier 1 Journals**: 经济研究, 管理世界, 经济学（季刊）, 世界经济, 中国工业经济, 中国社会科学, 金融研究, 数量经济技术经济研究
+
+**Tier 2 Journals**: 财贸经济, 中国农村经济, 经济学动态, 国际经济评论, 改革, 中国人口科学, 农业经济问题, 中国农村观察, 财政研究, 税务研究, 会计研究, 审计研究
+
+**International Trade & World Economy**: 国际贸易问题, 国际经贸探索, 世界经济研究, 经济社会体制比较
+
+**Comprehensive Economics Journals**: 经济学家, 经济科学, 经济理论与经济管理, 南开经济研究, 当代经济科学, 当代经济研究, and more
+
+> See [fetchers_cnki.py](backend/app/fetchers_cnki.py) for the complete list of 50 journals
+
+---
 
 ## Tech Stack
 
 ### Backend
-- Python 3.11+
-- FastAPI
-- PostgreSQL
-- SQLAlchemy
-- OpenAI API
-- arxiv library
-- scikit-learn
+
+| Category | Technology |
+|---|---|
+| Framework | FastAPI + Uvicorn |
+| Database | SQLite + aiosqlite + SQLAlchemy ORM (PostgreSQL compatible) |
+| AI Service | zai-sdk (Zhipu GLM-4.7 / GLM-4.5-Air with multi-model fallback) |
+| Similarity | jieba tokenization + scikit-learn TF-IDF + cosine similarity |
+| Scheduling | APScheduler (scheduled crawling, trend updates) |
+| Crawling | DrissionPage (CNKI), BeautifulSoup4 + lxml (site-specific) |
+| Streaming | SSE (Server-Sent Events) |
+| Containerization | Docker + Dockerfile |
 
 ### Frontend
-- Next.js 14
-- React 18
-- TypeScript
-- Tailwind CSS
-- Recharts
-- Axios
 
-## Setup Instructions
+| Category | Technology |
+|---|---|
+| Framework | Next.js 14 + React 18 + TypeScript |
+| Styling | Tailwind CSS + @tailwindcss/typography |
+| Charts | Recharts (trends) + D3.js (networks) |
+| Markdown | react-markdown + remark-gfm |
+| HTTP | axios |
+| Icons | lucide-react |
+| Dates | date-fns |
+| i18n | Custom LanguageContext + i18n |
+| Caching | localStorage page prefetch cache |
+| Containerization | Docker + Dockerfile |
 
-### Prerequisites
-- Python 3.11 or higher
-- Node.js 18 or higher
-- PostgreSQL 14 or higher
-- OpenAI API key (optional, but recommended)
-
-### 1. Database Setup
-
-```bash
-# Create PostgreSQL database
-createdb paperpulse
-
-# Or using psql
-psql -U postgres
-CREATE DATABASE paperpulse;
-\q
-
-# Run the schema initialization
-psql -U postgres -d paperpulse -f database/init.sql
-```
-
-### 2. Backend Setup
-
-```bash
-cd backend
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy environment file
-cp .env.example .env
-
-# Edit .env with your settings
-# DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/paperpulse
-# OPENAI_API_KEY=your_openai_api_key_here
-
-# Run the backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### 3. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Create .env.local file
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api" > .env.local
-
-# Run the development server
-npm run dev
-```
-
-### 4. Access the Application
-
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Documentation: http://localhost:8000/docs
-
-## API Endpoints
-
-### Papers
-
-- `GET /api/papers` - List papers with filters and pagination
-  - Query params: `page`, `page_size`, `topic`, `source`, `min_score`, `days_back`
-  
-- `GET /api/papers/{id}` - Get paper details with similar papers
-
-### Trends
-
-- `GET /api/trending-topics` - Get trending topics with growth rates
-  - Query params: `weeks_back`
-
-## Example API Responses
-
-### GET /api/papers
-
-```json
-{
-  "papers": [
-    {
-      "id": "uuid",
-      "title": "Attention Is All You Need",
-      "abstract": "The dominant sequence transduction models...",
-      "authors": ["Ashish Vaswani", "Noam Shazeer"],
-      "url": "https://arxiv.org/abs/1706.03762",
-      "source": "arxiv",
-      "venue": "NeurIPS",
-      "published_at": "2017-06-12T00:00:00",
-      "created_at": "2024-01-15T10:30:00",
-      "features": {
-        "summary": "This paper introduces the Transformer architecture...",
-        "keywords": ["transformer", "attention", "neural network"],
-        "topic": "LLM"
-      },
-      "scores": {
-        "recency_score": 0.45,
-        "venue_score": 1.0,
-        "trend_score": 0.85,
-        "final_score": 0.72
-      }
-    }
-  ],
-  "total": 150,
-  "page": 1,
-  "page_size": 20,
-  "has_next": true
-}
-```
-
-### GET /api/trending-topics
-
-```json
-{
-  "topics": [
-    {
-      "topic": "LLM",
-      "paper_count": 45,
-      "growth_rate": 0.35,
-      "trend": "rising"
-    },
-    {
-      "topic": "Agent",
-      "paper_count": 28,
-      "growth_rate": 0.22,
-      "trend": "rising"
-    }
-  ],
-  "week_start": "2024-01-08T00:00:00",
-  "week_end": "2024-01-15T00:00:00"
-}
-```
+---
 
 ## Scoring System
 
-Papers are scored using a multi-factor algorithm:
+Paper composite scores are computed from three weighted dimensions:
 
-```
-final_score = 0.5 * recency_score + 0.3 * venue_score + 0.2 * trend_score
-```
+| Dimension | Weight | Method |
+|---|---|---|
+| Recency | 50% | Exponential decay function — newer papers score higher |
+| Venue Authority | 30% | Journal tier-based authority score |
+| Trend Heat | 20% | Topic growth rate with Sigmoid smoothing |
 
-### Recency Score
-- Exponential decay based on publication date
-- Recent papers score higher
+---
 
-### Venue Score
-- NeurIPS, ICML, ICLR: 1.0
-- CVPR, ACL: 0.9
-- Nature, Science: 1.0
-- JMLR: 0.95
-- arXiv: 0.6
+## Similarity Algorithm
 
-### Trend Score
-- Based on keyword frequency growth
-- Papers with trending keywords score higher
+Using **jieba Chinese tokenization** + **TF-IDF vectorization** + **cosine similarity**:
 
-## Configuration
+1. Tokenize all paper abstracts with jieba
+2. Build TF-IDF matrix with TfidfVectorizer (max_features=10,000)
+3. Compute pairwise cosine similarity
+4. Filter pairs with score > 0.05 and persist to `paper_similarities` table
+5. Query TOP 5 from table at millisecond-level response
 
-### Backend Environment Variables
+Supports single-paper recompute or full recompute after new papers are added.
 
-- `DATABASE_URL`: PostgreSQL connection string
-- `OPENAI_API_KEY`: OpenAI API key for AI features
-- `SCHEDULER_ENABLED`: Enable/disable automatic paper fetching (default: true)
-- `FETCH_INTERVAL_HOURS`: How often to fetch new papers (default: 24)
-- `CORS_ORIGINS`: Allowed CORS origins for frontend
+---
 
-### Frontend Environment Variables
+## Database Schema
 
-- `NEXT_PUBLIC_API_URL`: Backend API URL
+| Table | Description |
+|---|---|
+| papers | Main paper table (title, authors, abstract, DOI, keywords, journal issue, etc.) |
+| paper_features | Paper features (AI summary, keyword extraction, topic classification) |
+| paper_scores | Scores (recency, venue, trend, composite) |
+| paper_analyses | Single-paper AI analysis history (with status tracking) |
+| paper_chats | Follow-up chat records (stored by user/assistant role) |
+| paper_similarities | Pre-computed TF-IDF cosine similarities (persisted) |
+| topic_trends | Topic trend data (topic, week, growth rate) |
+| crawl_logs | Crawler execution logs |
+| ai_analysis_reports | Trend analysis reports (structured JSON + raw analysis text) |
 
-## Development
+---
 
-### Running Tests
+## API Endpoints
 
-```bash
-# Backend
-cd backend
-pytest
+All endpoints prefixed with `/api`
 
-# Frontend
-cd frontend
-npm test
-```
+### Papers
 
-### Building for Production
+| Method | Path | Description |
+|---|---|---|
+| GET | `/papers` | Paper list (pagination, filtering, sorting, search) |
+| GET | `/papers/{id}` | Paper detail (with similar papers + similarity scores) |
+| GET | `/filter-statistics` | Filter statistics |
+| GET | `/stats` | Database statistics summary (counts, journal distribution, year distribution) |
+
+### AI Analysis (Paper Detail)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/papers/{id}/analyze` | Start AI analysis (deduplicated, status tracked) |
+| GET | `/papers/{id}/analyses` | Analysis history list |
+| GET | `/papers/{id}/analyses/latest` | Latest analysis result (with status) |
+| POST | `/papers/{id}/chat` | Follow-up chat (SSE streaming) |
+| GET | `/papers/{id}/chats` | Load chat history |
+| POST | `/papers/{id}/chats` | Save chat messages |
+
+### Similarity
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/papers/{id}/recompute-similarities` | Recompute similarities for a single paper |
+| POST | `/recompute-all-similarities` | Full recompute of all paper similarities |
+
+### Trends & Network
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/trending-topics` | Trending topics list |
+| GET | `/network/authors` | Author collaboration network data |
+| GET | `/network/keywords` | Keyword co-occurrence network data |
+| GET | `/ai-analysis` | AI trend analysis (legacy compatibility endpoint) |
+| GET | `/ai-analysis/v2` | AI trend analysis status query |
+| POST | `/ai-analysis/v2/analyze` | Trigger async background trend analysis |
+| GET | `/ai-analysis/reports` | Historical analysis report list |
+| GET | `/ai-analysis/reports/{id}` | Report detail |
+
+### Crawler
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/crawl/start` | Start crawl task (supports specifying journals) |
+| GET | `/crawl/status` | Crawl execution logs |
+
+### Management
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/update-trend-scores` | Manually trigger trend score update |
+
+---
+
+## Frontend Routes
+
+| Route | Description |
+|---|---|
+| `/` | Home — paper list, multi-dimensional filters, search |
+| `/paper/[id]` | Paper Detail — metadata, AI analysis, follow-up chat, similar papers |
+| `/search` | Search — full-field keyword search |
+| `/trends` | Trends — trending topics + AI trend report |
+| `/network` | Network — keyword co-occurrence + author collaboration D3.js visualization |
+| `/system` | System — crawl logs, database stats, manual operations |
+
+---
+
+## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Zhipu API Key (for AI analysis features)
+
+### 1. Install Dependencies
 
 ```bash
 # Backend
 cd backend
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # Frontend
 cd frontend
-npm run build
-npm start
+npm install
 ```
 
-## Future Enhancements
+### 2. Configuration
 
-- [ ] User authentication and saved papers
-- [ ] Personalized recommendations
-- [ ] Email weekly digest
-- [ ] Citation network analysis
-- [ ] Paper reading lists
-- [ ] Export to BibTeX
-- [ ] Mobile app
+Create a `.env` file in the `backend/` directory:
+
+```env
+ZHIPU_API_KEY=your_zhipu_api_key_here
+```
+
+See [.env.example](backend/.env.example) for full configuration options.
+
+### 3. Launch
+
+```bash
+./start.sh
+```
+
+### 4. Access
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs (Swagger) | http://localhost:8000/docs |
+
+### 5. Stop
+
+```bash
+./stop.sh
+```
+
+---
+
+## Docker Deployment
+
+```bash
+# Backend
+cd backend
+docker build -t paperpulse-backend .
+docker run -d -p 8000:8000 --env-file .env paperpulse-backend
+
+# Frontend
+cd frontend
+docker build -t paperpulse-frontend .
+docker run -d -p 3000:3000 paperpulse-frontend
+```
+
+---
+
+## Crawler Architecture
+
+### CNKI Crawler
+
+DrissionPage-based browser automation crawler with the following core classes:
+
+- **DrissionPageBase**: Browser lifecycle management, random User-Agent rotation, anti-automation detection, captcha detection & handling
+- **CNKIDrissionFetcher**: Single journal crawler (search → paper list → detail page → data extraction)
+- **CNKITop50BatchFetcher**: Batch scheduler for 50 journals, executed by priority order
+
+Features:
+- Random delays to simulate human browsing and reduce anti-crawling risk
+- Headless/headed mode switching
+- Manual-assisted captcha resolution
+- URL deduplication + history records with incremental crawling support
+
+### Site-specific Crawlers
+
+Dedicated crawlers for 6 key economics journal websites, unified via `EconomicsJournalFetcher` base class:
+
+| Crawler Class | Target Site |
+|---|---|
+| GuanliShijieFetcher | 管理世界 (Management World) |
+| JingjiYanjiuFetcher | 经济研究 (Economic Research Journal) |
+| JingjixueJikanFetcher | 经济学（季刊）(China Economic Quarterly) |
+| ShijieJingjiFetcher | 世界经济 (The Journal of World Economy) |
+| ZhongguoGongyeJingjiFetcher | 中国工业经济 (China Industrial Economics) |
+| AmericanEconomicReviewFetcher | AER |
+
+### Scheduling Strategy
+
+- **arXiv papers**: Automatic fetch every 24 hours
+- **Economics journals**: Automatic fetch daily at 2:00 AM
+- **Trend scores**: Automatic update every 6 hours
+- **Manual triggers**: Available anytime via System page or API
+
+---
+
+## Project Structure
+
+```
+paper_hot/
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # FastAPI app entry + lifecycle management
+│   │   ├── api.py               # All API endpoints (papers, AI, crawling, trends, network)
+│   │   ├── models.py            # SQLAlchemy ORM models (9 tables)
+│   │   ├── schemas.py           # Pydantic request/response models
+│   │   ├── crud.py               # Database operations layer (6 CRUD classes)
+│   │   ├── database.py           # Database connection & session management
+│   │   ├── config.py             # Configuration management (pydantic-settings)
+│   │   ├── scheduler.py          # APScheduler job scheduling
+│   │   ├── scoring.py            # Paper scoring system
+│   │   ├── similarity.py         # TF-IDF similarity computation
+│   │   ├── ai_processor.py       # AI processor (summarization, keyword extraction, topic classification)
+│   │   ├── ai_service.py         # AI trend analysis service (V2)
+│   │   ├── glm_analyzer.py       # GLM model analyzer (multi-model fallback)
+│   │   ├── fetchers.py           # Paper fetching base + site-specific crawlers
+│   │   ├── fetchers_cnki.py      # CNKI crawler (DrissionPage)
+│   │   └── fetchers_cnki_navi.py # CNKI journal navigation crawler
+│   ├── data/
+│   │   ├── paperpulse.db              # SQLite database
+│   │   ├── papers_history.json        # Crawler history (URL → deduplication)
+│   │   └── paper_details_history.json # Paper detail history
+│   ├── .env.example
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/
+│   └── src/
+│       ├── app/
+│       │   ├── page.tsx                    # Home page (paper list)
+│       │   ├── layout.tsx                  # Root layout
+│       │   ├── paper/[id]/page.tsx         # Paper detail page
+│       │   ├── search/page.tsx             # Search page
+│       │   ├── trends/page.tsx             # Trend analysis page
+│       │   ├── network/page.tsx            # Network visualization page
+│       │   └── system/page.tsx             # System management page
+│       ├── components/
+│       │   ├── Filters.tsx                 # Filter component
+│       │   ├── PaperCard.tsx               # Paper card component
+│       │   ├── Pagination.tsx              # Pagination component
+│       │   ├── SearchBar.tsx               # Search bar component
+│       │   ├── Layout.tsx                  # Layout component
+│       │   ├── TrendChart.tsx              # Trend chart component
+│       │   └── LanguageSwitcher.tsx        # Language switcher
+│       ├── contexts/
+│       │   └── LanguageContext.tsx         # i18n context
+│       ├── lib/
+│       │   ├── api.ts                      # API client
+│       │   ├── cache.ts                    # localStorage cache
+│       │   └── i18n.ts                     # i18n translations
+│       ├── types/
+│       │   └── paper.ts                    # TypeScript type definitions
+│       └── styles/
+│           └── globals.css                 # Global styles
+├── cnki_paper_captcha.py                   # CNKI captcha recognition module
+├── start.sh                                # Startup script
+├── stop.sh                                 # Shutdown script
+└── README.md
+```
+
+---
 
 ## License
 
 MIT License
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

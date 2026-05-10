@@ -15,7 +15,7 @@ from app.schemas import (PaperResponse, PaperListResponse,
                          PaperDetailResponse, SimilarPaper,
                          CrawlLogResponse, CrawlLogListResponse,
                          AIAnalysisReportResponse, AIAnalysisReportListResponse)
-from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD
+from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD, PaperSimilarityCRUD, PaperChatCRUD
 from app.ai_processor import TrendAnalyzer
 from app.fetchers import VenueDataFetcher
 from app.ai_service import ai_trend_service
@@ -55,12 +55,27 @@ class AIAnalysisV2Response(BaseModel):
     running_report_id: Optional[int] = None
 
 
+def _parse_json_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return []
+
+
 def _paper_to_card(paper) -> PaperCardResponse:
     return PaperCardResponse(
         id=paper.id,
         title=paper.title,
         abstract=paper.abstract,
-        authors=paper.authors or [],
+        authors=_parse_json_list(paper.authors),
         url=paper.url,
         source=paper.source,
         venue=paper.venue,
@@ -68,7 +83,7 @@ def _paper_to_card(paper) -> PaperCardResponse:
         journal_issue=paper.journal_issue,
         economics_subfield=paper.economics_subfield,
         doi=paper.doi,
-        keywords_cn=paper.keywords_cn or [],
+        keywords_cn=_parse_json_list(paper.keywords_cn),
         published_at=paper.published_at,
         topic=paper.features.topic if paper.features else None,
         recency_score=paper.scores.recency_score if paper.scores else 0.0,
@@ -149,7 +164,7 @@ async def get_paper(
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
 
-    similar_papers = await PaperCRUD.get_similar_papers(db, paper_id, limit=5)
+    similar_papers, score_map = await PaperSimilarityCRUD.get_similar_papers_with_scores(db, paper_id, limit=5)
 
     should_read_score = None
     if paper.scores:
@@ -161,7 +176,7 @@ async def get_paper(
             SimilarPaper(
                 id=p.id,
                 title=p.title,
-                similarity_score=0.85,
+                similarity_score=round(score_map.get(p.id, 0), 4),
                 topic=p.features.topic if p.features else None,
                 keywords_cn=p.keywords_cn or []
             )
@@ -732,6 +747,10 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
 
+    pending = await PaperAnalysisCRUD.get_latest_pending(db, paper_id)
+    if pending:
+        return {"analysis": None, "status": "pending", "message": "分析正在进行中"}
+
     authors = ", ".join(paper.authors) if paper.authors else "未知"
     keywords = ", ".join(paper.keywords_cn) if paper.keywords_cn else "未知"
     journal = paper.journal_name or "未知"
@@ -752,6 +771,9 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
 
 请用中文回答，结构清晰。"""
 
+    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id)
+    await db.commit()
+
     try:
         client = _get_glm_client()
         response = await asyncio.to_thread(
@@ -761,10 +783,12 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
             max_tokens=4096,
         )
         analysis_text = response.choices[0].message.content
-        await PaperAnalysisCRUD.save_analysis(db, paper_id, analysis_text)
+        await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
         await db.commit()
-        return {"analysis": analysis_text}
+        return {"analysis": analysis_text, "status": "success"}
     except Exception as e:
+        await PaperAnalysisCRUD.update_analysis(db, analysis_id, f"分析失败: {str(e)}", "failed")
+        await db.commit()
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
 
 
@@ -778,11 +802,20 @@ async def get_paper_analyses(paper_id: str, db: AsyncSession = Depends(get_db)):
 async def get_latest_analysis(paper_id: str, db: AsyncSession = Depends(get_db)):
     record = await PaperAnalysisCRUD.get_latest(db, paper_id)
     if not record:
-        return {"analysis": None}
-    return {"analysis": record.analysis, "model": record.model, "created_at": record.created_at.isoformat()}
+        return {"analysis": None, "status": None}
+    return {
+        "analysis": record.analysis,
+        "model": record.model,
+        "status": record.status,
+        "created_at": record.created_at.isoformat()
+    }
 
 
 class ChatRequest(BaseModel):
+    messages: List[dict]
+
+
+class ChatSaveRequest(BaseModel):
     messages: List[dict]
 
 
@@ -846,3 +879,67 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
                 yield f"data: {json.dumps({'content': item})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/papers/{paper_id}/chats")
+async def get_chat_history(paper_id: str, db: AsyncSession = Depends(get_db)):
+    messages = await PaperChatCRUD.get_chats(db, paper_id)
+    return [
+        {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+        for m in messages
+    ]
+
+
+@router.post("/papers/{paper_id}/chats")
+async def save_chat_messages(paper_id: str, body: ChatSaveRequest, db: AsyncSession = Depends(get_db)):
+    messages = body.messages
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages is required")
+    for msg in messages:
+        await PaperChatCRUD.save_message(db, paper_id, msg["role"], msg["content"])
+    await db.commit()
+    return {"status": "saved", "count": len(messages)}
+
+
+@router.post("/papers/{paper_id}/recompute-similarities")
+async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends(get_db)):
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    try:
+        from app.similarity import compute_and_store_for_paper
+        await compute_and_store_for_paper(db, paper_id)
+        await db.commit()
+        return {"status": "success", "message": "Similarities recomputed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recompute failed: {str(e)}")
+
+
+@router.post("/recompute-all-similarities")
+async def recompute_all_similarities(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    from app.models import Paper
+    from app.similarity import compute_all_similarities
+
+    try:
+        result = await db.execute(select(Paper.id, Paper.abstract))
+        all_papers = [(r[0], r[1]) for r in result.all()]
+
+        if len(all_papers) < 2:
+            return {"status": "skipped", "message": "Need at least 2 papers", "pairs": 0}
+
+        similarities = compute_all_similarities(all_papers)
+
+        await PaperSimilarityCRUD.clear_all(db)
+        await db.flush()
+
+        from app.models import PaperSimilarity
+        for id_a, id_b, score in similarities:
+            sim = PaperSimilarity(paper_id_a=id_a, paper_id_b=id_b, similarity_score=score)
+            db.add(sim)
+
+        await db.commit()
+        return {"status": "success", "message": f"Computed {len(similarities)} pairs"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recompute all failed: {str(e)}")

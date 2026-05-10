@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
@@ -15,7 +16,22 @@ const PAGE_SIZE = 20;
 const INITIAL_PREFETCH = 3;
 
 export default function HomePage() {
+  return (
+    <Suspense fallback={
+      <Layout>
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        </div>
+      </Layout>
+    }>
+      <HomePageInner />
+    </Suspense>
+  );
+}
+
+function HomePageInner() {
   const { t } = useLanguage();
+  const searchParams = useSearchParams();
   const [papers, setPapers] = useState<PaperCardType[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -30,34 +46,20 @@ export default function HomePage() {
   const [selectedDiscipline, setSelectedDiscipline] = useState<string | null>(null);
   const [selectedJournal, setSelectedJournal] = useState<string | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchField, setSearchField] = useState('');
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const flushSearch = useCallback((value: string) => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
-    setDebouncedSearch(value);
-  }, []);
 
   useEffect(() => {
-    debounceRef.current = setTimeout(() => setDebouncedSearch(searchQuery), 400);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [searchQuery]);
+    const journal = searchParams.get('journal');
+    if (journal) setSelectedJournal(journal);
+  }, []);
 
   useEffect(() => {
     setPage(1);
     pageCache.current.clear();
     prefetchedRef.current = false;
     setQueryKey(k => k + 1);
-  }, [debouncedSearch, searchField, sortBy, sortOrder, minScore, selectedDiscipline, selectedJournal]);
+  }, [sortBy, sortOrder, minScore, selectedDiscipline, selectedJournal]);
 
   const buildParams = useCallback((p: number) => ({
     page: p,
@@ -65,11 +67,9 @@ export default function HomePage() {
     min_score: minScore || undefined,
     discipline: selectedDiscipline || undefined,
     journal_name: selectedJournal || undefined,
-    search: debouncedSearch || undefined,
-    search_field: searchField || undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-  }), [minScore, selectedDiscipline, selectedJournal, debouncedSearch, searchField, sortBy, sortOrder]);
+  }), [minScore, selectedDiscipline, selectedJournal, sortBy, sortOrder]);
 
   const applyResponse = useCallback((response: PaperCardListResponse, p: number) => {
     setPapers(response.papers);
@@ -160,16 +160,11 @@ export default function HomePage() {
         minScore={minScore}
         selectedDiscipline={selectedDiscipline}
         selectedJournal={selectedJournal}
-        searchQuery={searchQuery}
-        searchField={searchField}
         sortBy={sortBy}
         sortOrder={sortOrder}
         onMinScoreChange={(v) => setMinScore(v)}
         onDisciplineChange={(v) => setSelectedDiscipline(v)}
         onJournalChange={(v) => setSelectedJournal(v)}
-        onSearchChange={(v) => setSearchQuery(v)}
-        onSearchSubmit={(v) => flushSearch(v)}
-        onSearchFieldChange={(v) => setSearchField(v)}
         onSortByChange={(v) => setSortBy(v)}
         onSortOrderToggle={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
       />

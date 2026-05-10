@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
 import { ExternalLink, Calendar, TrendingUp, Award } from 'lucide-react';
 import { format } from 'date-fns';
@@ -11,8 +12,14 @@ interface PaperCardProps {
   paper: PaperCardType;
 }
 
-function getIssuePeriod(doi: string | null, publishedAt: string | null): string {
+function getIssuePeriod(doi: string | null, publishedAt: string | null, journalIssue: string | null): string {
+  if (journalIssue) return journalIssue;
   if (doi) {
+    const fy = doi.match(/f\.(\d{4})\.(\d+)$/);
+    if (fy && fy[2].length === 4) {
+      const issue = Math.min(Math.ceil(parseInt(fy[2], 10) / 5), 12);
+      return `${fy[1]}年 第${issue}期`;
+    }
     const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
     if (mm) {
       return `${mm[1]}年 第${parseInt(mm[2], 10)}期`;
@@ -20,10 +27,6 @@ function getIssuePeriod(doi: string | null, publishedAt: string | null): string 
     const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
     if (ymd) {
       return `${ymd[1]}年 第${parseInt(ymd[2], 10)}期`;
-    }
-    const fy = doi.match(/f\.(\d{4})\.\d+$/);
-    if (fy) {
-      return `${fy[1]}年`;
     }
   }
   if (publishedAt) {
@@ -55,6 +58,7 @@ const subfieldColors: Record<string, string> = {
 
 export default function PaperCard({ paper }: PaperCardProps) {
   const { t } = useLanguage();
+  const router = useRouter();
   const score = paper.final_score;
   const isHighScore = score >= 0.7;
   const isTrending = paper.trend_score >= 0.6;
@@ -103,9 +107,16 @@ export default function PaperCard({ paper }: PaperCardProps) {
           </span>
         )}
         {paper.keywords_cn?.slice(0, 3).map((keyword, index) => (
-          <span key={index} className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded">
+          <button
+            key={index}
+            onClick={(e) => {
+              e.preventDefault();
+              router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`);
+            }}
+            className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+          >
             {keyword}
-          </span>
+          </button>
         ))}
       </div>
 
@@ -113,7 +124,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
         <div className="flex items-center gap-4 flex-wrap">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
-            {getIssuePeriod(paper.doi, paper.published_at) || 'Unknown'}
+            {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
           <span className="bg-gray-100 px-2 py-1 rounded text-xs">
             {paper.source}
@@ -124,9 +135,12 @@ export default function PaperCard({ paper }: PaperCardProps) {
             </span>
           )}
           {paper.journal_name && (
-            <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs">
+            <button
+              onClick={() => router.push(`/search?journal=${encodeURIComponent(paper.journal_name!)}`)}
+              className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs hover:bg-blue-100 transition-colors cursor-pointer"
+            >
               {paper.journal_name}
-            </span>
+            </button>
           )}
           {paper.journal_issue && (
             <span className="bg-gray-50 text-gray-700 px-2 py-1 rounded text-xs">

@@ -1308,7 +1308,7 @@ class JournalCrawler:
         print(f"\n[线程{self.thread_id}] 期刊 {journal_name} 共获取 {len(all_papers)} 篇论文")
         return all_papers
 
-    async def crawl_paper_detail(self, paper_info: dict, journal_name: str = None) -> dict:
+    async def crawl_paper_detail(self, paper_info: dict, journal_name: str = None, year: str = None, issue: str = None) -> dict:
         """获取论文详情"""
         paper_url = paper_info['url']
 
@@ -1429,7 +1429,7 @@ class JournalCrawler:
 
             if title:
                 print(f"    [线程{self.thread_id}] ✓ 成功获取: {title[:40]}...")
-                await self.save_to_database(result, journal_name)
+                await self.save_to_database(result, journal_name, year, issue)
                 return result
             else:
                 print(f"    [线程{self.thread_id}] ✗ 获取失败: 无标题")
@@ -1439,7 +1439,7 @@ class JournalCrawler:
             print(f"    [线程{self.thread_id}] ✗ 获取失败: {e}")
             return {'error': str(e)}
 
-    async def save_to_database(self, paper_data: dict, journal_name: str = None):
+    async def save_to_database(self, paper_data: dict, journal_name: str = None, year: str = None, issue: str = None):
         """异步保存到数据库"""
         try:
             import sys
@@ -1466,6 +1466,9 @@ class JournalCrawler:
 
                 if journal_name:
                     paper_data['journal_name'] = journal_name
+
+                if year and issue:
+                    paper_data['journal_issue'] = f"{year}年第{issue}期"
 
                 doi = paper_data.get('doi', '')
                 if doi:
@@ -1553,7 +1556,7 @@ class JournalCrawler:
 
                     for i, paper in enumerate(papers_to_process, 1):
                         print(f"\n  [线程{self.thread_id}] [{i}/{len(papers_to_process)}] {paper['title'][:50]}...")
-                        detail = await self.crawl_paper_detail(paper, journal_name)
+                        detail = await self.crawl_paper_detail(paper, journal_name, year, issue)
 
                         if 'error' not in detail:
                             total_processed += 1

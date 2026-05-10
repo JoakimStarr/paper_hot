@@ -109,12 +109,12 @@ export const papersApi = {
     return response.data;
   },
 
-  analyzePaper: async (paperId: string): Promise<{ analysis: string }> => {
-    const response = await apiClient.post<{ analysis: string }>(`/papers/${paperId}/analyze`);
+  analyzePaper: async (paperId: string): Promise<{ analysis: string | null; status: string }> => {
+    const response = await apiClient.post<{ analysis: string | null; status: string }>(`/papers/${paperId}/analyze`);
     return response.data;
   },
 
-  getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; model?: string; created_at?: string }> => {
+  getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> => {
     const response = await apiClient.get(`/papers/${paperId}/analyses/latest`);
     return response.data;
   },
@@ -122,6 +122,15 @@ export const papersApi = {
   getPaperAnalyses: async (paperId: string): Promise<Array<{ id: number; analysis: string; model: string; created_at: string }>> => {
     const response = await apiClient.get(`/papers/${paperId}/analyses`);
     return response.data;
+  },
+
+  getChats: async (paperId: string): Promise<Array<{ role: string; content: string }>> => {
+    const response = await apiClient.get(`/papers/${paperId}/chats`);
+    return response.data;
+  },
+
+  saveChats: async (paperId: string, messages: Array<{ role: string; content: string }>): Promise<void> => {
+    await apiClient.post(`/papers/${paperId}/chats`, { messages });
   },
 };
 

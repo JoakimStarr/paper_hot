@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { FileText, TrendingUp, Home, Settings, Share2 } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2, Search } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -28,6 +28,13 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <Home className="w-5 h-5" />
                 <span>{t('nav.home')}</span>
+              </Link>
+              <Link
+                href="/search"
+                className="flex items-center gap-2 text-gray-600 hover:text-primary-600 transition-colors"
+              >
+                <Search className="w-5 h-5" />
+                <span>搜索</span>
               </Link>
               <Link
                 href="/trends"

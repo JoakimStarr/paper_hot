@@ -8,6 +8,7 @@ httpx>=0.26.0
 arxiv>=2.1.0
 openai>=1.10.0
 scikit-learn>=1.4.0
+jieba>=0.42.1
 numpy>=1.26.0
 apscheduler>=3.10.0
 python-dotenv>=1.0.0

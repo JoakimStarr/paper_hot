@@ -37,31 +37,7 @@ class PaperCRUD:
         paper_id: str,
         limit: int = 5
     ) -> List[Paper]:
-        paper = await PaperCRUD.get_paper_by_id(db, paper_id)
-        if not paper:
-            return []
-        
-        conditions = []
-        
-        if paper.features and paper.features.topic:
-            conditions.append(
-                Paper.features.has(PaperFeatures.topic == paper.features.topic)
-            )
-        
-        from sqlalchemy import or_
-        query = (
-            select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
-            .where(Paper.id != paper_id)
-        )
-        
-        if conditions:
-            query = query.where(or_(*conditions))
-        
-        query = query.order_by(Paper.published_at.desc()).limit(limit)
-        
-        result = await db.execute(query)
-        return list(result.scalars().all())
+        return await PaperSimilarityCRUD.get_similar_papers(db, paper_id, limit)
     
     @staticmethod
     async def get_all_paper_urls(db: AsyncSession) -> List[str]:
@@ -603,10 +579,42 @@ class PaperAnalysisCRUD:
     @staticmethod
     async def save_analysis(db: AsyncSession, paper_id: str, analysis: str, model: str = "glm-4.5-air"):
         from app.models import PaperAnalysis
-        record = PaperAnalysis(paper_id=paper_id, analysis=analysis, model=model)
+        record = PaperAnalysis(paper_id=paper_id, analysis=analysis, model=model, status="success")
         db.add(record)
         await db.flush()
         return record
+
+    @staticmethod
+    async def create_pending(db: AsyncSession, paper_id: str) -> int:
+        from app.models import PaperAnalysis
+        record = PaperAnalysis(paper_id=paper_id, analysis=None, model="glm-4.5-air", status="pending")
+        db.add(record)
+        await db.flush()
+        await db.refresh(record)
+        return record.id
+
+    @staticmethod
+    async def update_analysis(db: AsyncSession, analysis_id: int, analysis: str, status: str = "success"):
+        from app.models import PaperAnalysis
+        result = await db.execute(
+            select(PaperAnalysis).where(PaperAnalysis.id == analysis_id)
+        )
+        record = result.scalar_one_or_none()
+        if record:
+            record.analysis = analysis
+            record.status = status
+            await db.flush()
+
+    @staticmethod
+    async def get_latest_pending(db: AsyncSession, paper_id: str):
+        from app.models import PaperAnalysis
+        result = await db.execute(
+            select(PaperAnalysis)
+            .where(PaperAnalysis.paper_id == paper_id, PaperAnalysis.status == "pending")
+            .order_by(desc(PaperAnalysis.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_latest(db: AsyncSession, paper_id: str):
@@ -629,6 +637,37 @@ class PaperAnalysisCRUD:
             .limit(limit)
         )
         return result.scalars().all()
+
+
+class PaperChatCRUD:
+    @staticmethod
+    async def get_chats(db: AsyncSession, paper_id: str) -> list:
+        from app.models import PaperChat
+        result = await db.execute(
+            select(PaperChat)
+            .where(PaperChat.paper_id == paper_id)
+            .order_by(PaperChat.created_at)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def save_message(db: AsyncSession, paper_id: str, role: str, content: str):
+        from app.models import PaperChat
+        msg = PaperChat(paper_id=paper_id, role=role, content=content)
+        db.add(msg)
+        await db.flush()
+        await db.refresh(msg)
+        return msg
+
+    @staticmethod
+    async def clear_chats(db: AsyncSession, paper_id: str):
+        from app.models import PaperChat
+        result = await db.execute(
+            select(PaperChat).where(PaperChat.paper_id == paper_id)
+        )
+        for row in result.scalars().all():
+            await db.delete(row)
+        await db.flush()
 
 
 class CrawlLogCRUD:
@@ -810,3 +849,72 @@ class AIAnalysisReportCRUD:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+
+class PaperSimilarityCRUD:
+    @staticmethod
+    async def get_similar_papers_with_scores(
+        db: AsyncSession,
+        paper_id: str,
+        limit: int = 5
+    ) -> Tuple[List[Paper], dict]:
+        from app.models import PaperSimilarity
+        result = await db.execute(
+            select(PaperSimilarity)
+            .where(
+                (PaperSimilarity.paper_id_a == paper_id) |
+                (PaperSimilarity.paper_id_b == paper_id)
+            )
+            .order_by(desc(PaperSimilarity.similarity_score))
+            .limit(limit)
+        )
+        rows = result.scalars().all()
+
+        similar_ids = []
+        score_map = {}
+        for row in rows:
+            other_id = row.paper_id_b if row.paper_id_a == paper_id else row.paper_id_a
+            similar_ids.append(other_id)
+            score_map[other_id] = row.similarity_score
+
+        if not similar_ids:
+            return [], {}
+
+        result = await db.execute(
+            select(Paper)
+            .options(selectinload(Paper.features), selectinload(Paper.scores))
+            .where(Paper.id.in_(similar_ids))
+        )
+        papers = list(result.scalars().all())
+
+        papers.sort(key=lambda p: score_map.get(p.id, 0), reverse=True)
+        return papers, score_map
+
+    @staticmethod
+    async def get_similar_papers(
+        db: AsyncSession,
+        paper_id: str,
+        limit: int = 5
+    ) -> List[Paper]:
+        papers, _ = await PaperSimilarityCRUD.get_similar_papers_with_scores(db, paper_id, limit)
+        return papers
+
+    @staticmethod
+    async def delete_by_paper(db: AsyncSession, paper_id: str):
+        from app.models import PaperSimilarity
+        result = await db.execute(
+            select(PaperSimilarity).where(
+                (PaperSimilarity.paper_id_a == paper_id) |
+                (PaperSimilarity.paper_id_b == paper_id)
+            )
+        )
+        for row in result.scalars().all():
+            await db.delete(row)
+        await db.flush()
+
+    @staticmethod
+    async def clear_all(db: AsyncSession):
+        from app.models import PaperSimilarity
+        result = await db.execute(select(PaperSimilarity))
+        for row in result.scalars().all():
+            await db.delete(row)
