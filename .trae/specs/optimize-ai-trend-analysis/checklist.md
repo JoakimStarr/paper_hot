@@ -1,0 +1,12 @@
+- [x] 旧版 /ai-analysis 接口使用 AITrendService，返回兼容格式
+- [x] glm_analyzer.py 已删除，无残留引用
+- [x] 分析 prompt 包含子领域分布统计
+- [x] 分析 prompt 包含 TOP 20 论文标题+摘要摘要
+- [x] 分析 prompt 包含关键词共现信息
+- [x] 后台分析任务有 120 秒超时保护
+- [x] 服务启动时清理超过 10 分钟的 running 僵尸记录
+- [x] GLM 调用使用 response_format 强制 JSON 输出
+- [x] 前端轮询采用递增间隔策略（3s→5s→8s→13s）
+- [x] 冷却时间从 60 秒改为 300 秒
+- [x] 趋势页展示可折叠的历史报告列表
+- [x] 底部功能卡片可点击滚动到对应章节

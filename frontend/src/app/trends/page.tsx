@@ -11,8 +11,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
 
-const POLL_INTERVAL_MS = 3000;
-const DEBOUNCE_SECONDS = 60;
+const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
+const DEBOUNCE_SECONDS = 300;
 
 export default function TrendsPage() {
   const { t } = useLanguage();
@@ -31,24 +31,24 @@ export default function TrendsPage() {
   const [timeRange, setTimeRange] = useState<'1m' | '3m' | '6m'>('1m');
   const [radarData, setRadarData] = useState<{ subfield: string; count: number }[]>([]);
   const [radarLoading, setRadarLoading] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyReports, setHistoryReports] = useState<Array<{ id: number; summary: string; model: string; created_at: string; status: string }>>([]);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRunningRef = useRef(false);
   const isMountedRef = useRef(true);
+  const pollStepRef = useRef(0);
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
+    pollStepRef.current = 0;
 
-    pollRef.current = setInterval(async () => {
+    const poll = async () => {
       try {
         if (!isMountedRef.current) return;
         const status = await papersApi.getAIAnalysisV2();
         if (!status.is_running) {
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-          }
           isRunningRef.current = false;
           setIsRunning(false);
           setRunningReportId(null);
@@ -59,6 +59,8 @@ export default function TrendsPage() {
             setAiError('分析未返回有效结果');
           }
           setAnalysisStarted(false);
+          pollRef.current = null;
+          return;
         } else {
           isRunningRef.current = true;
           setRunningReportId(status.running_report_id);
@@ -66,12 +68,17 @@ export default function TrendsPage() {
       } catch (err) {
         console.error('Polling error:', err);
       }
-    }, POLL_INTERVAL_MS);
+      pollStepRef.current = Math.min(pollStepRef.current + 1, POLL_INTERVALS.length - 1);
+      const nextInterval = POLL_INTERVALS[pollStepRef.current];
+      pollRef.current = setTimeout(poll, nextInterval);
+    };
+
+    pollRef.current = setTimeout(poll, POLL_INTERVALS[0]);
   }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
-      clearInterval(pollRef.current);
+      clearTimeout(pollRef.current);
       pollRef.current = null;
     }
     isRunningRef.current = false;
@@ -157,6 +164,21 @@ export default function TrendsPage() {
     }
   };
 
+  const fetchHistory = async () => {
+    try {
+      const result = await papersApi.getAIAnalysisReports(1, 10);
+      setHistoryReports(result.reports || []);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (showHistory) {
+      fetchHistory();
+    }
+  }, [showHistory]);
+
   const startAnalysis = useCallback(async () => {
     if (cooldown > 0 || isRunningRef.current) return;
 
@@ -235,10 +257,10 @@ export default function TrendsPage() {
     return '刚刚';
   };
 
-  const renderSection = (title: string, icon: string, items: StructuredAnalysisItem[] | null | undefined, renderItem: (item: StructuredAnalysisItem, index: number) => React.ReactNode) => {
+  const renderSection = (title: string, icon: string, items: StructuredAnalysisItem[] | null | undefined, renderItem: (item: StructuredAnalysisItem, index: number) => React.ReactNode, sectionId?: string) => {
     if (!items || items.length === 0) return null;
     return (
-      <div className="mb-8">
+      <div className="mb-8" id={sectionId}>
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <span className="text-xl">{icon}</span>
           {title}
@@ -443,7 +465,7 @@ export default function TrendsPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                ), 'section-hot-topics')}
 
                 {renderSection('发展趋势', '📈', report.development_trends, (item, i) => (
                   <div key={i} className="border border-blue-100 rounded-lg p-4 bg-white">
@@ -458,7 +480,7 @@ export default function TrendsPage() {
                       <p className="text-gray-400 text-xs mt-1">依据: {item.evidence}</p>
                     )}
                   </div>
-                ))}
+                ), 'section-dev-trends')}
 
                 {renderSection('关键词聚类分析', '🔍', report.keyword_insights, (item, i) => (
                   <div key={i} className="border border-green-100 rounded-lg p-4 bg-white">
@@ -474,7 +496,7 @@ export default function TrendsPage() {
                     )}
                     <p className="text-gray-600 text-sm">{item.insight}</p>
                   </div>
-                ))}
+                ), 'section-keyword-insights')}
 
                 {renderSection('期刊分析', '📰', report.journal_insights, (item, i) => (
                   <div key={i} className="border border-yellow-100 rounded-lg p-4 bg-white">
@@ -531,19 +553,52 @@ export default function TrendsPage() {
               </div>
             )}
 
+            <div className="mt-6 border-t border-gray-100 pt-4">
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <History className="w-4 h-4" />
+                {showHistory ? '收起历史报告' : '查看历史报告'}
+              </button>
+              {showHistory && (
+                <div className="mt-3 space-y-2">
+                  {historyReports.length === 0 ? (
+                    <p className="text-sm text-gray-400 py-2">暂无历史报告</p>
+                  ) : (
+                    historyReports.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-700 truncate">{r.summary || '(无摘要)'}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-gray-400">{r.model}</span>
+                            <span className="text-xs text-gray-400">{formatTimeAgo(r.created_at)}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${r.status === 'success' ? 'bg-green-100 text-green-600' : r.status === 'partial' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>
+                              {r.status === 'success' ? '成功' : r.status === 'partial' ? '部分' : '失败'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 transition-colors">
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
                 <h3 className="font-medium text-gray-900 mb-2">🔥 热点预测</h3>
                 <p className="text-sm text-gray-500">基于历史数据预测未来研究热点</p>
-              </div>
-              <div className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 transition-colors">
+              </a>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
                 <h3 className="font-medium text-gray-900 mb-2">🔍 关键词关联</h3>
                 <p className="text-sm text-gray-500">分析关键词之间的关联关系</p>
-              </div>
-              <div className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 transition-colors">
+              </a>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
                 <h3 className="font-medium text-gray-900 mb-2">📈 发展趋势</h3>
                 <p className="text-sm text-gray-500">生成详细的研究趋势报告</p>
-              </div>
+              </a>
             </div>
           </div>
         </>

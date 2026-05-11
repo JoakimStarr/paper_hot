@@ -95,9 +95,9 @@ export const papersApi = {
     return response.data;
   },
 
-  getAIAnalysisReports: async (limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
+  getAIAnalysisReports: async (page: number = 1, limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
     const response = await apiClient.get<{ reports: AIAnalysisReport[]; total: number }>('/ai-analysis/reports', {
-      params: { limit },
+      params: { page, limit },
     });
     return response.data;
   },

@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
+    await _cleanup_zombie_reports()
+    
     if settings.scheduler_enabled:
         scheduler.start()
         await scheduler.run_initial_fetch()
@@ -41,6 +43,28 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down PaperPulse...")
     if settings.scheduler_enabled:
         scheduler.stop()
+
+
+async def _cleanup_zombie_reports():
+    """清理超过10分钟仍在running状态的僵尸分析报告"""
+    from sqlalchemy import text as sa_text
+    from app.database import AsyncSessionLocal
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                sa_text("""
+                    UPDATE ai_analysis_reports 
+                    SET status = 'failed', error_message = 'Task timed out (server restart cleanup)'
+                    WHERE status = 'running' 
+                    AND created_at < datetime('now', '-10 minutes')
+                """)
+            )
+            if result.rowcount > 0:
+                await db.commit()
+                logger.info(f"Cleaned up {result.rowcount} zombie analysis reports")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup zombie reports: {e}")
 
 
 app = FastAPI(

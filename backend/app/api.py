@@ -27,7 +27,6 @@ async def verify_token(x_api_token: str = Header(default=None)):
             raise HTTPException(status_code=401, detail="Invalid or missing API token")
     return True
 from app.ai_service import ai_trend_service
-from app.glm_analyzer import glm_analyzer
 from app.config import settings
 import asyncio
 import concurrent.futures
@@ -410,7 +409,7 @@ CACHE_TTL_HOURS = 6
 
 async def _collect_papers_and_keywords(db: AsyncSession) -> tuple:
     """收集论文数据和关键词趋势数据（用于AI分析）"""
-    from sqlalchemy import select
+    from sqlalchemy import select, text as sa_text, func
     from app.models import Paper, TopicTrend
 
     result = await db.execute(
@@ -425,9 +424,33 @@ async def _collect_papers_and_keywords(db: AsyncSession) -> tuple:
         'keywords': p.keywords_cn if p.keywords_cn else [],
         'abstract': p.abstract,
         'journal_name': p.journal_name,
+        'economics_subfield': p.economics_subfield,
         'published_at': p.published_at.isoformat() if p.published_at else None,
         'doi': p.doi,
     } for p in papers]
+
+    subfield_result = await db.execute(
+        sa_text("""
+            SELECT economics_subfield, COUNT(*) as cnt
+            FROM papers
+            WHERE economics_subfield IS NOT NULL AND economics_subfield != ''
+            GROUP BY economics_subfield
+            ORDER BY cnt DESC
+        """)
+    )
+    subfield_data = [{"subfield": row[0], "count": row[1]} for row in subfield_result.fetchall()]
+
+    cooccurrence_result = await db.execute(
+        sa_text("""
+            SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
+            FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
+            WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
+            GROUP BY a.value, b.value
+            ORDER BY cnt DESC
+            LIMIT 10
+        """)
+    )
+    cooccurrence_data = [{"kw1": row[0], "kw2": row[1], "count": row[2]} for row in cooccurrence_result.fetchall()]
 
     result = await db.execute(
         select(TopicTrend).order_by(TopicTrend.growth_rate.desc())
@@ -440,58 +463,37 @@ async def _collect_papers_and_keywords(db: AsyncSession) -> tuple:
         'growth_rate': t.growth_rate,
     } for t in trends]
 
-    return papers_data, keywords_data
+    return papers_data, keywords_data, subfield_data, cooccurrence_data
 
 
 @router.get("/ai-analysis", response_model=AIAnalysisResponse)
 async def get_ai_analysis_legacy(
     db: AsyncSession = Depends(get_db)
 ):
-    """使用GLM AI分析论文趋势（旧版接口，保持兼容）"""
-    from sqlalchemy import select
-    from app.models import Paper, TopicTrend
-
+    """使用GLM AI分析论文趋势（旧版接口，内部使用AITrendService）"""
     try:
-        result = await db.execute(
-            select(Paper).order_by(Paper.published_at.desc())
-        )
-        papers = result.scalars().all()
-
-        papers_data = []
-        for paper in papers:
-            papers_data.append({
-                'id': paper.id,
-                'title': paper.title,
-                'authors': paper.authors if paper.authors else [],
-                'keywords': paper.keywords_cn if paper.keywords_cn else [],
-                'abstract': paper.abstract,
-                'journal_name': paper.journal_name,
-                'published_at': paper.published_at.isoformat() if paper.published_at else None,
-                'doi': paper.doi,
-            })
-
-        result = await db.execute(
-            select(TopicTrend).order_by(TopicTrend.growth_rate.desc())
-        )
-        trends = result.scalars().all()
-
-        keywords_data = []
-        for trend in trends:
-            keywords_data.append({
-                'topic': trend.topic,
-                'paper_count': trend.paper_count,
-                'growth_rate': trend.growth_rate,
-            })
-
-        analysis_result = await glm_analyzer.analyze_trends(papers_data, keywords_data)
-
-        if not analysis_result:
+        if not ai_trend_service.is_available():
             raise HTTPException(
                 status_code=503,
                 detail="AI analysis service is not available. Please check Zhipu API key configuration."
             )
 
-        return AIAnalysisResponse(**analysis_result)
+        papers_data, keywords_data, subfield_data, cooccurrence_data = await _collect_papers_and_keywords(db)
+
+        analysis_result = await ai_trend_service.analyze_trends(papers_data, keywords_data, subfield_data, cooccurrence_data)
+
+        if not analysis_result:
+            raise HTTPException(
+                status_code=503,
+                detail="AI analysis service returned no result."
+            )
+
+        return AIAnalysisResponse(
+            analysis=analysis_result.get("raw_analysis", analysis_result.get("summary", "")),
+            model=analysis_result.get("model"),
+            timestamp=analysis_result.get("timestamp"),
+            status=analysis_result.get("status", "success")
+        )
 
     except HTTPException:
         raise
@@ -614,7 +616,7 @@ async def start_ai_analysis(
 
 
 async def _run_analysis_background(report_id: int):
-    """后台运行AI分析任务"""
+    """后台运行AI分析任务（带120秒超时保护）"""
     from app.database import AsyncSessionLocal
 
     logger.info(f"Background analysis started for report_id={report_id}")
@@ -627,9 +629,29 @@ async def _run_analysis_background(report_id: int):
                 logger.error(f"Report {report_id} not found for background task")
                 return
 
-            papers_data, keywords_data = await _collect_papers_and_keywords(db)
+            papers_data, keywords_data, subfield_data, cooccurrence_data = await _collect_papers_and_keywords(db)
 
-            analysis_result = await ai_trend_service.analyze_trends(papers_data, keywords_data)
+        try:
+            analysis_result = await asyncio.wait_for(
+                ai_trend_service.analyze_trends(papers_data, keywords_data, subfield_data, cooccurrence_data),
+                timeout=120
+            )
+        except asyncio.TimeoutError:
+            async with AsyncSessionLocal() as db:
+                report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+                if report:
+                    report.status = "failed"
+                    report.error_message = "AI analysis timed out after 120 seconds"
+                    elapsed_ms = int((time.time() - start_time) * 1000)
+                    report.processing_time_ms = elapsed_ms
+                    await db.commit()
+            logger.error(f"Background analysis {report_id} timed out after 120s")
+            return
+
+        async with AsyncSessionLocal() as db:
+            report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+            if not report:
+                return
 
             if not analysis_result:
                 report.status = "failed"

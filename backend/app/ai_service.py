@@ -46,7 +46,9 @@ class AITrendService:
     async def analyze_trends(
         self,
         papers_data: List[Dict[str, Any]],
-        keywords_data: List[Dict[str, Any]]
+        keywords_data: List[Dict[str, Any]],
+        subfield_data: Optional[List[Dict[str, Any]]] = None,
+        cooccurrence_data: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[Dict[str, Any]]:
         if not self.is_available():
             logger.warning("AI service not available")
@@ -61,7 +63,9 @@ class AITrendService:
                     result = await self._call_glm_with_model(
                         model=model,
                         papers_data=papers_data,
-                        keywords_data=keywords_data
+                        keywords_data=keywords_data,
+                        subfield_data=subfield_data,
+                        cooccurrence_data=cooccurrence_data
                     )
                     if result:
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -84,12 +88,14 @@ class AITrendService:
         self,
         model: str,
         papers_data: List[Dict[str, Any]],
-        keywords_data: List[Dict[str, Any]]
+        keywords_data: List[Dict[str, Any]],
+        subfield_data: Optional[List[Dict[str, Any]]] = None,
+        cooccurrence_data: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[Dict[str, Any]]:
         if not self.glm_client:
             return None
 
-        prompt = self._build_structured_prompt(papers_data, keywords_data)
+        prompt = self._build_structured_prompt(papers_data, keywords_data, subfield_data, cooccurrence_data)
 
         response = await asyncio.to_thread(
             self.glm_client.chat.completions.create,
@@ -104,6 +110,7 @@ class AITrendService:
                     "content": prompt
                 }
             ],
+            response_format={"type": "json_object"},
             thinking={"type": "enabled"},
             max_tokens=8192,
             temperature=0.7
@@ -121,7 +128,9 @@ class AITrendService:
     def _build_structured_prompt(
         self,
         papers_data: List[Dict[str, Any]],
-        keywords_data: List[Dict[str, Any]]
+        keywords_data: List[Dict[str, Any]],
+        subfield_data: Optional[List[Dict[str, Any]]] = None,
+        cooccurrence_data: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         total_papers = len(papers_data)
 
@@ -148,12 +157,29 @@ class AITrendService:
             keyword_lines.append(f"{i}. {keyword}: {count}篇 (增长率: {growth_str})")
 
         journal_lines = []
-        for key, value in sorted(journals.items(), key=lambda x: x[1], reverse=True):
+        for key, value in sorted(journals.items(), key=lambda x: x[1], reverse=True)[:15]:
             journal_lines.append(f"- {key}: {value}篇")
 
         year_lines = []
         for key, value in sorted(years.items(), key=lambda x: x[1], reverse=True):
             year_lines.append(f"- {key}: {value}篇")
+
+        subfield_lines = []
+        if subfield_data:
+            for sf in subfield_data[:15]:
+                subfield_lines.append(f"- {sf['subfield']}: {sf['count']}篇")
+
+        cooccurrence_lines = []
+        if cooccurrence_data:
+            for co in cooccurrence_data[:10]:
+                cooccurrence_lines.append(f"- {co['kw1']} × {co['kw2']}: {co['count']}篇")
+
+        top_papers_lines = []
+        for paper in papers_data[:20]:
+            title = paper.get('title', 'Unknown')[:60]
+            abstract = (paper.get('abstract', '') or '')[:100]
+            subfield = paper.get('economics_subfield', '')
+            top_papers_lines.append(f"- 《{title}》 [{subfield}] 摘要: {abstract}")
 
         return f"""请基于以下经济学论文数据进行分析，并严格按照以下JSON格式返回结果，不要包含其他任何内容：
 
@@ -203,20 +229,30 @@ class AITrendService:
 - 期刊数量：{len(journals)}个
 - 时间跨度：{min(years.keys()) if years else 'Unknown'} - {max(years.keys()) if years else 'Unknown'}
 
-## 期刊分布
+## 子领域分布
+{chr(10).join(subfield_lines) if subfield_lines else '暂无子领域数据'}
+
+## 期刊分布（前15）
 {chr(10).join(journal_lines)}
 
 ## 时间分布
 {chr(10).join(year_lines)}
 
 ## 热门关键词（前20个）
-{chr(10).join(keyword_lines)}
+{chr(10).join(keyword_lines) if keyword_lines else '暂无关键词数据'}
+
+## 关键词共现（前10对）
+{chr(10).join(cooccurrence_lines) if cooccurrence_lines else '暂无共现数据'}
+
+## 高分论文（前20篇标题+摘要摘要+子领域）
+{chr(10).join(top_papers_lines)}
 
 请确保：
 1. 只返回JSON，不要包含任何markdown代码块标记或其他说明文字
 2. 每个数组至少包含2-3个项目
 3. 分析要基于数据，有具体支撑
-4. 中文输出"""
+4. 特别关注子领域分布和关键词共现关系
+5. 中文输出"""
 
     def _parse_structured_result(
         self, analysis_text: str, model: str, tokens_used: int
