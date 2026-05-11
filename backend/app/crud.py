@@ -129,9 +129,10 @@ class PaperCRUD:
         
         if cnki_subject:
             if ',' in cnki_subject:
-                query = query.where(Paper.cnki_subject.in_(cnki_subject.split(',')))
+                conditions = [Paper.cnki_subject.contains(s.strip()) for s in cnki_subject.split(',') if s.strip()]
+                query = query.where(or_(*conditions))
             else:
-                query = query.where(Paper.cnki_subject == cnki_subject)
+                query = query.where(Paper.cnki_subject.contains(cnki_subject))
         
         if journal_name:
             if ',' in journal_name:
@@ -330,13 +331,16 @@ class PaperCRUD:
         topic_counts = {row[0]: row[1] for row in topic_result}
         
         cnki_subject_result = await db.execute(
-            select(Paper.cnki_subject, func.count(Paper.id))
+            select(Paper.cnki_subject)
             .where(Paper.cnki_subject.isnot(None))
-            .group_by(Paper.cnki_subject)
-            .order_by(desc(func.count(Paper.id)))
-            .limit(30)
         )
-        cnki_subject_counts = {row[0]: row[1] for row in cnki_subject_result}
+        cnki_subject_flat: dict[str, int] = {}
+        for row in cnki_subject_result:
+            for part in row[0].split(';'):
+                p = part.strip()
+                if p:
+                    cnki_subject_flat[p] = cnki_subject_flat.get(p, 0) + 1
+        cnki_subject_counts = dict(sorted(cnki_subject_flat.items(), key=lambda x: -x[1])[:30])
         
         # 统计分数分布
         score_result = await db.execute(
