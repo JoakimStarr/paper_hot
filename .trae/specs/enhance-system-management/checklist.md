@@ -1,15 +1,15 @@
-- [ ] GET /api/settings 返回 API Key 脱敏状态、模型列表、调度器状态
-- [ ] PUT /api/settings 能更新 API Key 并即时重载 AI 服务
-- [ ] PUT /api/settings 能更新模型优先级列表
-- [ ] AI 服务 reload 后新 API Key 即刻生效，无需重启
-- [ ] GET /api/stats 返回 db_size_mb 和 scheduler_running 字段
-- [ ] GET /api/scheduler/jobs 返回所有定时任务信息
-- [ ] POST /api/scheduler/trigger/{job_id} 能手动触发指定任务
-- [ ] POST /api/scheduler/toggle 能暂停/恢复调度器
-- [ ] POST /api/maintenance/cleanup 能清理无效数据并返回清理统计
-- [ ] 系统管理页面使用 Tab 布局，包含5个 Tab
-- [ ] API 配置 Tab 显示各 Key 脱敏状态，支持更新
-- [ ] AI 模型 Tab 显示模型列表和可用状态，支持调整优先级
-- [ ] 数据维护 Tab 显示数据库统计，支持一键清理
-- [ ] 爬虫管理 Tab 功能与原版一致，无回归
-- [ ] 概览 Tab 显示原有统计 + 数据库大小 + 调度器状态
+- [x] GET /api/settings 返回 API Key 脱敏状态、模型列表、调度器状态
+- [x] PUT /api/settings 能更新 API Key 并即时重载 AI 服务
+- [x] PUT /api/settings 能更新模型优先级列表
+- [x] AI 服务 reload 后新 API Key 即刻生效，无需重启
+- [x] GET /api/stats 返回 db_size_mb 和 scheduler_running 字段
+- [x] GET /api/scheduler/jobs 返回所有定时任务信息
+- [x] POST /api/scheduler/trigger/{job_id} 能手动触发指定任务
+- [x] POST /api/scheduler/toggle 能暂停/恢复调度器
+- [x] POST /api/maintenance/cleanup 能清理无效数据并返回清理统计
+- [x] 系统管理页面使用 Tab 布局，包含5个 Tab
+- [x] API 配置 Tab 显示各 Key 脱敏状态，支持更新
+- [x] AI 模型 Tab 显示模型列表和可用状态，支持调整优先级
+- [x] 数据维护 Tab 显示数据库统计，支持一键清理
+- [x] 爬虫管理 Tab 功能与原版一致，无回归
+- [x] 概览 Tab 显示原有统计 + 数据库大小 + 调度器状态
