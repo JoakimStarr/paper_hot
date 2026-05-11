@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from typing import List, Optional, Tuple
 from sqlalchemy import select, and_, desc, func, String, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,10 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
 import json
 import numpy as np
+
+_filter_stats_cache: dict = {}
+_filter_stats_cache_time: float = 0
+_FILTER_STATS_TTL = 60
 
 from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
 from app.schemas import PaperCreate, CrawlLogCreate, CrawlLogUpdate
@@ -129,10 +134,23 @@ class PaperCRUD:
         
         if cnki_subject:
             if ',' in cnki_subject:
-                conditions = [Paper.cnki_subject.contains(s.strip()) for s in cnki_subject.split(',') if s.strip()]
+                parts = [s.strip() for s in cnki_subject.split(',') if s.strip()]
+                conditions = []
+                for s in parts:
+                    conditions.append(or_(
+                        Paper.cnki_subject == s,
+                        Paper.cnki_subject.startswith(s + ';'),
+                        Paper.cnki_subject.endswith(';' + s),
+                        Paper.cnki_subject.contains(';' + s + ';'),
+                    ))
                 query = query.where(or_(*conditions))
             else:
-                query = query.where(Paper.cnki_subject.contains(cnki_subject))
+                query = query.where(or_(
+                    Paper.cnki_subject == cnki_subject,
+                    Paper.cnki_subject.startswith(cnki_subject + ';'),
+                    Paper.cnki_subject.endswith(';' + cnki_subject),
+                    Paper.cnki_subject.contains(';' + cnki_subject + ';'),
+                ))
         
         if journal_name:
             if ',' in journal_name:
@@ -287,6 +305,10 @@ class PaperCRUD:
     @staticmethod
     async def get_filter_statistics(db: AsyncSession) -> dict:
         """获取筛选条件的统计数据"""
+        global _filter_stats_cache, _filter_stats_cache_time
+        if _filter_stats_cache and time.time() - _filter_stats_cache_time < _FILTER_STATS_TTL:
+            return _filter_stats_cache
+
         from sqlalchemy import func
         
         # 统计学科
@@ -362,7 +384,7 @@ class PaperCRUD:
             "≥ 90%": score_row[4],
         }
         
-        return {
+        result = {
             "discipline_counts": discipline_counts,
             "subfield_counts": subfield_counts,
             "cnki_subject_counts": cnki_subject_counts,
@@ -372,6 +394,9 @@ class PaperCRUD:
             "score_counts": score_counts,
             "total_papers": sum(discipline_counts.values()) if discipline_counts else 0
         }
+        _filter_stats_cache = result
+        _filter_stats_cache_time = time.time()
+        return result
     
     CNKI_SUBJECT_MAP = {
         '金融': '金融经济学',

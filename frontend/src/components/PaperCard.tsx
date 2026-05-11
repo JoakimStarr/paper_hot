@@ -110,11 +110,14 @@ function PaperCardInner({ paper }: PaperCardProps) {
             {paper.economics_subfield}
           </span>
         )}
-        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).map((subject, idx) => (
+        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).slice(0, 3).map((subject, idx) => (
           <span key={idx} className="text-xs font-medium px-2 py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
             {subject.trim()}
           </span>
         ))}
+        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).length > 3 && (
+          <span className="text-xs text-gray-400 dark:text-gray-500">+{paper.cnki_subject.split(';').filter(Boolean).length - 3}</span>
+        )}
         {paper.keywords_cn?.slice(0, 3).map((keyword, index) => (
           <button
             key={index}
