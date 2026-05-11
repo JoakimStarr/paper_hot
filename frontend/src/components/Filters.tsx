@@ -7,13 +7,15 @@ import { ArrowUpDown } from 'lucide-react';
 
 interface FiltersProps {
   minScore: number | null;
-  selectedTopic: string[];
+  selectedSubfield: string[];
+  selectedCnkiSubject: string[];
   selectedJournal: string[];
   sortBy: string;
   sortOrder: string;
   showBookmarksOnly: boolean;
   onMinScoreChange: (score: number | null) => void;
-  onTopicChange: (topics: string[]) => void;
+  onSubfieldChange: (subfields: string[]) => void;
+  onCnkiSubjectChange: (subjects: string[]) => void;
   onJournalChange: (journals: string[]) => void;
   onSortByChange: (sort: string) => void;
   onSortOrderToggle: () => void;
@@ -65,7 +67,7 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
         {selected.length > 0 ? `${label} (${selected.length})` : label}
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto min-w-[200px]">
+        <div className="absolute z-20 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto min-w-[240px]">
           {options.map((opt) => (
             <label
               key={opt}
@@ -77,8 +79,8 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
                 onChange={() => toggle(opt)}
                 className="rounded"
               />
-              <span className="flex-1">{opt}</span>
-              <span className="text-gray-400 dark:text-gray-500">({counts[opt] || 0})</span>
+              <span className="flex-1 truncate">{opt}</span>
+              <span className="text-gray-400 dark:text-gray-500 shrink-0">({counts[opt] || 0})</span>
             </label>
           ))}
           {selected.length > 0 && (
@@ -97,13 +99,15 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
 
 export default function Filters({
   minScore,
-  selectedTopic,
+  selectedSubfield,
+  selectedCnkiSubject,
   selectedJournal,
   sortBy,
   sortOrder,
   showBookmarksOnly,
   onMinScoreChange,
-  onTopicChange,
+  onSubfieldChange,
+  onCnkiSubjectChange,
   onJournalChange,
   onSortByChange,
   onSortOrderToggle,
@@ -136,24 +140,38 @@ export default function Filters({
         .map(([name]) => name)
     : [];
 
-  const topics = stats
+  const subfields = stats
     ? Object.entries(stats.subfield_counts)
         .sort((a, b) => b[1] - a[1])
         .map(([name]) => name)
     : [];
 
-  const hasActiveFilters = minScore || selectedTopic.length > 0 || selectedJournal.length > 0;
+  const cnkiSubjects = stats
+    ? Object.entries(stats.cnki_subject_counts || {})
+        .sort((a, b) => b[1] - a[1])
+        .map(([name]) => name)
+    : [];
+
+  const hasActiveFilters = minScore || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-6 transition-colors">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <MultiSelect
-            options={topics}
-            selected={selectedTopic}
-            onChange={onTopicChange}
-            label="专题筛选"
+            options={subfields}
+            selected={selectedSubfield}
+            onChange={onSubfieldChange}
+            label="子领域筛选"
             counts={stats ? (stats.subfield_counts as Record<string, number>) : {}}
+          />
+
+          <MultiSelect
+            options={cnkiSubjects}
+            selected={selectedCnkiSubject}
+            onChange={onCnkiSubjectChange}
+            label="专题筛选"
+            counts={stats ? ((stats.cnki_subject_counts || {}) as Record<string, number>) : {}}
           />
 
           <MultiSelect
@@ -210,7 +228,8 @@ export default function Filters({
             <button
               onClick={() => {
                 onMinScoreChange(null);
-                onTopicChange([]);
+                onSubfieldChange([]);
+                onCnkiSubjectChange([]);
                 onJournalChange([]);
               }}
               className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 underline"

@@ -110,6 +110,11 @@ function PaperCardInner({ paper }: PaperCardProps) {
             {paper.economics_subfield}
           </span>
         )}
+        {paper.cnki_subject && (
+          <span className="text-xs font-medium px-2 py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
+            {paper.cnki_subject}
+          </span>
+        )}
         {paper.keywords_cn?.slice(0, 3).map((keyword, index) => (
           <button
             key={index}

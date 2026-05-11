@@ -19,6 +19,7 @@ class PaperBase(BaseModel):
     journal_name: Optional[str] = None
     journal_issue: Optional[str] = None
     economics_subfield: Optional[str] = None
+    cnki_subject: Optional[str] = None
     doi: Optional[str] = None
     keywords_cn: List[str] = []
     
@@ -95,6 +96,7 @@ class PaperCardResponse(BaseModel):
     journal_name: Optional[str] = None
     journal_issue: Optional[str] = None
     economics_subfield: Optional[str] = None
+    cnki_subject: Optional[str] = None
     doi: Optional[str] = None
     keywords_cn: List[str] = []
     published_at: Optional[datetime] = None

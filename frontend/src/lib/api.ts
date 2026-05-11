@@ -13,6 +13,7 @@ const apiClient = axios.create({
 export interface FilterStatistics {
   discipline_counts: Record<string, number>;
   subfield_counts: Record<string, number>;
+  cnki_subject_counts: Record<string, number>;
   journal_counts: Record<string, number>;
   source_counts: Record<string, number>;
   topic_counts: Record<string, number>;
@@ -58,6 +59,7 @@ export const papersApi = {
     days_back?: number;
     discipline?: string;
     economics_subfield?: string;
+    cnki_subject?: string;
     journal_name?: string;
     search?: string;
     search_field?: string;

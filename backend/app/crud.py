@@ -65,6 +65,7 @@ class PaperCRUD:
         days_back: Optional[int] = None,
         discipline: Optional[str] = None,
         economics_subfield: Optional[str] = None,
+        cnki_subject: Optional[str] = None,
         journal_name: Optional[str] = None,
         search: Optional[str] = None,
         search_field: Optional[str] = None,
@@ -125,6 +126,12 @@ class PaperCRUD:
                 query = query.where(Paper.economics_subfield.in_(economics_subfield.split(',')))
             else:
                 query = query.where(Paper.economics_subfield == economics_subfield)
+        
+        if cnki_subject:
+            if ',' in cnki_subject:
+                query = query.where(Paper.cnki_subject.in_(cnki_subject.split(',')))
+            else:
+                query = query.where(Paper.cnki_subject == cnki_subject)
         
         if journal_name:
             if ',' in journal_name:
@@ -322,6 +329,15 @@ class PaperCRUD:
         )
         topic_counts = {row[0]: row[1] for row in topic_result}
         
+        cnki_subject_result = await db.execute(
+            select(Paper.cnki_subject, func.count(Paper.id))
+            .where(Paper.cnki_subject.isnot(None))
+            .group_by(Paper.cnki_subject)
+            .order_by(desc(func.count(Paper.id)))
+            .limit(30)
+        )
+        cnki_subject_counts = {row[0]: row[1] for row in cnki_subject_result}
+        
         # 统计分数分布
         score_result = await db.execute(
             select(
@@ -345,6 +361,7 @@ class PaperCRUD:
         return {
             "discipline_counts": discipline_counts,
             "subfield_counts": subfield_counts,
+            "cnki_subject_counts": cnki_subject_counts,
             "journal_counts": journal_counts,
             "source_counts": source_counts,
             "topic_counts": topic_counts,

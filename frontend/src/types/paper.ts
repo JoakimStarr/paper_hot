@@ -31,6 +31,7 @@ export interface Paper {
   journal_name: string | null;
   journal_issue: string | null;
   economics_subfield: string | null;
+  cnki_subject: string | null;
   doi: string | null;
   keywords_cn: string[];
 }
@@ -54,6 +55,7 @@ export interface PaperCard {
   journal_name: string | null;
   journal_issue: string | null;
   economics_subfield: string | null;
+  cnki_subject: string | null;
   doi: string | null;
   keywords_cn: string[];
   published_at: string | null;

@@ -45,7 +45,8 @@ function HomePageInner() {
   const prefetchedRef = useRef(false);
 
   const [minScore, setMinScore] = useState<number | null>(null);
-  const [selectedTopic, setSelectedTopic] = useState<string[]>([]);
+  const [selectedSubfield, setSelectedSubfield] = useState<string[]>([]);
+  const [selectedCnkiSubject, setSelectedCnkiSubject] = useState<string[]>([]);
   const [selectedJournal, setSelectedJournal] = useState<string[]>([]);
   const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
 
@@ -72,17 +73,18 @@ function HomePageInner() {
     pageCache.current.clear();
     prefetchedRef.current = false;
     setQueryKey(k => k + 1);
-  }, [sortBy, sortOrder, minScore, selectedTopic, selectedJournal, pageSize]);
+  }, [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, pageSize]);
 
   const buildParams = useCallback((p: number) => ({
     page: p,
     page_size: pageSize,
     min_score: minScore || undefined,
-    economics_subfield: selectedTopic.length > 0 ? selectedTopic.join(',') : undefined,
+    economics_subfield: selectedSubfield.length > 0 ? selectedSubfield.join(',') : undefined,
+    cnki_subject: selectedCnkiSubject.length > 0 ? selectedCnkiSubject.join(',') : undefined,
     journal_name: selectedJournal.length > 0 ? selectedJournal.join(',') : undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-  }), [minScore, selectedTopic, selectedJournal, sortBy, sortOrder, pageSize]);
+  }), [minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, sortBy, sortOrder, pageSize]);
 
   const applyResponse = useCallback((response: PaperCardListResponse, p: number) => {
     setPapers(response.papers);
@@ -204,13 +206,15 @@ function HomePageInner() {
 
       <Filters
         minScore={minScore}
-        selectedTopic={selectedTopic}
+        selectedSubfield={selectedSubfield}
+        selectedCnkiSubject={selectedCnkiSubject}
         selectedJournal={selectedJournal}
         sortBy={sortBy}
         sortOrder={sortOrder}
         showBookmarksOnly={showBookmarksOnly}
         onMinScoreChange={(v) => setMinScore(v)}
-        onTopicChange={(v) => setSelectedTopic(v)}
+        onSubfieldChange={(v) => setSelectedSubfield(v)}
+        onCnkiSubjectChange={(v) => setSelectedCnkiSubject(v)}
         onJournalChange={(v) => setSelectedJournal(v)}
         onSortByChange={(v) => setSortBy(v)}
         onSortOrderToggle={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
