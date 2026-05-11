@@ -1361,7 +1361,10 @@ async def toggle_scheduler(token: bool = Depends(verify_token)):
         scheduler.pause()
         return {"status": "paused"}
     else:
-        scheduler.resume()
+        try:
+            scheduler.resume()
+        except Exception:
+            scheduler.start()
         return {"status": "resumed"}
 
 
