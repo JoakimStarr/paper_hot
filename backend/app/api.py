@@ -51,6 +51,7 @@ class UpdateSettingsRequest(BaseModel):
     api_keys: Optional[dict] = None
     model_priority: Optional[List[str]] = None
     ports: Optional[dict] = None
+    app_name: Optional[str] = None
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -94,6 +95,8 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
             "backend": settings.backend_port,
             "frontend": settings.frontend_port,
         },
+        "app_name": settings.app_name,
+        "app_version": settings.app_version,
     }
 
 
@@ -126,6 +129,9 @@ async def update_settings_endpoint(
         for port_key, port_value in body.ports.items():
             if port_key in ("backend_port", "frontend_port"):
                 Settings.update_setting(port_key, str(port_value))
+
+    if body.app_name is not None:
+        Settings.update_setting("app_name", body.app_name)
 
     if keys_changed:
         ai_trend_service.reload()
@@ -385,6 +391,8 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
         ai_by_model = [{"model": row[0], "count": row[1], "tokens": row[2]} for row in ai_by_model_result.fetchall()]
 
         return {
+            "app_name": settings.app_name,
+            "app_version": settings.app_version,
             "total_papers": total_papers,
             "journal_count": journal_count,
             "keyword_count": keyword_count,

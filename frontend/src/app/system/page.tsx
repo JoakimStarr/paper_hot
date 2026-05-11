@@ -7,7 +7,8 @@ import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult } 
 import {
   Settings, Activity, Database, BookOpen, Hash, Clock,
   Play, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
-  Key, Brain, Trash2, ArrowUp, ArrowDown, Save, ToggleLeft, ToggleRight
+  Key, Brain, Trash2, ArrowUp, ArrowDown, Save, ToggleLeft, ToggleRight,
+  Edit3, X
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -44,6 +45,11 @@ export default function SystemPage() {
   const [savingPorts, setSavingPorts] = useState(false);
   const [portMessage, setPortMessage] = useState('');
 
+  const [appInfo, setAppInfo] = useState({ name: '', version: '' });
+  const [editingAppName, setEditingAppName] = useState(false);
+  const [savingAppName, setSavingAppName] = useState(false);
+  const [appNameMessage, setAppNameMessage] = useState('');
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -57,6 +63,12 @@ export default function SystemPage() {
       ]);
       setStats(statsRes);
       setCrawlLogs(crawlRes.logs || []);
+      if (statsRes.app_name || statsRes.app_version) {
+        setAppInfo({
+          name: statsRes.app_name || '',
+          version: statsRes.app_version || '',
+        });
+      }
     } catch (error) {
       console.error('Error fetching system data:', error);
     } finally {
@@ -72,6 +84,12 @@ export default function SystemPage() {
       setSchedulerRunning(res.scheduler.running);
       if (res.ports) {
         setPorts(res.ports);
+      }
+      if (res.app_name || res.app_version) {
+        setAppInfo({
+          name: res.app_name || '',
+          version: res.app_version || '',
+        });
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -204,6 +222,21 @@ export default function SystemPage() {
     }
   };
 
+  const handleSaveAppName = async () => {
+    setSavingAppName(true);
+    setAppNameMessage('');
+    try {
+      await papersApi.updateSettings({ app_name: appInfo.name });
+      setAppNameMessage('应用名称已保存');
+      setEditingAppName(false);
+      fetchData();
+    } catch (error: any) {
+      setAppNameMessage(error.response?.data?.detail || '保存失败');
+    } finally {
+      setSavingAppName(false);
+    }
+  };
+
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
     const safeStr = (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) ? dateStr : dateStr + 'Z';
@@ -239,6 +272,77 @@ export default function SystemPage() {
 
   const renderOverview = () => (
     <>
+      <div className="bg-gradient-to-r from-primary-50 to-blue-50 dark:from-primary-900/30 dark:to-blue-900/30 rounded-lg shadow-sm border border-primary-200 dark:border-primary-800 p-6 mb-6">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            {editingAppName ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs text-primary-600 dark:text-primary-400 mb-1">应用名称</label>
+                    <input
+                      type="text"
+                      value={appInfo.name}
+                      onChange={e => setAppInfo(prev => ({ ...prev, name: e.target.value }))}
+                      className="w-full px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      placeholder="应用名称"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveAppName}
+                    disabled={savingAppName}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                  >
+                    {savingAppName ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    保存
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingAppName(false);
+                      setAppInfo(prev => ({ ...prev, name: stats?.app_name || settingsInfo?.app_name || '' }));
+                      setAppNameMessage('');
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-gray-600 dark:text-gray-400 text-sm rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    取消
+                  </button>
+                  {appNameMessage && (
+                    <span className={`text-xs ${appNameMessage.includes('成功') || appNameMessage.includes('保存') ? 'text-green-600' : 'text-red-500'}`}>
+                      {appNameMessage}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-primary-700 dark:text-primary-300">{appInfo.name || stats?.app_name || 'ApplePaper'}</h2>
+                <p className="text-sm text-primary-600 dark:text-primary-400 mt-1">发现和理解热门研究论文</p>
+              </>
+            )}
+          </div>
+          <div className="text-right">
+            {!editingAppName && (
+              <div className="flex items-center gap-3">
+                <div className="text-sm text-primary-500 dark:text-primary-400">
+                  <div>版本 {appInfo.version || stats?.app_version || '-'}</div>
+                  <div className="mt-1">FastAPI + Next.js</div>
+                </div>
+                <button
+                  onClick={() => setEditingAppName(true)}
+                  className="p-2 text-primary-500 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg transition-colors"
+                  title="编辑应用名称"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">

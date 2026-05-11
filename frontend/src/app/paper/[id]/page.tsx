@@ -262,7 +262,7 @@ export default function PaperDetailPage() {
 
         <div className="flex flex-wrap gap-2 mb-4">
           {paper.features?.topic && (
-            <span className={`text-sm font-medium px-3 py-1 rounded ${topicColors[paper.features.topic] || topicColors.Other}`}>
+            <span className={`text-sm font-medium px-3 py-1 rounded ${topicColors[paper.features.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
               {paper.features.topic}
             </span>
           )}
@@ -412,7 +412,7 @@ export default function PaperDetailPage() {
                     </h3>
                     <div className="flex flex-wrap gap-1.5">
                       {similar.topic && (
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${topicColors[similar.topic] || topicColors.Other}`}>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${topicColors[similar.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
                           {similar.topic}
                         </span>
                       )}

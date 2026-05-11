@@ -22,12 +22,11 @@ export function getIssuePeriod(doi: string | null, publishedAt: string | null, j
 }
 
 export const topicColors: Record<string, string> = {
-  LLM: 'bg-purple-100 text-purple-800',
-  Agent: 'bg-green-100 text-green-800',
-  CV: 'bg-blue-100 text-blue-800',
-  RL: 'bg-orange-100 text-orange-800',
-  Multimodal: 'bg-pink-100 text-pink-800',
-  NLP: 'bg-yellow-100 text-yellow-800',
-  Generative: 'bg-indigo-100 text-indigo-800',
-  Other: 'bg-gray-100 text-gray-800',
+  LLM: 'bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300',
+  Agent: 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300',
+  CV: 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300',
+  RL: 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300',
+  Multimodal: 'bg-pink-100 dark:bg-pink-900/40 text-pink-800 dark:text-pink-300',
+  NLP: 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300',
+  Generative: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300',
 };

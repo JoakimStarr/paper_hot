@@ -152,6 +152,8 @@ export interface AIAnalysisResponseV2 {
 }
 
 export interface SystemStats {
+  app_name?: string;
+  app_version?: string;
   total_papers: number;
   journal_count: number;
   keyword_count: number;
@@ -227,6 +229,8 @@ export interface SettingsInfo {
     backend: number;
     frontend: number;
   };
+  app_name?: string;
+  app_version?: string;
 }
 
 export interface SchedulerJob {
