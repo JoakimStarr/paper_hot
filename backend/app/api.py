@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get("/health")
+async def health_check():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 class CrawlStartRequest(BaseModel):
     journal_names: Optional[List[str]] = None
 

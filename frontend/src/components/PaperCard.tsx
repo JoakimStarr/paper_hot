@@ -33,11 +33,11 @@ export default function PaperCard({ paper }: PaperCardProps) {
   const [bookmarked, setBookmarked] = useState(checkBookmarked(paper.id));
 
   return (
-    <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-6 border border-gray-200">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-6 border border-gray-200 dark:border-gray-700">
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1">
           <Link href={`/paper/${paper.id}`}>
-            <h3 className="text-lg font-semibold text-gray-900 hover:text-primary-600 cursor-pointer line-clamp-2">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer line-clamp-2">
               {paper.title}
             </h3>
           </Link>
@@ -49,7 +49,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
               const added = toggleBookmark(paper.id);
               setBookmarked(added);
             }}
-            className="text-gray-400 hover:text-yellow-500 transition-colors"
+            className="text-gray-400 dark:text-gray-500 hover:text-yellow-500 transition-colors"
             title={bookmarked ? '取消收藏' : '收藏'}
           >
             <Bookmark
@@ -57,13 +57,13 @@ export default function PaperCard({ paper }: PaperCardProps) {
             />
           </button>
           {isHighScore && (
-            <span className="flex items-center gap-1 bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-1 rounded">
+            <span className="flex items-center gap-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-2 py-1 rounded">
               <Award className="w-3 h-3" />
               {t('paper.top')}
             </span>
           )}
           {isTrending && (
-            <span className="flex items-center gap-1 bg-red-100 text-red-800 text-xs font-medium px-2 py-1 rounded">
+            <span className="flex items-center gap-1 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 text-xs font-medium px-2 py-1 rounded">
               <TrendingUp className="w-3 h-3" />
               {t('paper.trending')}
             </span>
@@ -72,14 +72,14 @@ export default function PaperCard({ paper }: PaperCardProps) {
       </div>
 
       {paper.abstract && (
-        <p className="text-gray-600 text-sm mb-3 line-clamp-2">
+        <p className="text-gray-600 dark:text-gray-400 text-sm mb-3 line-clamp-2">
           {paper.abstract}
         </p>
       )}
 
       {paper.authors && paper.authors.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 mb-3">
-          <span className="text-xs text-gray-400 mr-1">作者:</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">作者:</span>
           {paper.authors.slice(0, 5).map((author, index) => (
             <button
               key={index}
@@ -88,13 +88,13 @@ export default function PaperCard({ paper }: PaperCardProps) {
                 e.stopPropagation();
                 router.push(`/author/${encodeURIComponent(author.trim())}`);
               }}
-              className="text-xs text-primary-600 hover:text-primary-800 hover:underline bg-primary-50 hover:bg-primary-100 px-1.5 py-0.5 rounded transition-colors"
+              className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 hover:underline bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 px-1.5 py-0.5 rounded transition-colors"
             >
               {author.trim()}
             </button>
           ))}
           {paper.authors.length > 5 && (
-            <span className="text-xs text-gray-400">等{paper.authors.length}人</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">等{paper.authors.length}人</span>
           )}
         </div>
       )}
@@ -106,7 +106,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
           </span>
         )}
         {paper.economics_subfield && (
-          <span className={`text-xs font-medium px-2 py-1 rounded ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 text-gray-800'}`}>
+          <span className={`text-xs font-medium px-2 py-1 rounded ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
             {paper.economics_subfield}
           </span>
         )}
@@ -117,50 +117,50 @@ export default function PaperCard({ paper }: PaperCardProps) {
               e.preventDefault();
               router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`);
             }}
-            className="bg-gray-100 text-gray-700 text-xs px-2 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+            className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded hover:bg-primary-100 dark:hover:bg-primary-900/50 hover:text-primary-700 dark:hover:text-primary-400 transition-colors cursor-pointer"
           >
             {keyword}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
         <div className="flex items-center gap-4 flex-wrap">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
             {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
-          <span className="bg-gray-100 px-2 py-1 rounded text-xs">
+          <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-xs">
             {paper.source}
           </span>
           {paper.venue && (
-            <span className="bg-primary-50 text-primary-700 px-2 py-1 rounded text-xs">
+            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 px-2 py-1 rounded text-xs">
               {paper.venue}
             </span>
           )}
           {paper.journal_name && (
             <button
               onClick={() => router.push(`/search?journal=${encodeURIComponent(paper.journal_name!)}`)}
-              className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs hover:bg-blue-100 transition-colors cursor-pointer"
+              className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded text-xs hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors cursor-pointer"
             >
               {paper.journal_name}
             </button>
           )}
           {paper.journal_issue && (
-            <span className="bg-gray-50 text-gray-700 px-2 py-1 rounded text-xs">
+            <span className="bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded text-xs">
               {paper.journal_issue}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
-            <div className="w-16 bg-gray-200 rounded-full h-2">
+            <div className="w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-2">
               <div
                 className="bg-primary-600 h-2 rounded-full"
                 style={{ width: `${score * 100}%` }}
               />
             </div>
-            <span className="text-xs font-medium text-gray-700">
+            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
               {(score * 100).toFixed(0)}%
             </span>
           </div>
@@ -168,7 +168,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
             href={paper.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-primary-600 hover:text-primary-700"
+            className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
           >
             <ExternalLink className="w-4 h-4" />
           </a>

@@ -185,7 +185,7 @@ export const papersApi = {
     return response.data;
   },
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[] }): Promise<{ success: boolean }> => {
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number> }): Promise<{ success: boolean }> => {
     const response = await apiClient.put<{ success: boolean }>('/settings', data);
     return response.data;
   },

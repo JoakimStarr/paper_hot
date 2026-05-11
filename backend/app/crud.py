@@ -140,11 +140,11 @@ class PaperCRUD:
             query = query.join(PaperScore)
             order_col = PaperScore.final_score
         elif sort_by == "date":
-            order_col = Paper.published_at
+            order_col = Paper.journal_issue
         elif sort_by == "title":
             order_col = Paper.title
         else:
-            order_col = Paper.published_at
+            order_col = Paper.journal_issue
         
         if sort_order == "asc":
             query = query.order_by(order_col.asc(), Paper.doi.asc())

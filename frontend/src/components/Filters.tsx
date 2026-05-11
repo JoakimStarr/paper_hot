@@ -23,7 +23,7 @@ interface FiltersProps {
 const scoreThresholds = [0.5, 0.6, 0.7, 0.8, 0.9];
 
 const SORT_OPTIONS = [
-  { value: 'date', label: '发布时间' },
+  { value: 'date', label: '按期数排序' },
   { value: 'score', label: '评分' },
   { value: 'title', label: '标题' },
 ];
@@ -60,16 +60,16 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="border border-gray-300 rounded-md px-2.5 py-1.5 text-xs bg-white outline-none focus:ring-1 focus:ring-primary-500 min-w-[120px] text-left"
+        className="border border-gray-300 dark:border-gray-600 rounded-md px-2.5 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500 min-w-[120px] text-left"
       >
         {selected.length > 0 ? `${label} (${selected.length})` : label}
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto min-w-[200px]">
+        <div className="absolute z-20 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto min-w-[200px]">
           {options.map((opt) => (
             <label
               key={opt}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 cursor-pointer"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer text-gray-900 dark:text-gray-100"
             >
               <input
                 type="checkbox"
@@ -78,13 +78,13 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
                 className="rounded"
               />
               <span className="flex-1">{opt}</span>
-              <span className="text-gray-400">({counts[opt] || 0})</span>
+              <span className="text-gray-400 dark:text-gray-500">({counts[opt] || 0})</span>
             </label>
           ))}
           {selected.length > 0 && (
             <button
               onClick={() => onChange([])}
-              className="w-full text-center py-1.5 text-xs text-primary-600 hover:bg-gray-50 border-t"
+              className="w-full text-center py-1.5 text-xs text-primary-600 dark:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 border-t dark:border-gray-700"
             >
               清除
             </button>
@@ -145,7 +145,7 @@ export default function Filters({
   const hasActiveFilters = minScore || selectedTopic.length > 0 || selectedJournal.length > 0;
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-4 mb-6">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-6 transition-colors">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <MultiSelect
@@ -168,7 +168,7 @@ export default function Filters({
             <select
               value={minScore || ''}
               onChange={(e) => onMinScoreChange(e.target.value ? parseFloat(e.target.value) : null)}
-              className="border border-gray-300 rounded-md px-2.5 py-1.5 text-xs bg-white outline-none focus:ring-1 focus:ring-primary-500"
+              className="border border-gray-300 dark:border-gray-600 rounded-md px-2.5 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
             >
               <option value="">{t('filters.anyScore')} ({stats?.total_papers || 0})</option>
               {scoreThresholds.map((score) => (
@@ -182,7 +182,7 @@ export default function Filters({
             <select
               value={sortBy}
               onChange={(e) => onSortByChange(e.target.value)}
-              className="border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-1 focus:ring-primary-500"
+              className="border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -190,13 +190,13 @@ export default function Filters({
             </select>
             <button
               onClick={onSortOrderToggle}
-              className="px-2 py-1.5 border border-gray-300 rounded-md text-xs bg-white hover:bg-gray-50 text-gray-500"
+              className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-xs bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-300"
             >
               {sortOrder === 'desc' ? '↓' : '↑'}
             </button>
           </div>
 
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={showBookmarksOnly}
@@ -213,7 +213,7 @@ export default function Filters({
                 onTopicChange([]);
                 onJournalChange([]);
               }}
-              className="text-xs text-primary-600 hover:text-primary-700 underline"
+              className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 underline"
             >
               {t('filters.clearAll')}
             </button>

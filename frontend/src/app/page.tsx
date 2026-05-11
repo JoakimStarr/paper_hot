@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
@@ -9,7 +9,7 @@ import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
 import { papersApi } from '@/lib/api';
 import { PaperCardListResponse, PaperCard as PaperCardType } from '@/types/paper';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getCache, setCache, buildCacheKey, getBookmarks } from '@/lib/cache';
 
@@ -32,6 +32,7 @@ export default function HomePage() {
 function HomePageInner() {
   const { t } = useLanguage();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [papers, setPapers] = useState<PaperCardType[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -50,6 +51,16 @@ function HomePageInner() {
 
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
+
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (q) {
+      router.push(`/search?q=${encodeURIComponent(q)}`);
+    }
+  };
 
   useEffect(() => {
     const journal = searchParams.get('journal');
@@ -173,12 +184,22 @@ function HomePageInner() {
   return (
     <Layout>
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-1">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
           {t('home.title')}
         </h1>
-        <p className="text-gray-500 text-sm">
+        <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
           {t('home.subtitle')}
         </p>
+        <form onSubmit={handleSearch} className="relative max-w-xl">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索论文标题、作者、关键词..."
+            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-shadow text-sm"
+          />
+        </form>
       </div>
 
       <Filters
@@ -212,7 +233,7 @@ function HomePageInner() {
 
           {papers.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-gray-600">{t('home.noPapers')}</p>
+              <p className="text-gray-600 dark:text-gray-400">{t('home.noPapers')}</p>
             </div>
           )}
 
