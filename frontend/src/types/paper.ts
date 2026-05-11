@@ -158,6 +158,15 @@ export interface SystemStats {
   source_counts: Record<string, number>;
   year_counts: Record<string, number>;
   top_journals: Record<string, number>;
+  db_size_mb?: number;
+  scheduler_running?: boolean;
+  ai_usage?: {
+    total_analyses: number;
+    total_tokens: number;
+    total_processing_ms: number;
+    total_papers_analyzed: number;
+    by_model: { model: string; count: number; tokens: number }[];
+  };
 }
 
 export interface NetworkNode {
@@ -211,6 +220,10 @@ export interface SettingsInfo {
     running: boolean;
   };
   api_token_configured: boolean;
+  ports?: {
+    backend: number;
+    frontend: number;
+  };
 }
 
 export interface SchedulerJob {

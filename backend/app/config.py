@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     
     api_token: str = Field(default="", description="API token for protected endpoints")
     
+    backend_port: int = 8000
+    frontend_port: int = 3000
+    
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
     
     class Config:

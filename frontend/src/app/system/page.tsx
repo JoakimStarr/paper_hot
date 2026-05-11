@@ -40,6 +40,10 @@ export default function SystemPage() {
   const [cleanupResult, setCleanupResult] = useState<MaintenanceResult | null>(null);
   const [cleanupMessage, setCleanupMessage] = useState('');
 
+  const [ports, setPorts] = useState({ backend: 8000, frontend: 3000 });
+  const [savingPorts, setSavingPorts] = useState(false);
+  const [portMessage, setPortMessage] = useState('');
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -66,6 +70,9 @@ export default function SystemPage() {
       setSettingsInfo(res);
       setModelList([...res.models].sort((a, b) => a.priority - b.priority));
       setSchedulerRunning(res.scheduler.running);
+      if (res.ports) {
+        setPorts(res.ports);
+      }
     } catch (error) {
       console.error('Error fetching settings:', error);
     }
@@ -184,6 +191,19 @@ export default function SystemPage() {
     }
   };
 
+  const handleUpdatePorts = async () => {
+    setSavingPorts(true);
+    setPortMessage('');
+    try {
+      await papersApi.updateSettings({ ports: { backend_port: ports.backend, frontend_port: ports.frontend } });
+      setPortMessage('端口配置已保存，重启后生效');
+    } catch (error: any) {
+      setPortMessage(error.response?.data?.detail || '保存失败');
+    } finally {
+      setSavingPorts(false);
+    }
+  };
+
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
     const safeStr = (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) ? dateStr : dateStr + 'Z';
@@ -257,7 +277,7 @@ export default function SystemPage() {
               <span className="text-sm font-medium">数据库大小</span>
             </div>
             <div className="text-2xl font-bold text-gray-900">
-              {stats.total_papers > 0 ? `${(stats.total_papers * 0.005 + 2.3).toFixed(1)} MB` : '-'}
+              {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
             </div>
           </div>
           <div className="bg-white rounded-lg shadow-sm border p-4">
@@ -272,6 +292,47 @@ export default function SystemPage() {
               </span>
             </div>
           </div>
+        </div>
+      )}
+
+      {stats?.ai_usage && (
+        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Brain className="w-5 h-5 text-gray-500" />
+            AI 使用统计
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="text-xs text-gray-500">分析次数</div>
+              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_analyses}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="text-xs text-gray-500">总 Token 消耗</div>
+              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_tokens.toLocaleString()}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="text-xs text-gray-500">总处理时间</div>
+              <div className="text-xl font-bold text-gray-900">{(stats.ai_usage.total_processing_ms / 1000).toFixed(1)}s</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <div className="text-xs text-gray-500">分析论文总数</div>
+              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_papers_analyzed.toLocaleString()}</div>
+            </div>
+          </div>
+          {stats.ai_usage.by_model && stats.ai_usage.by_model.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-700">按模型统计</div>
+              {stats.ai_usage.by_model.map(item => (
+                <div key={item.model} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+                  <span className="text-sm text-gray-700">{item.model}</span>
+                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <span>{item.count}次</span>
+                    <span>{item.tokens.toLocaleString()} tokens</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -554,6 +615,52 @@ export default function SystemPage() {
             )}
           </div>
         </div>
+
+        <div className="bg-white rounded-lg shadow-sm border p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Settings className="w-5 h-5 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">端口配置</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">后端端口</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={ports.backend}
+                  onChange={e => setPorts(prev => ({ ...prev, backend: parseInt(e.target.value) || 8000 }))}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">前端端口</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={ports.frontend}
+                  onChange={e => setPorts(prev => ({ ...prev, frontend: parseInt(e.target.value) || 3000 }))}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              onClick={handleUpdatePorts}
+              disabled={savingPorts}
+              className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            >
+              {savingPorts ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存'}
+            </button>
+            {portMessage && (
+              <span className={`text-xs ${portMessage.includes('成功') || portMessage.includes('保存') ? 'text-green-600' : 'text-red-500'}`}>
+                {portMessage}
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-gray-400">修改端口后需要重启服务才能生效</p>
+        </div>
       </div>
     );
   };
@@ -667,7 +774,7 @@ export default function SystemPage() {
             <div className="bg-gray-50 rounded-lg p-4">
               <div className="text-xs text-gray-500 mb-1">数据库大小</div>
               <div className="text-xl font-bold text-gray-900">
-                {stats.total_papers > 0 ? `${(stats.total_papers * 0.005 + 2.3).toFixed(1)} MB` : '-'}
+                {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
               </div>
             </div>
           </div>

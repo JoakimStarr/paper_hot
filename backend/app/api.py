@@ -45,6 +45,7 @@ class CrawlStartRequest(BaseModel):
 class UpdateSettingsRequest(BaseModel):
     api_keys: Optional[dict] = None
     model_priority: Optional[List[str]] = None
+    ports: Optional[dict] = None
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -84,6 +85,10 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
         "models": models,
         "scheduler": scheduler_info,
         "api_token_configured": api_token_configured,
+        "ports": {
+            "backend": settings.backend_port,
+            "frontend": settings.frontend_port,
+        },
     }
 
 
@@ -111,6 +116,11 @@ async def update_settings_endpoint(
     if body.model_priority:
         ai_trend_service.update_models(body.model_priority)
         models_changed = True
+
+    if body.ports:
+        for port_key, port_value in body.ports.items():
+            if port_key in ("backend_port", "frontend_port"):
+                Settings.update_setting(port_key, str(port_value))
 
     if keys_changed:
         ai_trend_service.reload()
@@ -347,6 +357,25 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
         from app.main import scheduler
         scheduler_running = scheduler.is_running()
 
+        ai_usage_result = await db.execute(sa_text("""
+            SELECT 
+                COUNT(*) as total_analyses,
+                COALESCE(SUM(tokens_used), 0) as total_tokens,
+                COALESCE(SUM(processing_time_ms), 0) as total_processing_ms,
+                COALESCE(SUM(total_papers), 0) as total_papers_analyzed
+            FROM ai_analysis_reports 
+            WHERE status = 'success'
+        """))
+        ai_usage_row = ai_usage_result.fetchone()
+
+        ai_by_model_result = await db.execute(sa_text("""
+            SELECT model, COUNT(*) as count, COALESCE(SUM(tokens_used), 0) as tokens
+            FROM ai_analysis_reports 
+            WHERE status = 'success'
+            GROUP BY model
+        """))
+        ai_by_model = [{"model": row[0], "count": row[1], "tokens": row[2]} for row in ai_by_model_result.fetchall()]
+
         return {
             "total_papers": total_papers,
             "journal_count": journal_count,
@@ -358,6 +387,13 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
             "top_journals": top_journals,
             "db_size_mb": db_size_mb,
             "scheduler_running": scheduler_running,
+            "ai_usage": {
+                "total_analyses": ai_usage_row[0],
+                "total_tokens": ai_usage_row[1],
+                "total_processing_ms": ai_usage_row[2],
+                "total_papers_analyzed": ai_usage_row[3],
+                "by_model": ai_by_model,
+            },
         }
     except Exception as e:
         logger.error(f"Failed to get system stats: {e}")
@@ -926,10 +962,13 @@ async def get_crawl_status(
     limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = Depends(get_db)
 ):
-    logs = await CrawlLogCRUD.get_recent_crawls(db, limit=limit)
+    logs, total = await CrawlLogCRUD.get_crawl_logs(db, page_size=limit)
     return CrawlLogListResponse(
         logs=[CrawlLogResponse.model_validate(log) for log in logs],
-        total=len(logs)
+        total=total,
+        page=1,
+        page_size=limit,
+        has_next=total > limit
     )
 
 

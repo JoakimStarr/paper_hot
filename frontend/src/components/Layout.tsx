@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { FileText, TrendingUp, Home, Settings, Share2, Search } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -10,6 +10,22 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   const { t } = useLanguage();
+  const [backendOnline, setBackendOnline] = useState(true);
+
+  useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${apiUrl}/api/stats`, { signal: AbortSignal.timeout(5000) });
+        setBackendOnline(res.ok);
+      } catch {
+        setBackendOnline(false);
+      }
+    };
+    checkBackend();
+    const interval = setInterval(checkBackend, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -58,6 +74,10 @@ export default function Layout({ children }: LayoutProps) {
                 <span>{t('nav.system')}</span>
               </Link>
               <LanguageSwitcher />
+              <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${backendOnline ? 'text-green-600 bg-green-50' : 'text-red-500 bg-red-50'}`}>
+                {backendOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{backendOnline ? '在线' : '离线'}</span>
+              </div>
             </nav>
           </div>
         </div>
