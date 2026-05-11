@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Starting PaperPulse..."
+echo "🚀 Starting ApplePaper..."
 
 # 启动后端服务
 echo "Starting backend server..."
@@ -24,7 +24,7 @@ echo "Frontend started (PID: $FRONTEND_PID)"
 sleep 5
 
 echo ""
-echo "✅ PaperPulse is running!"
+echo "✅ ApplePaper is running!"
 echo ""
 echo "📱 Frontend: http://localhost:3000"
 echo "🔧 Backend API: http://localhost:8000"

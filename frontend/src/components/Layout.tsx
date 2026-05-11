@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { papersApi, SearchSuggestion } from '@/lib/api';
 import LanguageSwitcher from './LanguageSwitcher';
 
 interface LayoutProps {
@@ -12,7 +14,51 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const { t } = useLanguage();
   const { isDark, toggleDark } = useTheme();
+  const router = useRouter();
   const [backendOnline, setBackendOnline] = useState(true);
+
+  const [navQuery, setNavQuery] = useState('');
+  const [navSuggestions, setNavSuggestions] = useState<SearchSuggestion[]>([]);
+  const [showNavSuggestions, setShowNavSuggestions] = useState(false);
+  const navSearchRef = useRef<HTMLDivElement>(null);
+  const navDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (navSearchRef.current && !navSearchRef.current.contains(e.target as Node)) {
+        setShowNavSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleNavSearch = useCallback((q?: string) => {
+    const trimmed = (q || navQuery).trim();
+    if (!trimmed) return;
+    setShowNavSuggestions(false);
+    setNavQuery('');
+    router.push(`/search?search=${encodeURIComponent(trimmed)}&search_field=keyword`);
+  }, [navQuery, router]);
+
+  const handleNavInputChange = useCallback((value: string) => {
+    setNavQuery(value);
+    if (navDebounceRef.current) clearTimeout(navDebounceRef.current);
+    if (value.trim().length < 1) {
+      setNavSuggestions([]);
+      setShowNavSuggestions(false);
+      return;
+    }
+    navDebounceRef.current = setTimeout(async () => {
+      try {
+        const result = await papersApi.getSearchSuggestions(value.trim());
+        setNavSuggestions(result.suggestions);
+        setShowNavSuggestions(result.suggestions.length > 0);
+      } catch {
+        setNavSuggestions([]);
+      }
+    }, 300);
+  }, []);
 
   useEffect(() => {
     const checkBackend = async () => {
@@ -39,41 +85,74 @@ export default function Layout({ children }: LayoutProps) {
               <span className="text-xl font-bold text-gray-900 dark:text-white">{t('appName')}</span>
             </Link>
             
-            <nav className="flex items-center gap-6">
+            <nav className="flex items-center gap-4">
               <Link
                 href="/"
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
               >
-                <Home className="w-5 h-5" />
-                <span>{t('nav.home')}</span>
+                <Home className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('nav.home')}</span>
               </Link>
-              <Link
-                href="/search"
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
-              >
-                <Search className="w-5 h-5" />
-                <span>搜索</span>
-              </Link>
+              <div ref={navSearchRef} className="relative">
+                <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-full px-3 py-1.5 gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={navQuery}
+                    onChange={(e) => handleNavInputChange(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleNavSearch(); }}
+                    onFocus={() => { if (navSuggestions.length > 0) setShowNavSuggestions(true); }}
+                    placeholder="搜索..."
+                    className="bg-transparent text-sm outline-none w-24 sm:w-32 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
+                  />
+                </div>
+                {showNavSuggestions && navSuggestions.length > 0 && (
+                  <div className="absolute right-0 top-full mt-1 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
+                    {navSuggestions.slice(0, 5).map((s, i) => (
+                      <button
+                        key={`${s.type}-${s.text}-${i}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setShowNavSuggestions(false);
+                          setNavQuery('');
+                          const field = s.type === 'author' ? 'author' : s.type === 'title' ? 'title' : 'keyword';
+                          router.push(`/search?search=${encodeURIComponent(s.text)}&search_field=${field}`);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-gray-700 dark:text-gray-300"
+                      >
+                        <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
+                          s.type === 'keyword' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
+                            : s.type === 'author' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
+                            : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400'
+                        }`}>
+                          {s.type === 'keyword' ? '关键词' : s.type === 'author' ? '作者' : '标题'}
+                        </span>
+                        <span className="truncate flex-1">{s.text}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Link
                 href="/trends"
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
               >
-                <TrendingUp className="w-5 h-5" />
-                <span>{t('nav.trends')}</span>
+                <TrendingUp className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('nav.trends')}</span>
               </Link>
               <Link
                 href="/network"
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
               >
-                <Share2 className="w-5 h-5" />
-                <span>关系网络</span>
+                <Share2 className="w-4 h-4" />
+                <span className="hidden sm:inline">关系网络</span>
               </Link>
               <Link
                 href="/system"
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
               >
-                <Settings className="w-5 h-5" />
-                <span>{t('nav.system')}</span>
+                <Settings className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('nav.system')}</span>
               </Link>
               <LanguageSwitcher />
               <button

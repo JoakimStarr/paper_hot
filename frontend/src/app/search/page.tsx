@@ -132,12 +132,12 @@ function SearchPageInner() {
   return (
     <Layout>
       <div className="mb-6">
-        <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-primary-600 transition-colors mb-4">
+        <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors mb-4">
           <ArrowLeft className="w-5 h-5" />
           <span>{t('home.previous')}</span>
         </Link>
 
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">搜索论文</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">搜索论文</h1>
 
         <SearchBar
           initialQuery={currentSearch}
@@ -147,13 +147,13 @@ function SearchPageInner() {
 
         {currentJournal && (
           <div className="mt-3 flex items-center gap-2">
-            <span className="text-sm text-gray-500">期刊筛选：</span>
-            <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs">
+            <span className="text-sm text-gray-500 dark:text-gray-400">期刊筛选：</span>
+            <span className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 px-2 py-1 rounded text-xs">
               {currentJournal}
             </span>
             <button
               onClick={() => router.push('/search')}
-              className="text-xs text-gray-400 hover:text-gray-600"
+              className="text-xs text-gray-400 hover:text-gray-600 dark:text-gray-400"
             >
               ✕
             </button>
@@ -169,7 +169,7 @@ function SearchPageInner() {
         </div>
       ) : hasParams ? (
         <>
-          <div className="mb-4 text-sm text-gray-500">
+          <div className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             {total > 0 ? `找到 ${total} 篇论文` : '未找到符合条件的论文'}
           </div>
 
@@ -182,7 +182,7 @@ function SearchPageInner() {
           {papers.length === 0 && (
             <div className="text-center py-12">
               <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-600 mb-4">未找到符合条件的论文</p>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">未找到符合条件的论文</p>
               <Link href="/" className="text-primary-600 hover:underline">
                 返回首页
               </Link>
@@ -203,7 +203,7 @@ function SearchPageInner() {
       ) : (
         <div className="text-center py-12">
           <Search className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500 text-lg mb-2">输入关键词开始搜索</p>
+          <p className="text-gray-500 dark:text-gray-400 text-lg mb-2">输入关键词开始搜索</p>
           <p className="text-gray-400 text-sm">支持按关键词、标题搜索，也支持期刊筛选</p>
         </div>
       )}

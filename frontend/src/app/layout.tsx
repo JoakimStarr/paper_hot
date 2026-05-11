@@ -4,7 +4,7 @@ import { LanguageProvider } from '@/contexts/LanguageContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
 export const metadata: Metadata = {
-  title: 'PaperPulse - Discover Trending Research Papers',
+  title: 'ApplePaper - Discover Trending Research Papers',
   description: 'A platform to discover and understand trending research papers',
 };
 

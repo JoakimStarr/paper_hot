@@ -221,10 +221,10 @@ export default function TrendsPage() {
 
   const getDirectionColor = (direction?: string) => {
     switch (direction) {
-      case 'up': return 'text-green-600 bg-green-50 border-green-200';
-      case 'down': return 'text-red-600 bg-red-50 border-red-200';
-      case 'stable': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+      case 'up': return 'text-green-600 bg-green-50 dark:bg-green-900/30 border-green-200';
+      case 'down': return 'text-red-600 bg-red-50 dark:bg-red-900/30 border-red-200';
+      case 'stable': return 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200';
+      default: return 'text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-700';
     }
   };
 
@@ -241,7 +241,7 @@ export default function TrendsPage() {
     switch (level) {
       case 'high': return 'bg-green-100 text-green-700 border-green-300';
       case 'medium': return 'bg-yellow-100 text-yellow-700 border-yellow-300';
-      case 'low': return 'bg-gray-100 text-gray-600 border-gray-300';
+      case 'low': return 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 border-gray-300';
       default: return 'bg-blue-100 text-blue-700 border-blue-300';
     }
   };
@@ -279,7 +279,7 @@ export default function TrendsPage() {
     if (!items || items.length === 0) return null;
     return (
       <div className="mb-8" id={sectionId}>
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <span className="text-xl">{icon}</span>
           {title}
         </h3>
@@ -297,8 +297,8 @@ export default function TrendsPage() {
           <Brain className="w-16 h-16 text-purple-400 animate-pulse" />
           <Loader2 className="w-6 h-6 absolute -bottom-1 -right-1 animate-spin text-purple-600" />
         </div>
-        <p className="text-gray-700 text-lg font-medium">AI正在分析论文数据...</p>
-        <p className="text-gray-500 text-sm mt-2">正在分析 {topics.length} 个热点主题的相关论文</p>
+        <p className="text-gray-700 dark:text-gray-300 text-lg font-medium">AI正在分析论文数据...</p>
+        <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">正在分析 {topics.length} 个热点主题的相关论文</p>
         <div className="flex items-center gap-2 mt-4">
           <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
           <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
@@ -312,10 +312,10 @@ export default function TrendsPage() {
   return (
     <Layout>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
           {t('trends.title')}
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           {t('trends.subtitle')}
         </p>
       </div>
@@ -334,7 +334,7 @@ export default function TrendsPage() {
                 className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
                   timeRange === range
                     ? 'bg-primary-600 text-white'
-                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                    : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
                 }`}
               >
                 {range === '1m' ? '1个月' : range === '3m' ? '3个月' : '6个月'}
@@ -345,10 +345,10 @@ export default function TrendsPage() {
           <TrendChart topics={topics} />
 
           {!radarLoading && radarData.length > 0 && (
-            <div className="mt-8 bg-white rounded-lg shadow-md p-6">
+            <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-xl">🎯</span>
-                <h2 className="text-xl font-semibold text-gray-900">研究热点雷达图</h2>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">研究热点雷达图</h2>
                 <span className="text-xs text-gray-400">各子领域论文分布</span>
               </div>
               <ResponsiveContainer width="100%" height={350}>
@@ -379,13 +379,13 @@ export default function TrendsPage() {
             </div>
           )}
 
-          <div className="mt-8 bg-white rounded-lg shadow-md p-6">
+          <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-6 h-6 text-purple-600" />
-                <h2 className="text-xl font-semibold text-gray-900">AI 趋势分析</h2>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">AI 趋势分析</h2>
                 {hasHistory && report && !isRunning && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full">
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded-full">
                     <Clock className="w-3 h-3" />
                     {formatTimeAgo(report.created_at)}
                   </span>
@@ -424,7 +424,7 @@ export default function TrendsPage() {
             {isRunning ? (
               renderRunningState()
             ) : aiError && !report ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 rounded-lg p-6">
                 <div className="flex items-center gap-2 text-red-600 mb-2">
                   <AlertCircle className="w-5 h-5" />
                   <span className="font-medium">分析失败</span>
@@ -436,49 +436,49 @@ export default function TrendsPage() {
               <div className="space-y-6">
                 {report.summary && (
                   <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6">
-                    <p className="text-gray-700 text-lg leading-relaxed">{report.summary}</p>
+                    <p className="text-gray-700 dark:text-gray-300 text-lg leading-relaxed">{report.summary}</p>
                   </div>
                 )}
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-purple-600">{report.total_papers}</div>
-                    <div className="text-sm text-gray-500">分析论文数</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">分析论文数</div>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-blue-600">{report.model || '-'}</div>
-                    <div className="text-sm text-gray-500">使用模型</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">使用模型</div>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-green-600">{report.tokens_used}</div>
-                    <div className="text-sm text-gray-500">Token消耗</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Token消耗</div>
                   </div>
-                  <div className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-orange-600">{report.processing_time_ms > 1000 ? `${(report.processing_time_ms / 1000).toFixed(1)}s` : `${report.processing_time_ms}ms`}</div>
-                    <div className="text-sm text-gray-500">处理时长</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">处理时长</div>
                   </div>
                 </div>
 
                 {renderSection('研究热点', '🔥', report.hot_topics, (item, i) => (
-                  <div key={i} className="border border-purple-100 rounded-lg p-4 bg-white hover:shadow-sm transition-shadow">
+                  <div key={i} className="border border-purple-100 rounded-lg p-4 bg-white dark:bg-gray-800 hover:shadow-sm transition-shadow">
                     <div className="flex items-start gap-3">
                       <span className="w-7 h-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-sm font-bold shrink-0 mt-0.5">
                         {i + 1}
                       </span>
                       <div className="flex-1">
-                        <h4 className="font-semibold text-gray-900 text-base">{item.topic}</h4>
-                        <p className="text-gray-600 text-sm mt-1">{item.description}</p>
+                        <h4 className="font-semibold text-gray-900 dark:text-white text-base">{item.topic}</h4>
+                        <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{item.description}</p>
                         {item.related_keywords && item.related_keywords.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {item.related_keywords.map((kw, ki) => (
-                              <span key={ki} className="px-2 py-0.5 bg-purple-50 text-purple-600 text-xs rounded-full border border-purple-100">
+                              <span key={ki} className="px-2 py-0.5 bg-purple-50 dark:bg-purple-900/30 text-purple-600 text-xs rounded-full border border-purple-100">
                                 {kw}
                               </span>
                             ))}
                           </div>
                         )}
                         {item.significance && (
-                          <p className="text-gray-500 text-xs mt-2 italic">{item.significance}</p>
+                          <p className="text-gray-500 dark:text-gray-400 text-xs mt-2 italic">{item.significance}</p>
                         )}
                       </div>
                     </div>
@@ -486,14 +486,14 @@ export default function TrendsPage() {
                 ), 'section-hot-topics')}
 
                 {renderSection('发展趋势', '📈', report.development_trends, (item, i) => (
-                  <div key={i} className="border border-blue-100 rounded-lg p-4 bg-white">
+                  <div key={i} className="border border-blue-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <div className="flex items-center gap-3 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getDirectionColor(item.direction)}`}>
                         {getDirectionLabel(item.direction)}
                       </span>
-                      <h4 className="font-semibold text-gray-900">{item.trend}</h4>
+                      <h4 className="font-semibold text-gray-900 dark:text-white">{item.trend}</h4>
                     </div>
-                    <p className="text-gray-600 text-sm">{item.description}</p>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">{item.description}</p>
                     {item.evidence && (
                       <p className="text-gray-400 text-xs mt-1">依据: {item.evidence}</p>
                     )}
@@ -501,31 +501,31 @@ export default function TrendsPage() {
                 ), 'section-dev-trends')}
 
                 {renderSection('关键词聚类分析', '🔍', report.keyword_insights, (item, i) => (
-                  <div key={i} className="border border-green-100 rounded-lg p-4 bg-white">
-                    <h4 className="font-semibold text-gray-900 mb-2">{item.cluster}</h4>
+                  <div key={i} className="border border-green-100 rounded-lg p-4 bg-white dark:bg-gray-800">
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">{item.cluster}</h4>
                     {item.keywords && item.keywords.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mb-2">
                         {item.keywords.map((kw, ki) => (
-                          <span key={ki} className="px-2 py-0.5 bg-green-50 text-green-600 text-xs rounded-full border border-green-100">
+                          <span key={ki} className="px-2 py-0.5 bg-green-50 dark:bg-green-900/30 text-green-600 text-xs rounded-full border border-green-100">
                             {kw}
                           </span>
                         ))}
                       </div>
                     )}
-                    <p className="text-gray-600 text-sm">{item.insight}</p>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">{item.insight}</p>
                   </div>
                 ), 'section-keyword-insights')}
 
                 {renderSection('期刊分析', '📰', report.journal_insights, (item, i) => (
-                  <div key={i} className="border border-yellow-100 rounded-lg p-4 bg-white">
-                    <h4 className="font-semibold text-gray-900">{item.journal}</h4>
-                    <p className="text-gray-600 text-sm mt-1">
-                      <span className="font-medium text-gray-700">研究偏好: </span>
+                  <div key={i} className="border border-yellow-100 rounded-lg p-4 bg-white dark:bg-gray-800">
+                    <h4 className="font-semibold text-gray-900 dark:text-white">{item.journal}</h4>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                      <span className="font-medium text-gray-700 dark:text-gray-300">研究偏好: </span>
                       {item.focus}
                     </p>
                     {item.suggestion && (
-                      <p className="text-gray-500 text-sm mt-1">
-                        <span className="font-medium text-gray-600">建议: </span>
+                      <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+                        <span className="font-medium text-gray-600 dark:text-gray-400">建议: </span>
                         {item.suggestion}
                       </p>
                     )}
@@ -533,27 +533,27 @@ export default function TrendsPage() {
                 ))}
 
                 {renderSection('研究建议', '💡', report.recommendations, (item, i) => (
-                  <div key={i} className="border border-orange-100 rounded-lg p-4 bg-white">
+                  <div key={i} className="border border-orange-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <div className="flex items-center gap-3 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getOpportunityColor(item.opportunity_level)}`}>
                         {item.opportunity_level === 'high' ? '高机遇' : item.opportunity_level === 'medium' ? '中等' : '一般'}
                       </span>
-                      <h4 className="font-semibold text-gray-900">{item.area}</h4>
+                      <h4 className="font-semibold text-gray-900 dark:text-white">{item.area}</h4>
                     </div>
-                    <p className="text-gray-600 text-sm">{item.description}</p>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">{item.description}</p>
                   </div>
                 ))}
 
-                <div className="border-t border-gray-100 pt-4">
+                <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
                   <button
                     onClick={() => setShowRawAnalysis(!showRawAnalysis)}
-                    className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                    className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 transition-colors"
                   >
                     {showRawAnalysis ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     {showRawAnalysis ? '收起原始分析报告' : '查看原始分析报告'}
                   </button>
                   {showRawAnalysis && report.raw_analysis && (
-                    <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200 prose prose-sm max-w-none">
+                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 prose prose-sm max-w-none">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {report.raw_analysis}
                       </ReactMarkdown>
@@ -565,16 +565,16 @@ export default function TrendsPage() {
               <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-8">
                 <div className="flex flex-col items-center justify-center">
                   <History className="w-16 h-16 text-purple-300 mb-4" />
-                  <p className="text-gray-600 text-lg font-medium">暂无AI分析记录</p>
+                  <p className="text-gray-600 dark:text-gray-400 text-lg font-medium">暂无AI分析记录</p>
                   <p className="text-gray-400 text-sm mt-1">点击上方「开始分析」按钮，AI将分析整个数据库的论文趋势</p>
                 </div>
               </div>
             )}
 
-            <div className="mt-6 border-t border-gray-100 pt-4">
+            <div className="mt-6 border-t border-gray-100 dark:border-gray-700 pt-4">
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 transition-colors"
               >
                 {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 <History className="w-4 h-4" />
@@ -593,12 +593,12 @@ export default function TrendsPage() {
                           restoringId === r.id
                             ? 'bg-purple-100 ring-2 ring-purple-300'
                             : r.id === report?.id
-                            ? 'bg-purple-50 ring-1 ring-purple-200'
-                            : 'bg-gray-50 hover:bg-gray-100'
+                            ? 'bg-purple-50 dark:bg-purple-900/30 ring-1 ring-purple-200'
+                            : 'bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:bg-gray-700'
                         }`}
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-700 truncate">{r.summary || '(无摘要)'}</p>
+                          <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{r.summary || '(无摘要)'}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-gray-400">{r.model}</span>
                             <span className="text-xs text-gray-400">{formatTimeAgo(r.created_at)}</span>
@@ -620,17 +620,17 @@ export default function TrendsPage() {
             </div>
 
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 mb-2">🔥 热点预测</h3>
-                <p className="text-sm text-gray-500">基于历史数据预测未来研究热点</p>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-2">🔥 热点预测</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">基于历史数据预测未来研究热点</p>
               </a>
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 mb-2">🔍 关键词关联</h3>
-                <p className="text-sm text-gray-500">分析关键词之间的关联关系</p>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-2">🔍 关键词关联</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">分析关键词之间的关联关系</p>
               </a>
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 mb-2">📈 发展趋势</h3>
-                <p className="text-sm text-gray-500">生成详细的研究趋势报告</p>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-2">📈 发展趋势</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">生成详细的研究趋势报告</p>
               </a>
             </div>
           </div>

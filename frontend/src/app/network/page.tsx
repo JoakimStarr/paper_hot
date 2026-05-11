@@ -129,10 +129,10 @@ export default function NetworkPage() {
   return (
     <Layout>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
           研究关系网络
         </h1>
-        <p className="text-gray-600">
+        <p className="text-gray-600 dark:text-gray-400">
           可视化展示作者合作网络和关键词共现关系
         </p>
       </div>
@@ -143,7 +143,7 @@ export default function NetworkPage() {
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
             activeTab === 'authors'
               ? 'bg-primary-600 text-white'
-              : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
           }`}
         >
           <Users className="w-4 h-4" />
@@ -154,7 +154,7 @@ export default function NetworkPage() {
           className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
             activeTab === 'keywords'
               ? 'bg-primary-600 text-white'
-              : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
           }`}
         >
           <Hash className="w-4 h-4" />
@@ -168,17 +168,17 @@ export default function NetworkPage() {
         </div>
       ) : (
         <>
-          <div className="bg-white rounded-lg shadow-sm border p-4 mb-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4 mb-4">
             <div className="flex items-center gap-2">
               {highlightedNodeId && (
                 <button
                   onClick={handleClearHighlight}
-                  className="ml-2 px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded-md transition-colors text-gray-600"
+                  className="ml-2 px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 rounded-md transition-colors text-gray-600 dark:text-gray-400"
                 >
                   清除高亮
                 </button>
               )}
-              <span className="ml-4 text-sm text-gray-500">
+              <span className="ml-4 text-sm text-gray-500 dark:text-gray-400">
                 {data?.nodes.length || 0} 个节点, {data?.links.length || 0} 条关系 — 鼠标滚轮缩放，拖拽移动
               </span>
             </div>
@@ -191,13 +191,13 @@ export default function NetworkPage() {
               onNodeClick={handleNodeClick}
             />
 
-            <div className="bg-white rounded-lg shadow-sm border p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">节点详情</h3>
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">节点详情</h3>
               {infoNode ? (
                 <div className="space-y-3 text-sm">
                   <div>
                     <span className="text-gray-400 block text-xs">名称</span>
-                    <span className="text-gray-900 font-medium">{infoNode.name}</span>
+                    <span className="text-gray-900 dark:text-white font-medium">{infoNode.name}</span>
                   </div>
                   <div>
                     <span className="text-gray-400 block text-xs">类型</span>
@@ -209,18 +209,18 @@ export default function NetworkPage() {
                   {infoNode.papers !== undefined && (
                     <div>
                       <span className="text-gray-400 block text-xs">论文数</span>
-                      <span className="text-gray-900 font-semibold text-lg">{infoNode.papers}</span>
+                      <span className="text-gray-900 dark:text-white font-semibold text-lg">{infoNode.papers}</span>
                     </div>
                   )}
                   {infoNode.count !== undefined && infoNode.group === 'keyword' && (
                     <div>
                       <span className="text-gray-400 block text-xs">出现次数</span>
-                      <span className="text-gray-900 font-semibold text-lg">{infoNode.count}</span>
+                      <span className="text-gray-900 dark:text-white font-semibold text-lg">{infoNode.count}</span>
                     </div>
                   )}
 
                   {connectedNodes.length > 0 && (
-                    <div className="pt-3 border-t border-gray-100">
+                    <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
                       <span className="text-gray-400 block text-xs mb-2">
                         关联{infoNode.group === 'author' ? '作者' : '关键词'} ({connectedNodes.length})
                       </span>
@@ -229,7 +229,7 @@ export default function NetworkPage() {
                           <div
                             key={node.id}
                             className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs ${
-                              highlightedNodeId === node.id ? 'bg-primary-50 ring-1 ring-primary-200' : ''
+                              highlightedNodeId === node.id ? 'bg-primary-50 dark:bg-primary-900/30 ring-1 ring-primary-200' : ''
                             }`}
                           >
                             <button
@@ -237,11 +237,11 @@ export default function NetworkPage() {
                               className="flex items-center gap-2 flex-1 min-w-0 hover:text-primary-600 transition-colors"
                             >
                               <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
-                              <span className="text-gray-700 truncate">{node.name}</span>
+                              <span className="text-gray-700 dark:text-gray-300 truncate">{node.name}</span>
                             </button>
                             <button
                               onClick={() => handleNavigateToNode(node)}
-                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 rounded transition-colors"
+                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 dark:bg-gray-700 rounded transition-colors"
                               title="查看相关论文"
                             >
                               <ExternalLink className="w-3 h-3 text-gray-400 hover:text-primary-600" />
@@ -255,9 +255,9 @@ export default function NetworkPage() {
                     </div>
                   )}
 
-                  <div className="pt-2 border-t border-gray-100 mt-2">
+                  <div className="pt-2 border-t border-gray-100 dark:border-gray-700 mt-2">
                     <span className="text-gray-400 block text-xs">提示</span>
-                    <span className="text-gray-500 text-xs">
+                    <span className="text-gray-500 dark:text-gray-400 text-xs">
                       点击关联节点可切换查看。点击 <ExternalLink className="w-2.5 h-2.5 inline-block text-gray-400" /> 可跳转搜索相关论文。点击空白处或"清除高亮"恢复全局视图。
                     </span>
                   </div>

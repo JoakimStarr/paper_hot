@@ -123,7 +123,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
 
   return (
     <div className="relative">
-      <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
+      <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-3 py-2 border border-gray-200 dark:border-gray-700">
         <Search className="w-4 h-4 text-gray-400 shrink-0" />
         <input
           ref={inputRef}
@@ -140,7 +140,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
         <select
           value={field}
           onChange={(e) => setField(e.target.value)}
-          className="text-xs bg-white border border-gray-200 rounded px-2 py-0.5 shrink-0 outline-none"
+          className="text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-0.5 shrink-0 outline-none"
         >
           {SEARCH_FIELDS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
@@ -160,7 +160,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
       </div>
 
       {showSuggestions && suggestions.length > 0 && (
-        <div ref={suggestRef} className="absolute z-50 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+        <div ref={suggestRef} className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden">
           {suggestions.map((suggestion, index) => (
             <button
               key={`${suggestion.type}-${suggestion.text}-${index}`}
@@ -169,7 +169,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
                 handleSuggestionClick(suggestion);
               }}
               onMouseEnter={() => setHighlightIndex(index)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-gray-50 transition-colors ${index === highlightIndex ? 'bg-gray-50' : ''}`}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left hover:bg-gray-50 dark:bg-gray-700/50 transition-colors ${index === highlightIndex ? 'bg-gray-50 dark:bg-gray-700/50' : ''}`}
             >
               <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
                 suggestion.type === 'keyword'
@@ -180,7 +180,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
               }`}>
                 {suggestion.type === 'keyword' ? '关键词' : suggestion.type === 'author' ? '作者' : '标题'}
               </span>
-              <span className="text-gray-700 truncate flex-1">{suggestion.text}</span>
+              <span className="text-gray-700 dark:text-gray-300 truncate flex-1">{suggestion.text}</span>
               {suggestion.count > 0 && (
                 <span className="text-xs text-gray-400 shrink-0">{suggestion.count}篇</span>
               )}

@@ -211,7 +211,7 @@ export default function PaperDetailPage() {
         <div className="text-center py-12">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <p className="text-red-600 font-medium mb-2">加载失败</p>
-          <p className="text-gray-500 text-sm mb-4">{error}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">{error}</p>
           <Link href="/" className="text-primary-600 hover:underline mt-4 inline-block">
             {t('nav.home')}
           </Link>
@@ -224,7 +224,7 @@ export default function PaperDetailPage() {
     return (
       <Layout>
         <div className="text-center py-12">
-          <p className="text-gray-600">{t('home.noPapers')}</p>
+          <p className="text-gray-600 dark:text-gray-400">{t('home.noPapers')}</p>
           <Link href="/" className="text-primary-600 hover:underline mt-4 inline-block">
             {t('nav.home')}
           </Link>
@@ -239,15 +239,15 @@ export default function PaperDetailPage() {
   return (
     <Layout>
       <div className="mb-6">
-        <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-primary-600 transition-colors">
+        <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors">
           <ArrowLeft className="w-5 h-5" />
           <span>{t('home.previous')}</span>
         </Link>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md p-8 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
         <div className="flex justify-between items-start mb-4">
-          <h1 className="text-2xl font-bold text-gray-900 flex-1">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex-1">
             {paper.title}
           </h1>
           <a
@@ -270,33 +270,33 @@ export default function PaperDetailPage() {
             <button
               key={index}
               onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-              className="bg-gray-100 text-gray-700 text-sm px-3 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+              className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm px-3 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
             >
               {keyword}
             </button>
           ))}
         </div>
 
-        <div className="flex items-center gap-6 text-sm text-gray-600 mb-6">
+        <div className="flex items-center gap-6 text-sm text-gray-600 dark:text-gray-400 mb-6">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
             {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
           {paper.discipline && (
-            <span className="bg-purple-50 text-purple-700 px-3 py-1 rounded">
+            <span className="bg-purple-50 dark:bg-purple-900/30 text-purple-700 px-3 py-1 rounded">
               {paper.discipline}
             </span>
           )}
-          <span className="bg-gray-100 px-3 py-1 rounded">
+          <span className="bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded">
             {paper.source}
           </span>
           {paper.venue && (
-            <span className="bg-primary-50 text-primary-700 px-3 py-1 rounded">
+            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 px-3 py-1 rounded">
               {paper.venue}
             </span>
           )}
           {paper.journal_name && (
-            <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded">
+            <span className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 px-3 py-1 rounded">
               {paper.journal_name}
             </span>
           )}
@@ -304,7 +304,7 @@ export default function PaperDetailPage() {
 
         {paper.doi && (
           <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">DOI</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">DOI</h2>
             <a
               href={paper.url}
               target="_blank"
@@ -318,10 +318,10 @@ export default function PaperDetailPage() {
 
         {paper.authors && paper.authors.length > 0 && (
           <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">{t('paper.authors')}</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('paper.authors')}</h2>
             <div className="flex flex-wrap gap-2">
               {paper.authors.map((author, index) => (
-                <span key={index} className="bg-gray-100 text-gray-700 text-sm px-3 py-1 rounded">
+                <span key={index} className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm px-3 py-1 rounded">
                   {author}
                 </span>
               ))}
@@ -331,7 +331,7 @@ export default function PaperDetailPage() {
 
         {paper.keywords_cn && paper.keywords_cn.length > 0 && (
           <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">{t('paper.keywords')}</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('paper.keywords')}</h2>
             <div className="flex flex-wrap gap-2">
               {paper.keywords_cn.map((keyword, index) => (
                 <button
@@ -347,36 +347,36 @@ export default function PaperDetailPage() {
         )}
 
         <div className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">{t('home.subtitle')}</h2>
-          <p className="text-gray-700 leading-relaxed">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('home.subtitle')}</h2>
+          <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
             {paper.features?.summary || paper.abstract}
           </p>
         </div>
 
         <div className="border-t pt-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-green-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 mb-1">Recency Score</div>
-              <div className="text-lg font-bold text-gray-900">
+            <div className="bg-green-50 dark:bg-green-900/30 p-4 rounded-lg">
+              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Recency Score</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.recency_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 mb-1">Venue Score</div>
-              <div className="text-lg font-bold text-gray-900">
+            <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg">
+              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Venue Score</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.venue_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
-            <div className="bg-purple-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 mb-1">Trend Score</div>
-              <div className="text-lg font-bold text-gray-900">
+            <div className="bg-purple-50 dark:bg-purple-900/30 p-4 rounded-lg">
+              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Trend Score</div>
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.trend_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
           </div>
 
           {paper.should_read_score && (
-            <div className="mt-4 bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+            <div className="mt-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 p-4 rounded-lg">
               <div className="flex items-center gap-2">
                 <Award className="w-5 h-5 text-yellow-700" />
                 <span className="font-semibold text-yellow-900">
@@ -396,18 +396,18 @@ export default function PaperDetailPage() {
       </div>
 
       {paper.similar_papers && paper.similar_papers.length > 0 && (
-        <div className="bg-white rounded-lg shadow-md p-8 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">{t('paper.similarPapers')}</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{t('paper.similarPapers')}</h2>
           <div className="space-y-3">
             {paper.similar_papers.map((similar) => (
               <Link
                 key={similar.id}
                 href={`/paper/${similar.id}`}
-                className="block border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                className="block border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow"
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900 mb-2">
+                    <h3 className="font-semibold text-gray-900 dark:text-white mb-2">
                       {similar.title}
                     </h3>
                     <div className="flex flex-wrap gap-1.5">
@@ -420,14 +420,14 @@ export default function PaperDetailPage() {
                         <button
                           key={index}
                           onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-                          className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+                          className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
                         >
                           {keyword}
                         </button>
                       ))}
                     </div>
                   </div>
-                  <div className="text-sm text-gray-600 ml-4 shrink-0">
+                  <div className="text-sm text-gray-600 dark:text-gray-400 ml-4 shrink-0">
                     {(similar.similarity_score * 100).toFixed(0)}% similar
                   </div>
                 </div>
@@ -437,11 +437,11 @@ export default function PaperDetailPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow-md p-8 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary-600" />
-            <h2 className="text-xl font-semibold text-gray-900">AI 智能分析</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">AI 智能分析</h2>
           </div>
           {aiAnalysis && !aiAnalyzing && (
             <button
@@ -456,12 +456,12 @@ export default function PaperDetailPage() {
         {aiAnalyzing && (
           <div className="flex items-center gap-3 py-8 justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
-            <span className="text-gray-500">正在分析论文，请稍候...</span>
+            <span className="text-gray-500 dark:text-gray-400">正在分析论文，请稍候...</span>
           </div>
         )}
 
         {aiError && !aiAnalyzing && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 rounded-lg p-4 mb-4">
             <p className="text-red-700 text-sm">{aiError}</p>
             <button
               onClick={analyzePaper}
@@ -475,7 +475,7 @@ export default function PaperDetailPage() {
         {!aiAnalysis && !aiAnalyzing && !aiError && (
           <div className="text-center py-8">
             <Bot className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 text-sm mb-4">点击下方按钮，让 AI 帮你分析这篇论文</p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">点击下方按钮，让 AI 帮你分析这篇论文</p>
             <button
               onClick={analyzePaper}
               className="bg-primary-600 text-white px-6 py-2.5 rounded-lg hover:bg-primary-700 text-sm font-medium"
@@ -495,7 +495,7 @@ export default function PaperDetailPage() {
         {aiAnalysis && !aiAnalyzing && (
           <>
             <div className="border-t mt-6 pt-6">
-              <h3 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
                 <Bot className="w-4 h-4 text-primary-600" />
                 追问讨论
               </h3>
@@ -510,7 +510,7 @@ export default function PaperDetailPage() {
                       className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
                         msg.role === 'user'
                           ? 'bg-primary-600 text-white'
-                          : 'bg-gray-100 text-gray-800'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800'
                       }`}
                     >
                       {msg.role === 'user' ? msg.content : <ReactMarkdown>{msg.content}</ReactMarkdown>}
@@ -520,7 +520,7 @@ export default function PaperDetailPage() {
 
                 {chatStreaming && streamContent && (
                   <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 text-gray-800">
+                    <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800">
                       <ReactMarkdown>{streamContent}</ReactMarkdown>
                       <span className="inline-block w-1.5 h-4 bg-primary-600 ml-0.5 animate-pulse align-middle" />
                     </div>
@@ -529,7 +529,7 @@ export default function PaperDetailPage() {
 
                 {chatStreaming && !streamContent && (
                   <div className="flex justify-start">
-                    <div className="bg-gray-100 rounded-lg px-4 py-3">
+                    <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
                       <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
                     </div>
                   </div>
@@ -551,7 +551,7 @@ export default function PaperDetailPage() {
                   }}
                   placeholder="针对这篇论文提问..."
                   disabled={chatStreaming}
-                  className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-gray-50"
+                  className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-gray-50 dark:bg-gray-700/50"
                 />
                 <button
                   onClick={handleChatSubmit}

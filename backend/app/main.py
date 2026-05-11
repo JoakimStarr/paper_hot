@@ -27,7 +27,7 @@ async def verify_api_token(x_api_token: str = Header(default=None)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up PaperPulse...")
+    logger.info("Starting up ApplePaper...")
     
     await init_db()
     logger.info("Database initialized")
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Shutting down PaperPulse...")
+    logger.info("Shutting down ApplePaper...")
     if settings.scheduler_enabled:
         scheduler.stop()
 

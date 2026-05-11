@@ -7,7 +7,7 @@ export interface Translations {
 export const translations = {
   zh: {
     // 通用
-    appName: 'PaperPulse',
+    appName: 'ApplePaper',
     appDescription: '发现和理解热门研究论文',
     
     // 导航
@@ -122,7 +122,7 @@ export const translations = {
   
   en: {
     // General
-    appName: 'PaperPulse',
+    appName: 'ApplePaper',
     appDescription: 'Discover and understand trending research papers',
     
     // Navigation

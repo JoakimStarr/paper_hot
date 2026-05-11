@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🛑 Stopping PaperPulse..."
+echo "🛑 Stopping ApplePaper..."
 
 # 强制关闭 8000 端口（后端）
 PORT_PID=$(lsof -t -i:8000 2>/dev/null)
@@ -15,4 +15,4 @@ fi
 pkill -f "next dev" 2>/dev/null && echo "Frontend stopped" || echo "No frontend process found"
 
 echo ""
-echo "✅ PaperPulse has been stopped"
+echo "✅ ApplePaper has been stopped"

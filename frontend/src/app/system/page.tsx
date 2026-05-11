@@ -241,53 +241,53 @@ export default function SystemPage() {
     <>
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-blue-600 mb-2">
               <Database className="w-5 h-5" />
               <span className="text-sm font-medium">论文总数</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900">{stats.total_papers}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.total_papers}</div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-green-600 mb-2">
               <BookOpen className="w-5 h-5" />
               <span className="text-sm font-medium">期刊数量</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900">{stats.journal_count}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.journal_count}</div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-purple-600 mb-2">
               <Hash className="w-5 h-5" />
               <span className="text-sm font-medium">关键词数</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900">{stats.keyword_count}</div>
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.keyword_count}</div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-orange-600 mb-2">
               <Clock className="w-5 h-5" />
               <span className="text-sm font-medium">最近更新</span>
             </div>
-            <div className="text-sm font-semibold text-gray-900">
+            <div className="text-sm font-semibold text-gray-900 dark:text-white">
               {timeAgo(stats.latest_paper_at)}
             </div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-cyan-600 mb-2">
               <Database className="w-5 h-5" />
               <span className="text-sm font-medium">数据库大小</span>
             </div>
-            <div className="text-2xl font-bold text-gray-900">
+            <div className="text-2xl font-bold text-gray-900 dark:text-white">
               {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
             </div>
           </div>
-          <div className="bg-white rounded-lg shadow-sm border p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-emerald-600 mb-2">
               <Activity className="w-5 h-5" />
               <span className="text-sm font-medium">调度器状态</span>
             </div>
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${schedulerRunning ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className="text-sm font-semibold text-gray-900">
+              <span className="text-sm font-semibold text-gray-900 dark:text-white">
                 {schedulerRunning ? '运行中' : '已停止'}
               </span>
             </div>
@@ -296,36 +296,36 @@ export default function SystemPage() {
       )}
 
       {stats?.ai_usage && (
-        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Brain className="w-5 h-5 text-gray-500" />
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+            <Brain className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             AI 使用统计
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500">分析次数</div>
-              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_analyses}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400">分析次数</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_analyses}</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500">总 Token 消耗</div>
-              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_tokens.toLocaleString()}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400">总 Token 消耗</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_tokens.toLocaleString()}</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500">总处理时间</div>
-              <div className="text-xl font-bold text-gray-900">{(stats.ai_usage.total_processing_ms / 1000).toFixed(1)}s</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400">总处理时间</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{(stats.ai_usage.total_processing_ms / 1000).toFixed(1)}s</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-3">
-              <div className="text-xs text-gray-500">分析论文总数</div>
-              <div className="text-xl font-bold text-gray-900">{stats.ai_usage.total_papers_analyzed.toLocaleString()}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400">分析论文总数</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_papers_analyzed.toLocaleString()}</div>
             </div>
           </div>
           {stats.ai_usage.by_model && stats.ai_usage.by_model.length > 0 && (
             <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-700">按模型统计</div>
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">按模型统计</div>
               {stats.ai_usage.by_model.map(item => (
-                <div key={item.model} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
-                  <span className="text-sm text-gray-700">{item.model}</span>
-                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                <div key={item.model} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{item.model}</span>
+                  <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
                     <span>{item.count}次</span>
                     <span>{item.tokens.toLocaleString()} tokens</span>
                   </div>
@@ -337,14 +337,14 @@ export default function SystemPage() {
       )}
 
       {stats?.source_counts && (
-        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-gray-500" />
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             来源分布
           </h3>
           <div className="flex flex-wrap gap-2">
             {Object.entries(stats.source_counts).map(([source, count]) => (
-              <span key={source} className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm border border-blue-100">
+              <span key={source} className="px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 rounded-full text-sm border border-blue-100">
                 {source}: {count}篇
               </span>
             ))}
@@ -353,21 +353,21 @@ export default function SystemPage() {
       )}
 
       {stats?.top_journals && (
-        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-gray-500" />
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             Top 10 期刊
           </h3>
           <div className="space-y-2">
             {Object.entries(stats.top_journals).map(([journal, count], idx) => (
-              <div key={journal} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+              <div key={journal} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold">
                     {idx + 1}
                   </span>
-                  <span className="text-sm text-gray-700">{journal}</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{journal}</span>
                 </div>
-                <span className="text-sm font-medium text-gray-500">{count}篇</span>
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}篇</span>
               </div>
             ))}
           </div>
@@ -375,18 +375,18 @@ export default function SystemPage() {
       )}
 
       {stats?.year_counts && Object.keys(stats.year_counts).length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
-            <Hash className="w-5 h-5 text-gray-500" />
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+            <Hash className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             年份分布
           </h3>
           <div className="space-y-2">
             {Object.entries(stats.year_counts)
               .sort(([a], [b]) => Number(b) - Number(a))
               .map(([year, count]) => (
-                <div key={year} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
-                  <span className="text-sm text-gray-700">{year}</span>
-                  <span className="text-sm font-medium text-gray-500">{count}篇</span>
+                <div key={year} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{year}</span>
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}篇</span>
                 </div>
               ))}
           </div>
@@ -398,11 +398,11 @@ export default function SystemPage() {
   const renderCrawler = () => (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="space-y-6">
-        <div className="bg-white rounded-lg shadow-sm border p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Settings className="w-6 h-6 text-primary-600" />
-              <h2 className="text-xl font-semibold text-gray-900">{t('system.crawlControl')}</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('system.crawlControl')}</h2>
             </div>
           </div>
           <button
@@ -417,21 +417,21 @@ export default function SystemPage() {
             )}
           </button>
           {message && (
-            <div className={`p-3 rounded-lg text-sm ${message.includes('失败') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+            <div className={`p-3 rounded-lg text-sm ${message.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
               {message}
             </div>
           )}
-          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <AlertCircle className="w-4 h-4" />
             爬虫将抓取所有已配置的期刊和arXiv最新论文
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Activity className="w-6 h-6 text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-900">调度器控制</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">调度器控制</h2>
             </div>
             <button
               onClick={handleToggleScheduler}
@@ -445,7 +445,7 @@ export default function SystemPage() {
               ) : (
                 <ToggleLeft className="w-6 h-6 text-gray-400" />
               )}
-              <span className={schedulerRunning ? 'text-green-600' : 'text-gray-500'}>
+              <span className={schedulerRunning ? 'text-green-600' : 'text-gray-500 dark:text-gray-400'}>
                 {schedulerRunning ? '运行中' : '已停止'}
               </span>
             </button>
@@ -453,17 +453,17 @@ export default function SystemPage() {
           {schedulerJobs.length > 0 && (
             <div className="space-y-2">
               {schedulerJobs.map(job => (
-                <div key={job.id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                <div key={job.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
                   <div>
-                    <div className="text-sm font-medium text-gray-700">{job.name}</div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{job.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
                       {job.trigger} · 下次执行: {job.next_run_time ? formatTime(job.next_run_time) : '无'}
                     </div>
                   </div>
                   <button
                     onClick={() => handleTriggerJob(job.id)}
                     disabled={triggeringJob === job.id}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-primary-50 text-primary-700 rounded-md hover:bg-primary-100 disabled:opacity-50 transition-colors"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-primary-50 dark:bg-primary-900/30 text-primary-700 rounded-md hover:bg-primary-100 disabled:opacity-50 transition-colors"
                   >
                     {triggeringJob === job.id ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
@@ -479,14 +479,14 @@ export default function SystemPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Activity className="w-6 h-6 text-primary-600" />
-            <h2 className="text-xl font-semibold text-gray-900">{t('system.crawlLogs')}</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('system.crawlLogs')}</h2>
           </div>
-          <button onClick={fetchData} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-            <RefreshCw className="w-4 h-4 text-gray-500" />
+          <button onClick={fetchData} className="p-2 hover:bg-gray-100 dark:bg-gray-700 rounded-lg transition-colors">
+            <RefreshCw className="w-4 h-4 text-gray-500 dark:text-gray-400" />
           </button>
         </div>
         <div className="max-h-96 overflow-y-auto">
@@ -497,9 +497,9 @@ export default function SystemPage() {
           ) : (
             <div className="space-y-2">
               {crawlLogs.map((log) => (
-                <div key={log.id} className="border border-gray-100 rounded-lg p-3">
+                <div key={log.id} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-gray-700">{log.journal_name}</span>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{log.journal_name}</span>
                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                       log.status === 'success' || log.status === 'completed'
                         ? 'bg-green-100 text-green-700'
@@ -517,7 +517,7 @@ export default function SystemPage() {
                       {log.status}
                     </span>
                   </div>
-                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                  <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
                     <span>获取: {log.papers_fetched}篇</span>
                     {log.papers_failed > 0 && <span className="text-red-500">失败: {log.papers_failed}篇</span>}
                     <span>{formatTime(log.created_at)}</span>
@@ -547,11 +547,11 @@ export default function SystemPage() {
           {providers.map(provider => {
             const status = settingsInfo?.api_keys?.[provider.key as keyof typeof settingsInfo.api_keys];
             return (
-              <div key={provider.key} className="bg-white rounded-lg shadow-sm border p-6">
+              <div key={provider.key} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Key className="w-5 h-5 text-primary-600" />
-                    <h3 className="font-semibold text-gray-900">{provider.label}</h3>
+                    <h3 className="font-semibold text-gray-900 dark:text-white">{provider.label}</h3>
                   </div>
                   {status?.configured ? (
                     <span className="flex items-center gap-1 text-xs font-medium text-green-600">
@@ -566,7 +566,7 @@ export default function SystemPage() {
                   )}
                 </div>
                 {status?.masked && (
-                  <div className="mb-3 px-3 py-2 bg-gray-50 rounded text-sm text-gray-600 font-mono">
+                  <div className="mb-3 px-3 py-2 bg-gray-50 dark:bg-gray-700/50 rounded text-sm text-gray-600 dark:text-gray-400 font-mono">
                     {status.masked}
                   </div>
                 )}
@@ -596,10 +596,10 @@ export default function SystemPage() {
           })}
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">API Token 配置状态</span>
+            <AlertCircle className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">API Token 配置状态</span>
           </div>
           <div className="mt-2">
             {settingsInfo?.api_token_configured ? (
@@ -616,14 +616,14 @@ export default function SystemPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center gap-2 mb-4">
-            <Settings className="w-5 h-5 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">端口配置</span>
+            <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">端口配置</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">后端端口</label>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">后端端口</label>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -634,7 +634,7 @@ export default function SystemPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">前端端口</label>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">前端端口</label>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -667,11 +667,11 @@ export default function SystemPage() {
 
   const renderModels = () => (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Brain className="w-6 h-6 text-primary-600" />
-            <h2 className="text-xl font-semibold text-gray-900">模型优先级</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">模型优先级</h2>
           </div>
           <button
             onClick={handleSaveModelPriority}
@@ -683,18 +683,18 @@ export default function SystemPage() {
           </button>
         </div>
         {modelMessage && (
-          <div className={`mb-4 p-3 rounded-lg text-sm ${modelMessage.includes('失败') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+          <div className={`mb-4 p-3 rounded-lg text-sm ${modelMessage.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
             {modelMessage}
           </div>
         )}
         <div className="space-y-2">
           {modelList.map((model, index) => (
-            <div key={model.name} className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3">
+            <div key={model.name} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded-lg px-4 py-3">
               <div className="flex items-center gap-3">
                 <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-bold">
                   {index + 1}
                 </span>
-                <span className="text-sm font-medium text-gray-700">{model.name}</span>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{model.name}</span>
                 {model.available ? (
                   <span className="flex items-center gap-1 text-xs text-green-600">
                     <CheckCircle className="w-3.5 h-3.5" />
@@ -728,10 +728,10 @@ export default function SystemPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-gray-500" />
-          <span className="text-sm font-medium text-gray-700">AI 服务状态</span>
+          <Activity className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">AI 服务状态</span>
         </div>
         <div className="mt-2">
           {settingsInfo?.models?.some(m => m.available) ? (
@@ -752,28 +752,28 @@ export default function SystemPage() {
 
   const renderMaintenance = () => (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center gap-3 mb-4">
           <Database className="w-6 h-6 text-primary-600" />
-          <h2 className="text-xl font-semibold text-gray-900">数据库统计</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">数据库统计</h2>
         </div>
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 mb-1">论文总数</div>
-              <div className="text-xl font-bold text-gray-900">{stats.total_papers}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">论文总数</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.total_papers}</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 mb-1">期刊数量</div>
-              <div className="text-xl font-bold text-gray-900">{stats.journal_count}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">期刊数量</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.journal_count}</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 mb-1">关键词数</div>
-              <div className="text-xl font-bold text-gray-900">{stats.keyword_count}</div>
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">关键词数</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.keyword_count}</div>
             </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 mb-1">数据库大小</div>
-              <div className="text-xl font-bold text-gray-900">
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">数据库大小</div>
+              <div className="text-xl font-bold text-gray-900 dark:text-white">
                 {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
               </div>
             </div>
@@ -781,11 +781,11 @@ export default function SystemPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm border p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Trash2 className="w-6 h-6 text-red-500" />
-            <h2 className="text-xl font-semibold text-gray-900">清理无效数据</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">清理无效数据</h2>
           </div>
           <button
             onClick={handleCleanup}
@@ -796,33 +796,33 @@ export default function SystemPage() {
             清理无效数据
           </button>
         </div>
-        <p className="text-sm text-gray-500 mb-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
           清理数据库中没有关联特征的论文、孤立的特征数据、无效评分和过期报告。
         </p>
         {cleanupMessage && (
-          <div className={`p-3 rounded-lg text-sm ${cleanupMessage.includes('失败') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+          <div className={`p-3 rounded-lg text-sm ${cleanupMessage.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
             {cleanupMessage}
           </div>
         )}
         {cleanupResult && (
-          <div className="mt-4 bg-gray-50 rounded-lg p-4">
-            <h4 className="text-sm font-medium text-gray-700 mb-2">清理结果</h4>
+          <div className="mt-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">清理结果</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
-                <div className="text-xs text-gray-500">删除论文</div>
-                <div className="text-lg font-bold text-gray-900">{cleanupResult.deleted_papers}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">删除论文</div>
+                <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_papers}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500">删除特征</div>
-                <div className="text-lg font-bold text-gray-900">{cleanupResult.deleted_features}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">删除特征</div>
+                <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_features}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500">删除评分</div>
-                <div className="text-lg font-bold text-gray-900">{cleanupResult.deleted_scores}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">删除评分</div>
+                <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_scores}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500">删除报告</div>
-                <div className="text-lg font-bold text-gray-900">{cleanupResult.deleted_reports}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">删除报告</div>
+                <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_reports}</div>
               </div>
             </div>
           </div>
@@ -849,11 +849,11 @@ export default function SystemPage() {
   return (
     <Layout>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">{t('system.title')}</h1>
-        <p className="text-gray-600">{t('system.subtitle')}</p>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">{t('system.title')}</h1>
+        <p className="text-gray-600 dark:text-gray-400">{t('system.subtitle')}</p>
       </div>
 
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
         <nav className="flex gap-6">
           {tabs.map(tab => (
             <button
@@ -862,7 +862,7 @@ export default function SystemPage() {
               className={`flex items-center gap-2 px-1 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.key
                   ? 'text-purple-700 border-purple-600'
-                  : 'text-gray-500 hover:text-gray-700 border-transparent'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 border-transparent'
               }`}
             >
               {tab.icon}

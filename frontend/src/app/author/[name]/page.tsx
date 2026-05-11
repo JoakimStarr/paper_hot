@@ -131,7 +131,7 @@ export default function AuthorPage() {
     return (
       <Layout>
         <div className="text-center py-12">
-          <p className="text-gray-500">无效的作者名称</p>
+          <p className="text-gray-500 dark:text-gray-400">无效的作者名称</p>
         </div>
       </Layout>
     );
@@ -140,7 +140,7 @@ export default function AuthorPage() {
   return (
     <Layout>
       <div className="mb-6">
-        <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-primary-600 transition-colors mb-6">
+        <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors mb-6">
           <ArrowLeft className="w-5 h-5" />
           <span>返回首页</span>
         </Link>
@@ -150,8 +150,8 @@ export default function AuthorPage() {
             <User className="w-7 h-7 text-primary-600" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{authorName}</h1>
-            <p className="text-gray-500 mt-1">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{authorName}</h1>
+            <p className="text-gray-500 dark:text-gray-400 mt-1">
               共发表 {total} 篇论文
               {authorStats?.first_author_count && authorStats.first_author_count > 0
                 ? `，其中 ${authorStats.first_author_count} 篇为第一作者`
@@ -163,13 +163,13 @@ export default function AuthorPage() {
         {authorStats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
             {authorStats.recent_year && (
-              <div className="bg-blue-50 rounded-lg p-3">
+              <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-3">
                 <div className="text-xs text-blue-500 mb-0.5">最新发表</div>
                 <div className="font-semibold text-blue-700">{authorStats.recent_year} 年</div>
               </div>
             )}
             {authorStats.top_journal && (
-              <div className="bg-green-50 rounded-lg p-3">
+              <div className="bg-green-50 dark:bg-green-900/30 rounded-lg p-3">
                 <div className="text-xs text-green-500 mb-0.5">高频期刊</div>
                 <div className="font-semibold text-green-700 text-sm truncate" title={authorStats.top_journal}>
                   {authorStats.top_journal}
@@ -177,13 +177,13 @@ export default function AuthorPage() {
               </div>
             )}
             {authorStats.top_subfield && (
-              <div className="bg-purple-50 rounded-lg p-3">
+              <div className="bg-purple-50 dark:bg-purple-900/30 rounded-lg p-3">
                 <div className="text-xs text-purple-500 mb-0.5">研究方向</div>
                 <div className="font-semibold text-purple-700 text-sm">{authorStats.top_subfield}</div>
               </div>
             )}
             {authorStats.top_keywords.length > 0 && (
-              <div className="bg-orange-50 rounded-lg p-3">
+              <div className="bg-orange-50 dark:bg-orange-900/30 rounded-lg p-3">
                 <div className="text-xs text-orange-500 mb-0.5">研究关键词</div>
                 <div className="font-semibold text-orange-700 text-sm truncate" title={authorStats.top_keywords.join(', ')}>
                   {authorStats.top_keywords.slice(0, 3).join(', ')}
@@ -194,17 +194,17 @@ export default function AuthorPage() {
         )}
 
         {coAuthors.length > 0 && (
-          <div className="mt-6 bg-white rounded-lg border border-gray-200 p-4">
+          <div className="mt-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
             <div className="flex items-center gap-2 mb-3">
-              <Users className="w-5 h-5 text-gray-600" />
-              <h2 className="font-semibold text-gray-900">合作学者</h2>
+              <Users className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+              <h2 className="font-semibold text-gray-900 dark:text-white">合作学者</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               {coAuthors.map((ca) => (
                 <Link
                   key={ca.name}
                   href={`/author/${encodeURIComponent(ca.name)}`}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-50 hover:bg-primary-50 text-gray-700 hover:text-primary-700 rounded-full text-sm border border-gray-200 hover:border-primary-200 transition-colors"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-50 dark:bg-gray-700/50 hover:bg-primary-50 dark:bg-primary-900/30 text-gray-700 dark:text-gray-300 hover:text-primary-700 rounded-full text-sm border border-gray-200 dark:border-gray-700 hover:border-primary-200 transition-colors"
                 >
                   {ca.name}
                   <span className="text-xs text-gray-400">({ca.count})</span>
@@ -216,7 +216,7 @@ export default function AuthorPage() {
       </div>
 
       <div className="mb-4">
-        <h2 className="text-xl font-semibold text-gray-900">论文列表</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">论文列表</h2>
       </div>
 
       {loading ? (
@@ -235,7 +235,7 @@ export default function AuthorPage() {
 
           {papers.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-gray-500">未找到该作者的论文</p>
+              <p className="text-gray-500 dark:text-gray-400">未找到该作者的论文</p>
             </div>
           )}
 

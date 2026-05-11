@@ -7,7 +7,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
-    app_name: str = "PaperPulse"
+    app_name: str = "ApplePaper"
     app_version: str = "1.0.0"
     
     # 使用绝对路径
