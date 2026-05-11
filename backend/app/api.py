@@ -407,63 +407,153 @@ async def get_trending_topics(
 CACHE_TTL_HOURS = 6
 
 
-async def _collect_papers_and_keywords(db: AsyncSession) -> tuple:
-    """收集论文数据和关键词趋势数据（用于AI分析）"""
+async def _collect_analysis_data(db: AsyncSession) -> dict:
+    """收集全量聚合统计数据 + 精选样本（用于AI分析）
+
+    策略：全量聚合 + 精选样本
+    - 所有统计维度（期刊、年份、子领域、关键词频次、共现）用 SQL 聚合全量数据
+    - 高分论文摘要只取前20篇精选样本
+    - 这样既覆盖100%数据，又控制了发给AI的prompt大小
+    """
+    import time as _time
     from sqlalchemy import select, text as sa_text, func
     from app.models import Paper, TopicTrend
 
-    result = await db.execute(
-        select(Paper).order_by(Paper.published_at.desc()).limit(500)
-    )
-    papers = result.scalars().all()
+    t0 = _time.time()
 
-    papers_data = [{
-        'id': p.id,
+    total_result = await db.execute(sa_text("SELECT COUNT(*) FROM papers"))
+    total_papers = total_result.scalar()
+
+    journal_result = await db.execute(sa_text("""
+        SELECT journal_name, COUNT(*) as cnt
+        FROM papers
+        WHERE journal_name IS NOT NULL AND journal_name != ''
+        GROUP BY journal_name
+        ORDER BY cnt DESC
+        LIMIT 20
+    """))
+    journal_dist = [{"name": row[0], "count": row[1]} for row in journal_result.fetchall()]
+
+    year_result = await db.execute(sa_text("""
+        SELECT substr(published_at, 1, 4) as year, COUNT(*) as cnt
+        FROM papers
+        WHERE published_at IS NOT NULL
+        GROUP BY year
+        ORDER BY year
+    """))
+    year_dist = [{"year": row[0], "count": row[1]} for row in year_result.fetchall()]
+
+    subfield_result = await db.execute(sa_text("""
+        SELECT economics_subfield, COUNT(*) as cnt
+        FROM papers
+        WHERE economics_subfield IS NOT NULL AND economics_subfield != ''
+        GROUP BY economics_subfield
+        ORDER BY cnt DESC
+    """))
+    subfield_dist = [{"subfield": row[0], "count": row[1]} for row in subfield_result.fetchall()]
+
+    keyword_freq_result = await db.execute(sa_text("""
+        SELECT value AS keyword, COUNT(*) as cnt
+        FROM papers, json_each(keywords_cn)
+        WHERE keywords_cn IS NOT NULL
+        GROUP BY value
+        ORDER BY cnt DESC
+        LIMIT 30
+    """))
+    keyword_freq = [{"keyword": row[0], "count": row[1]} for row in keyword_freq_result.fetchall()]
+
+    cooccurrence_result = await db.execute(sa_text("""
+        SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
+        FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
+        WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
+        GROUP BY a.value, b.value
+        ORDER BY cnt DESC
+        LIMIT 15
+    """))
+    cooccurrence_data = [{"kw1": row[0], "kw2": row[1], "count": row[2]} for row in cooccurrence_result.fetchall()]
+
+    subfield_keyword_result = await db.execute(sa_text("""
+        SELECT p.economics_subfield, j.value AS keyword, COUNT(*) as cnt
+        FROM papers p, json_each(p.keywords_cn) j
+        WHERE p.economics_subfield IS NOT NULL AND p.economics_subfield != ''
+          AND p.keywords_cn IS NOT NULL
+        GROUP BY p.economics_subfield, j.value
+        ORDER BY p.economics_subfield, cnt DESC
+    """))
+    subfield_keywords_raw = subfield_keyword_result.fetchall()
+    subfield_keywords = {}
+    for row in subfield_keywords_raw:
+        sf = row[0]
+        if sf not in subfield_keywords:
+            subfield_keywords[sf] = []
+        if len(subfield_keywords[sf]) < 5:
+            subfield_keywords[sf].append({"keyword": row[1], "count": row[2]})
+
+    year_keyword_result = await db.execute(sa_text("""
+        SELECT substr(p.published_at, 1, 4) as year, j.value AS keyword, COUNT(*) as cnt
+        FROM papers p, json_each(p.keywords_cn) j
+        WHERE p.published_at IS NOT NULL AND p.keywords_cn IS NOT NULL
+        GROUP BY year, j.value
+        ORDER BY year, cnt DESC
+    """))
+    year_keyword_raw = year_keyword_result.fetchall()
+    year_keywords = {}
+    for row in year_keyword_raw:
+        yr = row[0]
+        if yr not in year_keywords:
+            year_keywords[yr] = []
+        if len(year_keywords[yr]) < 5:
+            year_keywords[yr].append({"keyword": row[1], "count": row[2]})
+
+    top_papers_result = await db.execute(
+        select(Paper).order_by(Paper.published_at.desc()).limit(20)
+    )
+    top_papers_raw = top_papers_result.scalars().all()
+    top_papers = [{
         'title': p.title,
-        'authors': p.authors if p.authors else [],
-        'keywords': p.keywords_cn if p.keywords_cn else [],
-        'abstract': p.abstract,
+        'abstract': (p.abstract or '')[:150],
         'journal_name': p.journal_name,
         'economics_subfield': p.economics_subfield,
         'published_at': p.published_at.isoformat() if p.published_at else None,
-        'doi': p.doi,
-    } for p in papers]
-
-    subfield_result = await db.execute(
-        sa_text("""
-            SELECT economics_subfield, COUNT(*) as cnt
-            FROM papers
-            WHERE economics_subfield IS NOT NULL AND economics_subfield != ''
-            GROUP BY economics_subfield
-            ORDER BY cnt DESC
-        """)
-    )
-    subfield_data = [{"subfield": row[0], "count": row[1]} for row in subfield_result.fetchall()]
-
-    cooccurrence_result = await db.execute(
-        sa_text("""
-            SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
-            FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
-            WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
-            GROUP BY a.value, b.value
-            ORDER BY cnt DESC
-            LIMIT 10
-        """)
-    )
-    cooccurrence_data = [{"kw1": row[0], "kw2": row[1], "count": row[2]} for row in cooccurrence_result.fetchall()]
+        'keywords': _parse_json_list(p.keywords_cn),
+    } for p in top_papers_raw]
 
     result = await db.execute(
-        select(TopicTrend).order_by(TopicTrend.growth_rate.desc())
+        select(TopicTrend).order_by(TopicTrend.growth_rate.desc()).limit(30)
     )
     trends = result.scalars().all()
-
     keywords_data = [{
         'topic': t.topic,
         'paper_count': t.paper_count,
         'growth_rate': t.growth_rate,
     } for t in trends]
 
-    return papers_data, keywords_data, subfield_data, cooccurrence_data
+    author_freq_result = await db.execute(sa_text("""
+        SELECT value AS author, COUNT(*) as cnt
+        FROM papers, json_each(authors)
+        WHERE authors IS NOT NULL
+        GROUP BY value
+        ORDER BY cnt DESC
+        LIMIT 15
+    """))
+    author_freq = [{"author": row[0], "count": row[1]} for row in author_freq_result.fetchall()]
+
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    logger.info(f"Data collection completed in {elapsed_ms}ms, total_papers={total_papers}")
+
+    return {
+        "total_papers": total_papers,
+        "journal_dist": journal_dist,
+        "year_dist": year_dist,
+        "subfield_dist": subfield_dist,
+        "keyword_freq": keyword_freq,
+        "cooccurrence": cooccurrence_data,
+        "subfield_keywords": subfield_keywords,
+        "year_keywords": year_keywords,
+        "top_papers": top_papers,
+        "keywords_trend": keywords_data,
+        "author_freq": author_freq,
+    }
 
 
 @router.get("/ai-analysis", response_model=AIAnalysisResponse)
@@ -478,9 +568,9 @@ async def get_ai_analysis_legacy(
                 detail="AI analysis service is not available. Please check Zhipu API key configuration."
             )
 
-        papers_data, keywords_data, subfield_data, cooccurrence_data = await _collect_papers_and_keywords(db)
+        analysis_data = await _collect_analysis_data(db)
 
-        analysis_result = await ai_trend_service.analyze_trends(papers_data, keywords_data, subfield_data, cooccurrence_data)
+        analysis_result = await ai_trend_service.analyze_trends(analysis_data)
 
         if not analysis_result:
             raise HTTPException(
@@ -629,11 +719,11 @@ async def _run_analysis_background(report_id: int):
                 logger.error(f"Report {report_id} not found for background task")
                 return
 
-            papers_data, keywords_data, subfield_data, cooccurrence_data = await _collect_papers_and_keywords(db)
+            analysis_data = await _collect_analysis_data(db)
 
         try:
             analysis_result = await asyncio.wait_for(
-                ai_trend_service.analyze_trends(papers_data, keywords_data, subfield_data, cooccurrence_data),
+                ai_trend_service.analyze_trends(analysis_data),
                 timeout=120
             )
         except asyncio.TimeoutError:
@@ -669,7 +759,7 @@ async def _run_analysis_background(report_id: int):
             report.recommendations = analysis_result.get("recommendations")
             report.raw_analysis = analysis_result.get("raw_analysis")
             report.model = analysis_result.get("model")
-            report.total_papers = len(papers_data)
+            report.total_papers = analysis_data.get("total_papers", 0)
             report.tokens_used = analysis_result.get("tokens_used", 0)
             report.processing_time_ms = elapsed_ms
             report.status = analysis_result.get("status", "success")
