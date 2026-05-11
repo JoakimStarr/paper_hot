@@ -291,7 +291,7 @@ export default function TrendsPage() {
   };
 
   const renderRunningState = () => (
-    <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-8">
+    <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-8">
       <div className="flex flex-col items-center justify-center">
         <div className="relative mb-6">
           <Brain className="w-16 h-16 text-purple-400 animate-pulse" />
@@ -353,19 +353,20 @@ export default function TrendsPage() {
               </div>
               <ResponsiveContainer width="100%" height={350}>
                 <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
-                  <PolarGrid />
+                  <PolarGrid stroke={typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#4b5563' : '#e5e7eb'} />
                   <PolarAngleAxis
                     dataKey="subfield"
-                    tick={{ fontSize: 12, fill: '#4b5563' }}
+                    tick={{ fontSize: 12, fill: typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#d1d5db' : '#4b5563' }}
                   />
                   <PolarRadiusAxis
                     angle={30}
                     domain={[0, 'auto']}
-                    tick={{ fontSize: 10, fill: '#9ca3af' }}
+                    tick={{ fontSize: 10, fill: typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#9ca3af' : '#9ca3af' }}
                   />
                   <Tooltip
                     formatter={(value: number) => [`${value} 篇`, '论文数']}
                     labelFormatter={(label: string) => `子领域: ${label}`}
+                    contentStyle={typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined}
                   />
                   <Radar
                     name="论文数"
@@ -435,7 +436,7 @@ export default function TrendsPage() {
             ) : report ? (
               <div className="space-y-6">
                 {report.summary && (
-                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-6">
+                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-6">
                     <p className="text-gray-700 dark:text-gray-300 text-lg leading-relaxed">{report.summary}</p>
                   </div>
                 )}
@@ -562,7 +563,7 @@ export default function TrendsPage() {
                 </div>
               </div>
             ) : (
-              <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-8">
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-8">
                 <div className="flex flex-col items-center justify-center">
                   <History className="w-16 h-16 text-purple-300 mb-4" />
                   <p className="text-gray-600 dark:text-gray-400 text-lg font-medium">暂无AI分析记录</p>

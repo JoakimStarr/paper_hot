@@ -44,6 +44,12 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   const initializedRef = useRef(false);
   const gRef = useRef<any>(null);
 
+  const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark');
+  const textColor = isDark ? '#e5e7eb' : '#333';
+  const linkColor = isDark ? '#4b5563' : '#ddd';
+  const highlightColor = '#4f46e5';
+  const nodeStroke = isDark ? '#1f2937' : '#fff';
+
   const connectedNodes: ConnectedNode[] = useMemo(() => {
     if (!data || !highlightedNodeId) return [];
     const nodesMap = new Map<string, NetworkNode>();
@@ -146,7 +152,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', '#ddd')
+      .attr('stroke', linkColor)
       .attr('stroke-opacity', 0.6)
       .attr('stroke-width', d => linkWidthScale(d.value));
 
@@ -171,7 +177,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
     nodeGroup.append('circle')
       .attr('r', d => nodeRadiusScale(d.count))
       .attr('fill', d => colorScale(d.group + d.id))
-      .attr('stroke', '#fff')
+      .attr('stroke', nodeStroke)
       .attr('stroke-width', 1.5);
 
     nodeGroup.append('text')
@@ -180,7 +186,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       .attr('dx', 0)
       .attr('dy', '0.3em')
       .attr('text-anchor', 'middle')
-      .attr('fill', '#333')
+      .attr('fill', textColor)
       .attr('pointer-events', 'none');
 
     if (simulationRef.current) {
@@ -252,16 +258,16 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
         return 0.05;
       })
       .attr('stroke', (d: SimLink) => {
-        if (!highlightedNodeId) return '#ddd';
+        if (!highlightedNodeId) return linkColor;
         const sId = (d.source as SimNode).id;
         const tId = (d.target as SimNode).id;
-        if (sId === highlightedNodeId || tId === highlightedNodeId) return '#4f46e5';
-        return '#ddd';
+        if (sId === highlightedNodeId || tId === highlightedNodeId) return highlightColor;
+        return linkColor;
       });
   }, [highlightedNodeId, connectedNodes]);
 
   return (
-    <div ref={containerRef} className="lg:col-span-3 bg-white rounded-lg shadow-sm border overflow-hidden">
+    <div ref={containerRef} className="lg:col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
       <svg ref={svgRef} className="w-full" />
     </div>
   );

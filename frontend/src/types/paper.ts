@@ -218,9 +218,10 @@ export interface SettingsInfo {
   }[];
   scheduler: {
     running: boolean;
+    jobs: SchedulerJob[];
   };
   api_token_configured: boolean;
-  ports?: {
+  ports: {
     backend: number;
     frontend: number;
   };
