@@ -6,7 +6,7 @@ import TrendChart from '@/components/TrendChart';
 import { papersApi } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
-import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot } from 'lucide-react';
+import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import ReactMarkdown from 'react-markdown';
@@ -15,6 +15,16 @@ import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Responsi
 
 const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
 const DEBOUNCE_SECONDS = 300;
+const MAX_CONTEXT_MESSAGES = 20;
+
+const CHAT_MODELS = [
+  { id: '', label: '默认模型' },
+  { id: 'glm-4.7', label: 'GLM-4.7' },
+  { id: 'glm-4.5-air', label: 'GLM-4.5-Air' },
+  { id: 'Qwen/Qwen3-8B', label: 'Qwen3-8B' },
+  { id: 'Qwen/Qwen3.5-4B', label: 'Qwen3.5-4B' },
+  { id: 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B', label: 'DeepSeek-R1' },
+];
 
 export default function TrendsPage() {
   const { t } = useLanguage();
@@ -42,6 +52,10 @@ export default function TrendsPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatStreaming, setChatStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [showModelSelect, setShowModelSelect] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -190,18 +204,20 @@ export default function TrendsPage() {
   const restoreReport = async (reportId: number) => {
     if (isRunning) return;
     setRestoringId(reportId);
+    setChatLoading(true);
     try {
       const fullReport = await papersApi.getAIAnalysisReportById(reportId);
       if (fullReport) {
         setReport(fullReport);
         setHasHistory(true);
         setShowHistory(false);
-        loadTrendChats(reportId);
+        await loadTrendChats(reportId);
       }
     } catch (error) {
       console.error('Error restoring report:', error);
     } finally {
       setRestoringId(null);
+      setChatLoading(false);
     }
   };
 
@@ -235,9 +251,10 @@ export default function TrendsPage() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamContent, chatMessages]);
+  }, [streamContent, streamReasoning, chatMessages]);
 
   const loadTrendChats = async (reportId: number) => {
+    setChatLoading(true);
     try {
       const chats = await papersApi.getTrendChats(reportId);
       if (chats.length > 0) {
@@ -245,24 +262,34 @@ export default function TrendsPage() {
       } else {
         setChatMessages([]);
       }
-    } catch {}
+    } catch {
+      setChatMessages([]);
+    } finally {
+      setChatLoading(false);
+    }
   };
 
-  const handleTrendChatSubmit = async () => {
-    if (!chatInput.trim() || !report) return;
+  const handleTrendChatSubmit = async (overrideInput?: string) => {
+    const inputText = overrideInput || chatInput;
+    if (!inputText.trim() || !report) return;
 
-    const userMsg = { role: 'user', content: chatInput.trim() };
+    const userMsg = { role: 'user', content: inputText.trim() };
     const allMessages = [...chatMessages, userMsg];
     setChatMessages(allMessages);
     setChatInput('');
     setChatStreaming(true);
     setStreamContent('');
+    setStreamReasoning('');
 
     try {
+      papersApi.saveTrendChats(report.id, [userMsg]);
+
+      const contextMessages = allMessages.slice(-MAX_CONTEXT_MESSAGES);
+
       const response = await fetch(`${API_BASE_URL}/ai-analysis/reports/${report.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: allMessages }),
+        body: JSON.stringify({ messages: contextMessages, model: selectedModel || undefined }),
       });
 
       if (!response.ok) {
@@ -276,6 +303,7 @@ export default function TrendsPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       let fullContent = '';
+      let fullReasoning = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -292,10 +320,13 @@ export default function TrendsPage() {
               if (data.done) {
                 setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
                 setStreamContent('');
+                setStreamReasoning('');
                 papersApi.saveTrendChats(report.id, [
-                  userMsg,
                   { role: 'assistant', content: fullContent }
                 ]);
+              } else if (data.reasoning) {
+                fullReasoning += data.reasoning;
+                setStreamReasoning(fullReasoning);
               } else if (data.content) {
                 fullContent += data.content;
                 setStreamContent(fullContent);
@@ -309,6 +340,30 @@ export default function TrendsPage() {
     } finally {
       setChatStreaming(false);
     }
+  };
+
+  const handleClearChats = async () => {
+    if (!report) return;
+    try {
+      await papersApi.clearTrendChats(report.id);
+      setChatMessages([]);
+    } catch {}
+  };
+
+  const handleExportChats = () => {
+    if (chatMessages.length === 0) return;
+    const lines = chatMessages.map(msg => {
+      const role = msg.role === 'user' ? '👤 用户' : '🤖 选题分析师';
+      return `### ${role}\n\n${msg.content}\n`;
+    });
+    const content = `# 选题分析对话记录\n\n> 导出时间：${new Date().toLocaleString('zh-CN')}\n> 分析报告：${report?.summary || ''}\n\n---\n\n${lines.join('\n---\n\n')}`;
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `选题分析对话_${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const getDirectionColor = (direction?: string) => {
@@ -655,93 +710,168 @@ export default function TrendsPage() {
                 </div>
 
                 <div className="border-t border-gray-100 dark:border-gray-700 mt-6 pt-6">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                    <Bot className="w-4 h-4 text-purple-600" />
-                    选题分析对话
-                  </h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">基于以上AI分析结果，向论文选题分析师提问，获取深入的选题建议</p>
-
-                  <div className="space-y-4 mb-4 max-h-[500px] overflow-y-auto">
-                    {chatMessages.length === 0 && !chatStreaming && (
-                      <div className="text-center py-6">
-                        <div className="flex flex-wrap gap-2 justify-center">
-                          {[
-                            '哪些研究热点最值得深入？',
-                            '帮我分析一个创新选题方向',
-                            '当前趋势下有什么研究空白？',
-                            '哪个子领域适合新手入门？',
-                          ].map((suggestion, i) => (
-                            <button
-                              key={i}
-                              onClick={() => {
-                                setChatInput(suggestion);
-                              }}
-                              className="px-3 py-1.5 text-sm bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
-                            >
-                              {suggestion}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {chatMessages.map((msg, i) => (
-                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                          msg.role === 'user'
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
-                        }`}>
-                          {msg.role === 'user' ? msg.content : (
-                            <div className="prose prose-sm max-w-none dark:prose-invert">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    {chatStreaming && streamContent && (
-                      <div className="flex justify-start">
-                        <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
-                          <div className="prose prose-sm max-w-none dark:prose-invert">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamContent}</ReactMarkdown>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Bot className="w-4 h-4 text-purple-600" />
+                        选题分析对话
+                      </h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">基于以上AI分析结果，向论文选题分析师提问，获取深入的选题建议</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowModelSelect(!showModelSelect)}
+                          className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                          title="选择模型"
+                        >
+                          <Settings2 className="w-3 h-3" />
+                          {CHAT_MODELS.find(m => m.id === selectedModel)?.label || '默认模型'}
+                        </button>
+                        {showModelSelect && (
+                          <div className="absolute right-0 top-8 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[160px]">
+                            {CHAT_MODELS.map(model => (
+                              <button
+                                key={model.id}
+                                onClick={() => { setSelectedModel(model.id); setShowModelSelect(false); }}
+                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${
+                                  selectedModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'
+                                }`}
+                              >
+                                {model.label}
+                              </button>
+                            ))}
                           </div>
-                          <span className="inline-block w-1.5 h-4 bg-purple-600 ml-0.5 animate-pulse align-middle" />
-                        </div>
+                        )}
                       </div>
-                    )}
-                    {chatStreaming && !streamContent && (
-                      <div className="flex justify-start">
-                        <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
-                          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-                        </div>
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
+                      <button
+                        onClick={handleExportChats}
+                        disabled={chatMessages.length === 0}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="导出对话"
+                      >
+                        <Download className="w-3 h-3" />
+                        导出
+                      </button>
+                      <button
+                        onClick={handleClearChats}
+                        disabled={chatMessages.length === 0 || chatStreaming}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-red-500 bg-red-50 dark:bg-red-900/20 rounded hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="清空对话"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        清空
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey && !chatStreaming) {
-                          e.preventDefault();
-                          handleTrendChatSubmit();
-                        }
-                      }}
-                      placeholder="向选题分析师提问..."
-                      disabled={chatStreaming}
-                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
-                    />
-                    <button
-                      onClick={handleTrendChatSubmit}
-                      disabled={chatStreaming || !chatInput.trim()}
-                      className="bg-purple-600 text-white rounded-lg px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Send className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {chatLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
+                      <span className="ml-2 text-sm text-gray-400">加载对话记录...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-4 mb-4 max-h-[500px] overflow-y-auto">
+                        {chatMessages.length === 0 && !chatStreaming && (
+                          <div className="text-center py-6">
+                            <div className="flex flex-wrap gap-2 justify-center">
+                              {[
+                                '哪些研究热点最值得深入？',
+                                '帮我分析一个创新选题方向',
+                                '当前趋势下有什么研究空白？',
+                                '哪个子领域适合新手入门？',
+                              ].map((suggestion, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleTrendChatSubmit(suggestion)}
+                                  className="px-3 py-1.5 text-sm bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                                >
+                                  {suggestion}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {chatMessages.map((msg, i) => (
+                          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+                              msg.role === 'user'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+                            }`}>
+                              {msg.role === 'user' ? msg.content : (
+                                <div className="prose prose-sm max-w-none dark:prose-invert">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {chatStreaming && streamReasoning && !streamContent && (
+                          <div className="flex justify-start">
+                            <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
+                              <div className="text-xs text-blue-500 dark:text-blue-400 mb-1 font-medium">💭 思考中...</div>
+                              <div className="text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
+                            </div>
+                          </div>
+                        )}
+                        {chatStreaming && streamContent && (
+                          <div className="flex justify-start">
+                            <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+                              {streamReasoning && (
+                                <details className="mb-2">
+                                  <summary className="text-xs text-blue-500 dark:text-blue-400 cursor-pointer hover:text-blue-600">💭 查看思考过程</summary>
+                                  <div className="mt-1 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
+                                </details>
+                              )}
+                              <div className="prose prose-sm max-w-none dark:prose-invert">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamContent}</ReactMarkdown>
+                              </div>
+                              <span className="inline-block w-1.5 h-4 bg-purple-600 ml-0.5 animate-pulse align-middle" />
+                            </div>
+                          </div>
+                        )}
+                        {chatStreaming && !streamContent && !streamReasoning && (
+                          <div className="flex justify-start">
+                            <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
+                              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                            </div>
+                          </div>
+                        )}
+                        <div ref={chatEndRef} />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey && !chatStreaming) {
+                              e.preventDefault();
+                              handleTrendChatSubmit();
+                            }
+                          }}
+                          placeholder="向选题分析师提问..."
+                          disabled={chatStreaming}
+                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
+                        />
+                        <button
+                          onClick={() => handleTrendChatSubmit()}
+                          disabled={chatStreaming || !chatInput.trim()}
+                          className="bg-purple-600 text-white rounded-lg px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {chatMessages.length > 0 && (
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="text-xs text-gray-400">对话轮次：{Math.floor(chatMessages.length / 2)} | 上下文保留最近{MAX_CONTEXT_MESSAGES}条消息</span>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             ) : (

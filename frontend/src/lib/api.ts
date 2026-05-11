@@ -118,6 +118,10 @@ export const papersApi = {
     await apiClient.post(`/ai-analysis/reports/${reportId}/chats`, { messages });
   },
 
+  clearTrendChats: async (reportId: number): Promise<void> => {
+    await apiClient.delete(`/ai-analysis/reports/${reportId}/chats`);
+  },
+
   getFilterStatistics: async (): Promise<FilterStatistics> => {
     const response = await apiClient.get<FilterStatistics>('/filter-statistics');
     return response.data;

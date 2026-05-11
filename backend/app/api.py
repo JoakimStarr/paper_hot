@@ -37,6 +37,97 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_shared_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
+
+def _get_ai_client():
+    if ai_trend_service.glm_initialized and ai_trend_service.glm_client:
+        return ai_trend_service.glm_client, "zhipu"
+    if ai_trend_service.sf_initialized and ai_trend_service.sf_client:
+        return ai_trend_service.sf_client, "siliconflow"
+    raise HTTPException(status_code=503, detail="No AI API key configured. Please configure Zhipu or SiliconFlow API key.")
+
+
+def _get_default_model(provider: str) -> str:
+    if provider == "siliconflow":
+        models = ai_trend_service.SF_MODELS
+        return models[1] if len(models) > 1 else (models[0] if models else "Qwen/Qwen3-8B")
+    models = ai_trend_service.GLM_MODELS
+    return models[1] if len(models) > 1 else (models[0] if models else "glm-4.5-air")
+
+
+def _stream_chat_response(client, provider: str, messages: list, model: str = None):
+    if not model:
+        model = _get_default_model(provider)
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        timeout_seconds = 120
+
+        def run_stream():
+            try:
+                if provider == "siliconflow":
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            reasoning = getattr(delta, "reasoning_content", None)
+                            if reasoning:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("reasoning", reasoning))
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("content", content))
+                else:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("content", content))
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+
+        future = _shared_executor.submit(run_stream)
+        start_time = time.time()
+
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                if elapsed > timeout_seconds:
+                    logger.warning(f"Stream timeout after {timeout_seconds}s")
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    break
+                continue
+
+            msg_type, msg_content = item
+            if msg_type == "done":
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                break
+            elif msg_type == "error":
+                yield f"data: {json.dumps({'content': f'[ERROR] {msg_content}'})}\n\n"
+            elif msg_type == "reasoning":
+                yield f"data: {json.dumps({'reasoning': msg_content})}\n\n"
+            elif msg_type == "content":
+                yield f"data: {json.dumps({'content': msg_content})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @router.get("/health")
 async def health_check():
@@ -947,6 +1038,7 @@ async def get_ai_analysis_report(
 
 class TrendChatRequest(BaseModel):
     messages: List[dict]
+    model: Optional[str] = None
 
 
 class TrendChatSaveRequest(BaseModel):
@@ -961,44 +1053,45 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
 
     analysis_context = ""
     if report.summary:
-        analysis_context += f"分析摘要：{report.summary}\n\n"
+        analysis_context += f"分析摘要：{report.summary[:500]}\n\n"
     if report.hot_topics:
         topics_text = "\n".join([
-            f"- {t.get('topic', '')}: {t.get('description', '')}"
+            f"- {t.get('topic', '')}: {t.get('description', '')[:200]}"
             for t in report.hot_topics if t.get('topic')
         ])
         if topics_text:
             analysis_context += f"研究热点：\n{topics_text}\n\n"
     if report.development_trends:
         trends_text = "\n".join([
-            f"- {t.get('trend', '')} ({t.get('direction', '')}): {t.get('description', '')}"
+            f"- {t.get('trend', '')} ({t.get('direction', '')}): {t.get('description', '')[:200]}"
             for t in report.development_trends if t.get('trend')
         ])
         if trends_text:
             analysis_context += f"发展趋势：\n{trends_text}\n\n"
     if report.keyword_insights:
         kw_text = "\n".join([
-            f"- {t.get('cluster', '')}: {t.get('insight', '')}"
+            f"- {t.get('cluster', '')}: {t.get('insight', '')[:200]}"
             for t in report.keyword_insights if t.get('cluster')
         ])
         if kw_text:
             analysis_context += f"关键词聚类：\n{kw_text}\n\n"
     if report.journal_insights:
         journal_text = "\n".join([
-            f"- {t.get('journal', '')}: {t.get('focus', '')}"
+            f"- {t.get('journal', '')}: {t.get('focus', '')[:200]}"
             for t in report.journal_insights if t.get('journal')
         ])
         if journal_text:
             analysis_context += f"期刊分析：\n{journal_text}\n\n"
     if report.recommendations:
         rec_text = "\n".join([
-            f"- {t.get('area', '')} ({t.get('opportunity_level', '')}): {t.get('description', '')}"
+            f"- {t.get('area', '')} ({t.get('opportunity_level', '')}): {t.get('description', '')[:200]}"
             for t in report.recommendations if t.get('area')
         ])
         if rec_text:
             analysis_context += f"研究建议：\n{rec_text}\n\n"
-    if report.raw_analysis:
-        analysis_context += f"完整原始分析报告：\n{report.raw_analysis}\n"
+
+    if len(analysis_context) > 6000:
+        analysis_context = analysis_context[:6000] + "\n\n...(内容过长已截断)"
 
     system_prompt = f"""你是一位专业的论文选题分析师。你的职责是基于AI趋势分析结果，帮助用户深入理解研究热点、发现选题机会、评估研究方向可行性。
 
@@ -1022,56 +1115,7 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    async def event_generator():
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def run_stream():
-            try:
-                if provider == "siliconflow":
-                    response = client.chat.completions.create(
-                        model="Qwen/Qwen3-8B",
-                        messages=messages,
-                        stream=True,
-                        max_tokens=4096,
-                    )
-                    for chunk in response:
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-                            content = getattr(delta, "content", None)
-                            reasoning = getattr(delta, "reasoning_content", None)
-                            if reasoning:
-                                loop.call_soon_threadsafe(queue.put_nowait, reasoning)
-                            if content:
-                                loop.call_soon_threadsafe(queue.put_nowait, content)
-                else:
-                    response = client.chat.completions.create(
-                        model="glm-4.5-air",
-                        messages=messages,
-                        stream=True,
-                        max_tokens=4096,
-                    )
-                    for chunk in response:
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-                            content = getattr(delta, "content", None)
-                            if content:
-                                loop.call_soon_threadsafe(queue.put_nowait, content)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-            except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}")
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            pool.submit(run_stream)
-            while True:
-                item = await queue.get()
-                if item is None:
-                    yield f"data: {json.dumps({'done': True})}\n\n"
-                    break
-                yield f"data: {json.dumps({'content': item})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return _stream_chat_response(client, provider, messages, model=body.model)
 
 
 @router.get("/ai-analysis/reports/{report_id}/chats")
@@ -1095,6 +1139,16 @@ async def save_trend_chat_messages(report_id: int, body: TrendChatSaveRequest, d
         await TrendChatCRUD.save_message(db, report_id, msg["role"], msg["content"])
     await db.commit()
     return {"status": "saved", "count": len(messages)}
+
+
+@router.delete("/ai-analysis/reports/{report_id}/chats")
+async def clear_trend_chat_history(report_id: int, db: AsyncSession = Depends(get_db)):
+    report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    await TrendChatCRUD.clear_chats(db, report_id)
+    await db.commit()
+    return {"status": "cleared"}
 
 
 @router.post("/crawl/start", response_model=CrawlStartResponse)
@@ -1151,27 +1205,6 @@ async def update_trend_scores(db: AsyncSession = Depends(get_db), token: bool = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _get_ai_client():
-    """获取AI客户端，优先使用智谱AI，其次使用硅基流动，返回 (client, provider)"""
-    if settings.zhipu_api_key:
-        try:
-            from zai import ZhipuAiClient
-            return ZhipuAiClient(api_key=settings.zhipu_api_key), "zhipu"
-        except ImportError:
-            pass
-    if settings.siliconflow_api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(
-                api_key=settings.siliconflow_api_key,
-                base_url="https://api.siliconflow.cn/v1"
-            )
-            return client, "siliconflow"
-        except ImportError:
-            pass
-    raise HTTPException(status_code=503, detail="No AI API key configured. Please configure Zhipu or SiliconFlow API key.")
-
-
 @router.post("/papers/{paper_id}/analyze")
 async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
@@ -1207,20 +1240,13 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
 
     try:
         client, provider = _get_ai_client()
-        if provider == "siliconflow":
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model="Qwen/Qwen3-8B",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=4096,
-            )
-        else:
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model="glm-4.5-air",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=4096,
-            )
+        model = _get_default_model(provider)
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=4096,
+        )
         analysis_text = response.choices[0].message.content
         await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
         await db.commit()
@@ -1285,56 +1311,7 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    async def event_generator():
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def run_stream():
-            try:
-                if provider == "siliconflow":
-                    response = client.chat.completions.create(
-                        model="Qwen/Qwen3-8B",
-                        messages=messages,
-                        stream=True,
-                        max_tokens=4096,
-                    )
-                    for chunk in response:
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-                            content = getattr(delta, "content", None)
-                            reasoning = getattr(delta, "reasoning_content", None)
-                            if reasoning:
-                                loop.call_soon_threadsafe(queue.put_nowait, reasoning)
-                            if content:
-                                loop.call_soon_threadsafe(queue.put_nowait, content)
-                else:
-                    response = client.chat.completions.create(
-                        model="glm-4.5-air",
-                        messages=messages,
-                        stream=True,
-                        max_tokens=4096,
-                    )
-                    for chunk in response:
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-                            content = getattr(delta, "content", None)
-                            if content:
-                                loop.call_soon_threadsafe(queue.put_nowait, content)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-            except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}")
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            pool.submit(run_stream)
-            while True:
-                item = await queue.get()
-                if item is None:
-                    yield f"data: {json.dumps({'done': True})}\n\n"
-                    break
-                yield f"data: {json.dumps({'content': item})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return _stream_chat_response(client, provider, messages)
 
 
 @router.get("/papers/{paper_id}/chats")
