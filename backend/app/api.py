@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Body, Request, Hea
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 import hashlib
 import json
@@ -83,6 +83,14 @@ def _parse_json_list(value):
         except (json.JSONDecodeError, TypeError):
             pass
     return []
+
+
+def _isoformat_utc(dt: datetime) -> str:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def _paper_to_card(paper) -> PaperCardResponse:
@@ -514,7 +522,7 @@ async def _collect_analysis_data(db: AsyncSession) -> dict:
         'abstract': (p.abstract or '')[:150],
         'journal_name': p.journal_name,
         'economics_subfield': p.economics_subfield,
-        'published_at': p.published_at.isoformat() if p.published_at else None,
+        'published_at': _isoformat_utc(p.published_at) if p.published_at else None,
         'keywords': _parse_json_list(p.keywords_cn),
     } for p in top_papers_raw]
 
@@ -921,7 +929,7 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
 @router.get("/papers/{paper_id}/analyses")
 async def get_paper_analyses(paper_id: str, db: AsyncSession = Depends(get_db)):
     records = await PaperAnalysisCRUD.get_history(db, paper_id)
-    return [{"id": r.id, "analysis": r.analysis, "model": r.model, "created_at": r.created_at.isoformat()} for r in records]
+    return [{"id": r.id, "analysis": r.analysis, "model": r.model, "created_at": _isoformat_utc(r.created_at)} for r in records]
 
 
 @router.get("/papers/{paper_id}/analyses/latest")
@@ -933,7 +941,7 @@ async def get_latest_analysis(paper_id: str, db: AsyncSession = Depends(get_db))
         "analysis": record.analysis,
         "model": record.model,
         "status": record.status,
-        "created_at": record.created_at.isoformat()
+        "created_at": _isoformat_utc(record.created_at)
     }
 
 
@@ -1011,7 +1019,7 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 async def get_chat_history(paper_id: str, db: AsyncSession = Depends(get_db)):
     messages = await PaperChatCRUD.get_chats(db, paper_id)
     return [
-        {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+        {"role": m.role, "content": m.content, "created_at": _isoformat_utc(m.created_at)}
         for m in messages
     ]
 

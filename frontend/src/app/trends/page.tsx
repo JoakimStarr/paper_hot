@@ -229,10 +229,10 @@ export default function TrendsPage() {
   };
 
   const parseDate = (dateStr: string): Date => {
-    if (!/[+\-Z]/i.test(dateStr)) {
-      return new Date(dateStr + 'Z');
+    if (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) {
+      return new Date(dateStr);
     }
-    return new Date(dateStr);
+    return new Date(dateStr + 'Z');
   };
 
   const formatTimeAgo = (dateStr: string) => {

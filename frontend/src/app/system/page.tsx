@@ -54,12 +54,13 @@ export default function SystemPage() {
 
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString('zh-CN');
+    const safeStr = (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) ? dateStr : dateStr + 'Z';
+    return new Date(safeStr).toLocaleString('zh-CN');
   };
 
   const timeAgo = (dateStr: string | null) => {
     if (!dateStr) return '无记录';
-    const safeStr = /[+\-Z]/i.test(dateStr) ? dateStr : dateStr + 'Z';
+    const safeStr = (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) ? dateStr : dateStr + 'Z';
     const date = new Date(safeStr);
     const diff = Date.now() - date.getTime();
     const hours = Math.floor(diff / 3600000);

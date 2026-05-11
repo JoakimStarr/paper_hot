@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 
 
@@ -212,7 +212,14 @@ class AIAnalysisReportResponse(BaseModel):
     processing_time_ms: int = 0
     status: str = "success"
     created_at: datetime
-    
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def ensure_timezone_aware(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
     class Config:
         from_attributes = True
 
