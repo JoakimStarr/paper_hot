@@ -2,7 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
+body,
+header,
+footer,
+main,
+nav,
+section,
+article,
+aside,
+div,
+span,
+p,
+h1, h2, h3, h4, h5, h6,
+a,
+button,
+label,
+td, th,
+ul, ol, li {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-duration: 200ms;
+  transition-timing-function: ease-in-out;
+}
+
+input, textarea, select {
   transition-property: background-color, border-color, color;
   transition-duration: 200ms;
   transition-timing-function: ease-in-out;

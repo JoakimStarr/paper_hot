@@ -324,15 +324,23 @@ class PaperCRUD:
         
         # 统计分数分布
         score_result = await db.execute(
-            select(PaperScore.final_score)
+            select(
+                func.count().filter(PaperScore.final_score >= 0.5).label("s50"),
+                func.count().filter(PaperScore.final_score >= 0.6).label("s60"),
+                func.count().filter(PaperScore.final_score >= 0.7).label("s70"),
+                func.count().filter(PaperScore.final_score >= 0.8).label("s80"),
+                func.count().filter(PaperScore.final_score >= 0.9).label("s90"),
+            )
             .join(Paper)
         )
-        scores = [row[0] for row in score_result if row[0] is not None]
-        
-        score_counts = {}
-        for threshold in [0.5, 0.6, 0.7, 0.8, 0.9]:
-            count = sum(1 for s in scores if s >= threshold)
-            score_counts[f"≥ {int(threshold * 100)}%"] = count
+        score_row = score_result.one()
+        score_counts = {
+            "≥ 50%": score_row[0],
+            "≥ 60%": score_row[1],
+            "≥ 70%": score_row[2],
+            "≥ 80%": score_row[3],
+            "≥ 90%": score_row[4],
+        }
         
         return {
             "discipline_counts": discipline_counts,

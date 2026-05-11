@@ -7,6 +7,18 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
+const cacheKeyIndex: string[] = [];
+
+function initCacheIndex() {
+  if (cacheKeyIndex.length > 0) return;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(CACHE_PREFIX)) {
+      cacheKeyIndex.push(k);
+    }
+  }
+}
+
 export function getCache<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + key);
@@ -14,6 +26,8 @@ export function getCache<T>(key: string): T | null {
     const entry: CacheEntry<T> = JSON.parse(raw);
     if (Date.now() - entry.timestamp > CACHE_TTL) {
       localStorage.removeItem(CACHE_PREFIX + key);
+      const idx = cacheKeyIndex.indexOf(CACHE_PREFIX + key);
+      if (idx >= 0) cacheKeyIndex.splice(idx, 1);
       return null;
     }
     return entry.data;
@@ -28,19 +42,13 @@ export function setCache<T>(key: string, data: T): void {
     const serialized = JSON.stringify(entry);
     if (serialized.length > 100000) return;
 
+    initCacheIndex();
     const fullKey = CACHE_PREFIX + key;
-    const allKeys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(CACHE_PREFIX)) {
-        allKeys.push(k);
-      }
-    }
 
-    if (allKeys.length >= MAX_ENTRIES) {
+    if (cacheKeyIndex.length >= MAX_ENTRIES && cacheKeyIndex.indexOf(fullKey) < 0) {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
-      for (const k of allKeys) {
+      for (const k of cacheKeyIndex) {
         try {
           const raw = localStorage.getItem(k);
           if (raw) {
@@ -54,12 +62,16 @@ export function setCache<T>(key: string, data: T): void {
       }
       if (oldestKey) {
         localStorage.removeItem(oldestKey);
+        const idx = cacheKeyIndex.indexOf(oldestKey);
+        if (idx >= 0) cacheKeyIndex.splice(idx, 1);
       }
     }
 
     localStorage.setItem(fullKey, serialized);
+    if (cacheKeyIndex.indexOf(fullKey) < 0) {
+      cacheKeyIndex.push(fullKey);
+    }
   } catch {
-    // localStorage full or unavailable
   }
 }
 
@@ -76,27 +88,40 @@ export function buildCacheKey(params: Record<string, unknown>): string {
 }
 
 const BOOKMARKS_KEY = 'pp_bookmarks';
+let bookmarksCache: string[] | null = null;
 
-export function getBookmarks(): string[] {
+function loadBookmarks(): string[] {
+  if (bookmarksCache !== null) return bookmarksCache;
   try {
     const raw = localStorage.getItem(BOOKMARKS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    bookmarksCache = raw ? JSON.parse(raw) : [];
+  } catch {
+    bookmarksCache = [];
+  }
+  return bookmarksCache!;
+}
+
+function saveBookmarks(bookmarks: string[]) {
+  bookmarksCache = bookmarks;
+  localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks));
+}
+
+export function getBookmarks(): string[] {
+  return loadBookmarks();
 }
 
 export function toggleBookmark(paperId: string): boolean {
-  const bookmarks = getBookmarks();
+  const bookmarks = loadBookmarks();
   const idx = bookmarks.indexOf(paperId);
   if (idx >= 0) {
     bookmarks.splice(idx, 1);
-    localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks));
+    saveBookmarks([...bookmarks]);
     return false;
   }
-  bookmarks.push(paperId);
-  localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks));
+  saveBookmarks([...bookmarks, paperId]);
   return true;
 }
 
 export function isBookmarked(paperId: string): boolean {
-  return getBookmarks().includes(paperId);
+  return loadBookmarks().includes(paperId);
 }

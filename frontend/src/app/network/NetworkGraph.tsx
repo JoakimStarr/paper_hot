@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 import { NetworkData, NetworkNode } from '@/types/paper';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface SimNode extends d3.SimulationNodeDatum {
   id: string;
@@ -44,7 +45,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   const initializedRef = useRef(false);
   const gRef = useRef<any>(null);
 
-  const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark');
+  const { isDark } = useTheme();
   const textColor = isDark ? '#e5e7eb' : '#333';
   const linkColor = isDark ? '#4b5563' : '#ddd';
   const highlightColor = '#4f46e5';
@@ -216,7 +217,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
         simulationRef.current.stop();
       }
     };
-  }, [data]);
+  }, [data, isDark]);
 
   useEffect(() => {
     if (!nodeGroupsRef.current || !linkLinesRef.current) return;

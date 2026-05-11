@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import {
   LineChart,
@@ -11,13 +13,14 @@ import {
 } from 'recharts';
 import { TrendingTopic } from '@/types/paper';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface TrendChartProps {
   topics: TrendingTopic[];
 }
 
 export default function TrendChart({ topics }: TrendChartProps) {
-  const isDark = typeof window !== 'undefined' && document.documentElement.classList.contains('dark');
+  const { isDark } = useTheme();
   const axisColor = isDark ? '#9ca3af' : '#6b7280';
   const gridColor = isDark ? '#374151' : '#e5e7eb';
   const tooltipStyle = isDark ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined;

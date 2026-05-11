@@ -7,6 +7,7 @@ import { papersApi } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
@@ -16,6 +17,7 @@ const DEBOUNCE_SECONDS = 300;
 
 export default function TrendsPage() {
   const { t } = useLanguage();
+  const { isDark } = useTheme();
   const [topics, setTopics] = useState<TrendingTopic[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -353,20 +355,20 @@ export default function TrendsPage() {
               </div>
               <ResponsiveContainer width="100%" height={350}>
                 <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
-                  <PolarGrid stroke={typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#4b5563' : '#e5e7eb'} />
+                  <PolarGrid stroke={isDark ? '#4b5563' : '#e5e7eb'} />
                   <PolarAngleAxis
                     dataKey="subfield"
-                    tick={{ fontSize: 12, fill: typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#d1d5db' : '#4b5563' }}
+                    tick={{ fontSize: 12, fill: isDark ? '#d1d5db' : '#4b5563' }}
                   />
                   <PolarRadiusAxis
                     angle={30}
                     domain={[0, 'auto']}
-                    tick={{ fontSize: 10, fill: typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? '#9ca3af' : '#9ca3af' }}
+                    tick={{ fontSize: 10, fill: '#9ca3af' }}
                   />
                   <Tooltip
                     formatter={(value: number) => [`${value} 篇`, '论文数']}
                     labelFormatter={(label: string) => `子领域: ${label}`}
-                    contentStyle={typeof window !== 'undefined' && document.documentElement.classList.contains('dark') ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined}
+                    contentStyle={isDark ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined}
                   />
                   <Radar
                     name="论文数"

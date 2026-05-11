@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
@@ -24,7 +24,7 @@ const subfieldColors: Record<string, string> = {
   '国际经济学': 'bg-pink-100 text-pink-800',
 };
 
-export default function PaperCard({ paper }: PaperCardProps) {
+function PaperCardInner({ paper }: PaperCardProps) {
   const { t } = useLanguage();
   const router = useRouter();
   const score = paper.final_score;
@@ -177,3 +177,5 @@ export default function PaperCard({ paper }: PaperCardProps) {
     </div>
   );
 }
+
+export default memo(PaperCardInner);
