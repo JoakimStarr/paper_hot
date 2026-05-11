@@ -1,49 +1,66 @@
 # PaperPulse
 
-A paper discovery and analysis platform for Chinese economics journals. Tracks 50+ top-tier journals and arXiv AI papers, provides AI-powered analysis, chat discussions, similarity matching, trend analysis, and network visualization.
+<p align="center">
+  <strong>Chinese Economics Paper Discovery & Analysis Platform</strong>
+</p>
+
+<p align="center">
+  Tracks 50+ top-tier economics journals and arXiv AI papers, providing AI-powered analysis, chat discussions, similarity matching, trend analysis, and network visualization.
+</p>
 
 ---
 
-## Features
+## ✨ Features
 
-### Paper Discovery
+### 📚 Paper Discovery
 - **Multi-source Aggregation**: Covers CNKI Economics TOP50 journals, 6 site-specific crawlers (管理世界, 经济研究, 经济学季刊, 世界经济, 中国工业经济, American Economic Review), and arXiv AI papers
-- **Smart Multi-dimensional Filters**: Filter by journal, discipline, economics subfield, keyword search, score range, time range; Enter key search support
+- **Smart Multi-dimensional Filters**: Filter by journal, discipline, economics subfield, CNKI subject, keyword search, score range, time range; Enter key search support
 - **Sorting & Pagination**: Sort by publish time + issue number, or composite score; pre-fetch first 3 pages with localStorage caching for instant loading
-- **Dedicated Search Page**: Standalone search page with full-field keyword search
+- **Dedicated Search Page**: Standalone search page with full-field keyword search + auto-complete suggestions (keywords/authors/titles)
+- **Skeleton Loading**: Skeleton card animations during data loading for better UX
 
-### Paper Detail
+### 📄 Paper Detail
 - **Complete Metadata**: Title, authors, abstract, keywords, journal name + issue, DOI (clickable to original), publication date
-- **AI Analysis**: In-depth single-paper analysis powered by Zhipu GLM-4.5-Air, covering research background, methodological innovation, key findings, and research significance
+- **AI Analysis**: In-depth single-paper analysis powered by Zhipu GLM / SiliconFlow Qwen, covering research background, methodological innovation, key findings, and research significance
 - **Status Tracking**: Persistent analysis status (pending → success/failed), survives page refresh
 - **Follow-up Chat**: SSE streaming Q&A conversation, Markdown rendering, automatic chat history persistence
 - **Similar Papers**: jieba tokenization + TF-IDF cosine similarity, real-time TOP 5 related papers with similarity scores
 
-### Trend Analysis
-- **Trending Topics**: Dynamic topic trends based on keyword frequency growth rates, with rising/stable/declining status markers
-- **AI Trend Reports**: Async background GLM AI analysis generating structured trend reports (hot topics, development trends, keyword insights, journal insights, research recommendations), with polling status support
+### 👤 Author Profile
+- **Author Paper List**: Aggregated papers by author with pagination
+- **Author Statistics**: Total papers, first-author count, most recent year, primary journal, top keywords, main subfield
+- **Co-author Network**: Display co-authors and collaboration frequency
 
-### Network Visualization
+### 📈 Trend Analysis
+- **Trending Topics**: Dynamic topic trends based on keyword frequency growth rates, with rising/stable/declining status markers
+- **AI Trend Reports**: Async background AI analysis generating structured trend reports (hot topics, development trends, keyword insights, journal insights, research recommendations), with polling status support
+- **Trend Report Chat**: Follow-up Q&A on AI trend reports for deeper insights into research hotspots and topic opportunities
+
+### 🕸️ Network Visualization
 - **Keyword Co-occurrence Network**: D3.js interactive force-directed graph visualizing keyword co-occurrence relationships, with zoom and drag support
 - **Author Collaboration Network**: D3.js interactive author collaboration graph showing academic collaboration ecosystems
 
-### Crawler Management
+### 🕷️ Crawler Management
 - **Multi-threaded CNKI Crawler**: DrissionPage-based crawler for automated batch scraping of Economics TOP50 journals
 - **Site-specific Crawlers**: 6 dedicated crawlers for key economics journals with resume support
 - **Captcha Handling**: Auto-detection + manual-assisted captcha resolution
 - **Crawl History**: URL deduplication, incremental crawling, persistent crawl logs
 
-### System Management
-- **Database Statistics**: System overview including total papers, journal distribution, year distribution, source statistics
+### ⚙️ System Management
+- **Database Statistics**: System overview including total papers, journal distribution, year distribution, source statistics, AI usage metrics
 - **Crawl Logs**: Real-time crawl status and historical logs
 - **Manual Triggers**: Manual crawl task initiation, trend score updates, full similarity recomputation
+- **Online Settings**: Dynamic configuration of API keys, model priority, ports, application name
+- **Scheduler Management**: Pause/resume scheduled tasks, manual trigger of scheduler jobs
+- **Database Maintenance**: Cleanup of invalid data and zombie analysis reports
 
-### Bilingual i18n
-- Full Chinese/English interface switching
+### 🌐 i18n & Theme
+- **Bilingual Interface**: Full Chinese/English interface switching
+- **Dark Mode**: Light/dark theme toggle with system preference detection
 
 ---
 
-## Data Sources
+## 📊 Data Sources
 
 | Source | Count | Description |
 |---|---|---|
@@ -65,7 +82,7 @@ A paper discovery and analysis platform for Chinese economics journals. Tracks 5
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 ### Backend
 
@@ -73,7 +90,7 @@ A paper discovery and analysis platform for Chinese economics journals. Tracks 5
 |---|---|
 | Framework | FastAPI + Uvicorn |
 | Database | SQLite + aiosqlite + SQLAlchemy ORM (PostgreSQL compatible) |
-| AI Service | zai-sdk (Zhipu GLM-4.7 / GLM-4.5-Air with multi-model fallback) |
+| AI Service | zai-sdk (Zhipu GLM-4.7 / GLM-4.5-Air / GLM-4.7-Flash) + OpenAI SDK (SiliconFlow Qwen3.5-4B / Qwen3-8B / DeepSeek-R1) |
 | Similarity | jieba tokenization + scikit-learn TF-IDF + cosine similarity |
 | Scheduling | APScheduler (scheduled crawling, trend updates) |
 | Crawling | DrissionPage (CNKI), BeautifulSoup4 + lxml (site-specific) |
@@ -85,7 +102,7 @@ A paper discovery and analysis platform for Chinese economics journals. Tracks 5
 | Category | Technology |
 |---|---|
 | Framework | Next.js 14 + React 18 + TypeScript |
-| Styling | Tailwind CSS + @tailwindcss/typography |
+| Styling | Tailwind CSS + @tailwindcss/typography + Dark Mode |
 | Charts | Recharts (trends) + D3.js (networks) |
 | Markdown | react-markdown + remark-gfm |
 | HTTP | axios |
@@ -97,19 +114,19 @@ A paper discovery and analysis platform for Chinese economics journals. Tracks 5
 
 ---
 
-## Scoring System
+## 📐 Scoring System
 
 Paper composite scores are computed from three weighted dimensions:
 
 | Dimension | Weight | Method |
 |---|---|---|
-| Recency | 50% | Exponential decay function — newer papers score higher |
+| Recency | 50% | Exponential decay function `e^(-0.1 × days)` — newer papers score higher |
 | Venue Authority | 30% | Journal tier-based authority score |
-| Trend Heat | 20% | Topic growth rate with Sigmoid smoothing |
+| Trend Heat | 20% | Topic growth rate with Sigmoid(tanh) smoothing |
 
 ---
 
-## Similarity Algorithm
+## 🔗 Similarity Algorithm
 
 Using **jieba Chinese tokenization** + **TF-IDF vectorization** + **cosine similarity**:
 
@@ -123,7 +140,24 @@ Supports single-paper recompute or full recompute after new papers are added.
 
 ---
 
-## Database Schema
+## 🤖 AI Dual-Channel Architecture
+
+The system supports both Zhipu AI and SiliconFlow channels with automatic failover:
+
+| Channel | Models | Usage |
+|---|---|---|
+| Zhipu GLM | glm-4.7 → glm-4.5-air → glm-4.7-flash | Trend analysis, paper analysis, chat |
+| SiliconFlow | Qwen3.5-4B → Qwen3-8B → DeepSeek-R1 | Fallback channel |
+
+Features:
+- Up to 2 retries per model
+- GLM channel has priority; automatic fallback to SiliconFlow on failure
+- Online dynamic model priority configuration
+- Structured JSON output (trend analysis)
+
+---
+
+## 🗄️ Database Schema
 
 | Table | Description |
 |---|---|
@@ -136,10 +170,11 @@ Supports single-paper recompute or full recompute after new papers are added.
 | topic_trends | Topic trend data (topic, week, growth rate) |
 | crawl_logs | Crawler execution logs |
 | ai_analysis_reports | Trend analysis reports (structured JSON + raw analysis text) |
+| trend_chats | Trend report follow-up chat records |
 
 ---
 
-## API Endpoints
+## 🔌 API Endpoints
 
 All endpoints prefixed with `/api`
 
@@ -150,7 +185,10 @@ All endpoints prefixed with `/api`
 | GET | `/papers` | Paper list (pagination, filtering, sorting, search) |
 | GET | `/papers/{id}` | Paper detail (with similar papers + similarity scores) |
 | GET | `/filter-statistics` | Filter statistics |
-| GET | `/stats` | Database statistics summary (counts, journal distribution, year distribution) |
+| GET | `/stats` | Database statistics summary (counts, journal distribution, year distribution, AI usage) |
+| GET | `/authors/{name}/papers` | Author paper list |
+| GET | `/search/suggest` | Search auto-complete suggestions |
+| GET | `/subfield-distribution` | Economics subfield distribution |
 
 ### AI Analysis (Paper Detail)
 
@@ -182,6 +220,10 @@ All endpoints prefixed with `/api`
 | POST | `/ai-analysis/v2/analyze` | Trigger async background trend analysis |
 | GET | `/ai-analysis/reports` | Historical analysis report list |
 | GET | `/ai-analysis/reports/{id}` | Report detail |
+| POST | `/ai-analysis/reports/{id}/chat` | Trend report follow-up chat (SSE streaming) |
+| GET | `/ai-analysis/reports/{id}/chats` | Trend report chat history |
+| POST | `/ai-analysis/reports/{id}/chats` | Save trend report chat messages |
+| DELETE | `/ai-analysis/reports/{id}/chats` | Clear trend report chat history |
 
 ### Crawler
 
@@ -194,29 +236,36 @@ All endpoints prefixed with `/api`
 
 | Method | Path | Description |
 |---|---|---|
+| GET | `/settings` | Get system settings (API key status, models, scheduler) |
+| PUT | `/settings` | Update system settings (API keys, model priority, ports, app name) |
 | POST | `/update-trend-scores` | Manually trigger trend score update |
+| GET | `/scheduler/jobs` | Scheduler job list |
+| POST | `/scheduler/trigger/{job_id}` | Manually trigger a scheduler job |
+| POST | `/scheduler/toggle` | Pause/resume scheduler |
+| POST | `/maintenance/cleanup` | Database cleanup (invalid papers, orphan records, zombie reports) |
 
 ---
 
-## Frontend Routes
+## 🖥️ Frontend Routes
 
 | Route | Description |
 |---|---|
 | `/` | Home — paper list, multi-dimensional filters, search |
 | `/paper/[id]` | Paper Detail — metadata, AI analysis, follow-up chat, similar papers |
-| `/search` | Search — full-field keyword search |
-| `/trends` | Trends — trending topics + AI trend report |
+| `/author/[name]` | Author Profile — paper list, statistics, co-authors |
+| `/search` | Search — full-field keyword search + auto-complete |
+| `/trends` | Trends — trending topics + AI trend report + chat |
 | `/network` | Network — keyword co-occurrence + author collaboration D3.js visualization |
-| `/system` | System — crawl logs, database stats, manual operations |
+| `/system` | System — crawl logs, database stats, settings, maintenance |
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- Zhipu API Key (for AI analysis features)
+- Zhipu API Key or SiliconFlow API Key (for AI analysis features)
 
 ### 1. Install Dependencies
 
@@ -235,7 +284,15 @@ npm install
 Create a `.env` file in the `backend/` directory:
 
 ```env
+# AI Service (at least one required)
 ZHIPU_API_KEY=your_zhipu_api_key_here
+SILICONFLOW_API_KEY=your_siliconflow_api_key_here
+
+# Optional
+OPENAI_API_KEY=your_openai_api_key_here
+SCHEDULER_ENABLED=true
+FETCH_INTERVAL_HOURS=24
+API_TOKEN=your_api_token_here
 ```
 
 See [.env.example](backend/.env.example) for full configuration options.
@@ -262,7 +319,7 @@ See [.env.example](backend/.env.example) for full configuration options.
 
 ---
 
-## Docker Deployment
+## 🐳 Docker Deployment
 
 ```bash
 # Backend
@@ -278,7 +335,7 @@ docker run -d -p 3000:3000 paperpulse-frontend
 
 ---
 
-## Crawler Architecture
+## 🕷️ Crawler Architecture
 
 ### CNKI Crawler
 
@@ -316,32 +373,32 @@ Dedicated crawlers for 6 key economics journal websites, unified via `EconomicsJ
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 paper_hot/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI app entry + lifecycle management
-│   │   ├── api.py               # All API endpoints (papers, AI, crawling, trends, network)
-│   │   ├── models.py            # SQLAlchemy ORM models (9 tables)
+│   │   ├── api.py               # All API endpoints (papers, AI, crawling, trends, network, settings, maintenance)
+│   │   ├── models.py            # SQLAlchemy ORM models (10 tables)
 │   │   ├── schemas.py           # Pydantic request/response models
-│   │   ├── crud.py               # Database operations layer (6 CRUD classes)
-│   │   ├── database.py           # Database connection & session management
-│   │   ├── config.py             # Configuration management (pydantic-settings)
-│   │   ├── scheduler.py          # APScheduler job scheduling
-│   │   ├── scoring.py            # Paper scoring system
-│   │   ├── similarity.py         # TF-IDF similarity computation
-│   │   ├── ai_processor.py       # AI processor (summarization, keyword extraction, topic classification)
-│   │   ├── ai_service.py         # AI trend analysis service (V2)
-│   │   ├── glm_analyzer.py       # GLM model analyzer (multi-model fallback)
-│   │   ├── fetchers.py           # Paper fetching base + site-specific crawlers
-│   │   ├── fetchers_cnki.py      # CNKI crawler (DrissionPage)
+│   │   ├── crud.py              # Database operations layer (7 CRUD classes)
+│   │   ├── database.py          # Database connection & session management
+│   │   ├── config.py            # Configuration management (pydantic-settings + dynamic update)
+│   │   ├── scheduler.py         # APScheduler job scheduling
+│   │   ├── scoring.py           # Paper scoring system
+│   │   ├── similarity.py        # TF-IDF similarity computation
+│   │   ├── ai_processor.py      # AI processor (summarization, keyword extraction, topic classification)
+│   │   ├── ai_service.py        # AI trend analysis service (dual-channel + failover)
+│   │   ├── fetchers.py          # Paper fetching base + site-specific crawlers
+│   │   ├── fetchers_cnki.py     # CNKI crawler (DrissionPage)
 │   │   └── fetchers_cnki_navi.py # CNKI journal navigation crawler
 │   ├── data/
 │   │   ├── paperpulse.db              # SQLite database
 │   │   ├── papers_history.json        # Crawler history (URL → deduplication)
-│   │   └── paper_details_history.json # Paper detail history
+│   │   ├── paper_details_history.json # Paper detail history
+│   │   └── journals_history.json      # Journal history
 │   ├── .env.example
 │   ├── Dockerfile
 │   └── requirements.txt
@@ -351,9 +408,12 @@ paper_hot/
 │       │   ├── page.tsx                    # Home page (paper list)
 │       │   ├── layout.tsx                  # Root layout
 │       │   ├── paper/[id]/page.tsx         # Paper detail page
+│       │   ├── author/[name]/page.tsx      # Author profile page
 │       │   ├── search/page.tsx             # Search page
 │       │   ├── trends/page.tsx             # Trend analysis page
-│       │   ├── network/page.tsx            # Network visualization page
+│       │   ├── network/
+│       │   │   ├── page.tsx                # Network visualization page
+│       │   │   └── NetworkGraph.tsx        # D3.js network graph component
 │       │   └── system/page.tsx             # System management page
 │       ├── components/
 │       │   ├── Filters.tsx                 # Filter component
@@ -362,25 +422,29 @@ paper_hot/
 │       │   ├── SearchBar.tsx               # Search bar component
 │       │   ├── Layout.tsx                  # Layout component
 │       │   ├── TrendChart.tsx              # Trend chart component
-│       │   └── LanguageSwitcher.tsx        # Language switcher
+│       │   ├── LanguageSwitcher.tsx        # Language switcher
+│       │   └── SkeletonCard.tsx            # Skeleton loading card
 │       ├── contexts/
-│       │   └── LanguageContext.tsx         # i18n context
+│       │   ├── LanguageContext.tsx         # i18n context
+│       │   └── ThemeContext.tsx            # Dark mode context
 │       ├── lib/
 │       │   ├── api.ts                      # API client
-│       │   ├── cache.ts                    # localStorage cache
-│       │   └── i18n.ts                     # i18n translations
+│       │   ├── cache.ts                    # localStorage cache + bookmarks
+│       │   ├── i18n.ts                     # i18n translations
+│       │   └── utils.ts                    # Utility functions
 │       ├── types/
 │       │   └── paper.ts                    # TypeScript type definitions
 │       └── styles/
-│           └── globals.css                 # Global styles
+│           └── globals.css                 # Global styles (with dark mode)
 ├── cnki_paper_captcha.py                   # CNKI captcha recognition module
 ├── start.sh                                # Startup script
 ├── stop.sh                                 # Shutdown script
-└── README.md
+├── README.md                               # English documentation
+└── README_CN.md                            # Chinese documentation
 ```
 
 ---
 
-## License
+## 📜 License
 
 MIT License
