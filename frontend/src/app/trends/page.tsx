@@ -32,7 +32,7 @@ export default function TrendsPage() {
   const [radarData, setRadarData] = useState<{ subfield: string; count: number }[]>([]);
   const [radarLoading, setRadarLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
-  const [historyReports, setHistoryReports] = useState<Array<{ id: number; summary: string; model: string; created_at: string; status: string }>>([]);
+  const [historyReports, setHistoryReports] = useState<AIAnalysisReport[]>([]);
   const [restoringId, setRestoringId] = useState<number | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);

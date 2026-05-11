@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -31,7 +31,7 @@ export interface AuthorPapersResponse {
 
 export interface SearchSuggestion {
   text: string;
-  type: 'keyword' | 'title';
+  type: 'keyword' | 'title' | 'author';
   count: number;
 }
 
@@ -177,6 +177,36 @@ export const papersApi = {
 
   getSubfieldDistribution: async (): Promise<SubfieldDistributionResponse> => {
     const response = await apiClient.get<SubfieldDistributionResponse>('/subfield-distribution');
+    return response.data;
+  },
+
+  getSettings: async (): Promise<SettingsInfo> => {
+    const response = await apiClient.get<SettingsInfo>('/settings');
+    return response.data;
+  },
+
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[] }): Promise<{ success: boolean }> => {
+    const response = await apiClient.put<{ success: boolean }>('/settings', data);
+    return response.data;
+  },
+
+  getSchedulerJobs: async (): Promise<SchedulerJob[]> => {
+    const response = await apiClient.get<SchedulerJob[]>('/scheduler/jobs');
+    return response.data;
+  },
+
+  triggerSchedulerJob: async (jobId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await apiClient.post<{ success: boolean; message: string }>(`/scheduler/trigger/${jobId}`);
+    return response.data;
+  },
+
+  toggleScheduler: async (): Promise<{ running: boolean; message: string }> => {
+    const response = await apiClient.post<{ running: boolean; message: string }>('/scheduler/toggle');
+    return response.data;
+  },
+
+  cleanupData: async (): Promise<MaintenanceResult> => {
+    const response = await apiClient.post<MaintenanceResult>('/maintenance/cleanup');
     return response.data;
   },
 };

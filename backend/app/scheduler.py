@@ -80,6 +80,35 @@ class PaperScheduler:
     def stop(self):
         self.scheduler.shutdown()
         logger.info("Paper scheduler stopped")
+
+    def get_jobs_info(self) -> List[Dict]:
+        jobs = self.scheduler.get_jobs()
+        result = []
+        for job in jobs:
+            next_run = job.next_run_time
+            result.append({
+                "id": job.id,
+                "name": job.name,
+                "trigger_str": str(job.trigger),
+                "next_run_time": next_run.isoformat() if next_run else None,
+                "pending": job.pending,
+            })
+        return result
+
+    def trigger_job(self, job_id: str):
+        job = self.scheduler.get_job(job_id)
+        if not job:
+            raise ValueError(f"Job {job_id} not found")
+        job.modify(next_run_time=datetime.now())
+
+    def pause(self):
+        self.scheduler.pause()
+
+    def resume(self):
+        self.scheduler.resume()
+
+    def is_running(self) -> bool:
+        return self.scheduler.running
     
     async def fetch_and_process_papers(self):
         logger.info("Starting paper fetch and process job")

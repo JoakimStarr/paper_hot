@@ -30,5 +30,30 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = False
 
+    @staticmethod
+    def update_setting(key: str, value: str):
+        env_path = BASE_DIR / ".env"
+        lines = []
+        if env_path.exists():
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        found = False
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k == key:
+                    new_lines.append(f"{key}={value}\n")
+                    found = True
+                    continue
+            new_lines.append(line)
+        if not found:
+            new_lines.append(f"{key}={value}\n")
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        if hasattr(settings, key):
+            setattr(settings, key, value)
+
 
 settings = Settings()

@@ -190,3 +190,40 @@ export interface CrawlLog {
   error_message: string | null;
   created_at: string;
 }
+
+export interface ApiKeyStatus {
+  configured: boolean;
+  masked: string;
+}
+
+export interface SettingsInfo {
+  api_keys: {
+    zhipu: ApiKeyStatus;
+    openai: ApiKeyStatus;
+    siliconflow: ApiKeyStatus;
+  };
+  models: {
+    name: string;
+    available: boolean;
+    priority: number;
+  }[];
+  scheduler: {
+    running: boolean;
+  };
+  api_token_configured: boolean;
+}
+
+export interface SchedulerJob {
+  id: string;
+  name: string;
+  trigger: string;
+  next_run_time: string | null;
+  pending: boolean;
+}
+
+export interface MaintenanceResult {
+  deleted_papers: number;
+  deleted_features: number;
+  deleted_scores: number;
+  deleted_reports: number;
+}

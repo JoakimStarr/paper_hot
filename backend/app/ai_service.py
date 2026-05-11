@@ -38,6 +38,24 @@ class AITrendService:
     def is_available(self) -> bool:
         return self.glm_initialized
 
+    def reload(self):
+        self.glm_initialized = False
+        self.glm_client = None
+        self._init_glm()
+
+    def get_model_status(self) -> List[Dict]:
+        result = []
+        for idx, model in enumerate(self.GLM_MODELS):
+            result.append({
+                "name": model,
+                "priority": idx + 1,
+                "available": self.glm_initialized,
+            })
+        return result
+
+    def update_models(self, model_list: List[str]):
+        self.GLM_MODELS = list(model_list)
+
     GLM_MODELS = [
         "glm-4.7",
         "glm-4.5-air",

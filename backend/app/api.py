@@ -31,6 +31,7 @@ from app.config import settings
 import asyncio
 import concurrent.futures
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,82 @@ router = APIRouter()
 
 class CrawlStartRequest(BaseModel):
     journal_names: Optional[List[str]] = None
+
+
+class UpdateSettingsRequest(BaseModel):
+    api_keys: Optional[dict] = None
+    model_priority: Optional[List[str]] = None
+
+
+def _mask_api_key(key: Optional[str]) -> str:
+    if not key:
+        return ""
+    if len(key) > 8:
+        return key[:4] + "****" + key[-4:]
+    return "****"
+
+
+@router.get("/settings")
+async def get_settings_endpoint(token: bool = Depends(verify_token)):
+    from app.config import Settings
+    api_keys = {
+        "zhipu": {
+            "configured": bool(settings.zhipu_api_key),
+            "masked": _mask_api_key(settings.zhipu_api_key),
+        },
+        "openai": {
+            "configured": bool(settings.openai_api_key),
+            "masked": _mask_api_key(settings.openai_api_key),
+        },
+        "siliconflow": {
+            "configured": bool(settings.siliconflow_api_key),
+            "masked": _mask_api_key(settings.siliconflow_api_key),
+        },
+    }
+    models = ai_trend_service.get_model_status()
+    from app.main import scheduler
+    scheduler_info = {
+        "running": scheduler.is_running(),
+        "jobs": scheduler.get_jobs_info(),
+    }
+    api_token_configured = bool(settings.api_token)
+    return {
+        "api_keys": api_keys,
+        "models": models,
+        "scheduler": scheduler_info,
+        "api_token_configured": api_token_configured,
+    }
+
+
+@router.put("/settings")
+async def update_settings_endpoint(
+    body: UpdateSettingsRequest,
+    token: bool = Depends(verify_token)
+):
+    from app.config import Settings
+    keys_changed = False
+    models_changed = False
+
+    if body.api_keys:
+        key_mapping = {
+            "zhipu": "zhipu_api_key",
+            "openai": "openai_api_key",
+            "siliconflow": "siliconflow_api_key",
+        }
+        for provider, value in body.api_keys.items():
+            env_key = key_mapping.get(provider)
+            if env_key and value is not None:
+                Settings.update_setting(env_key, value)
+                keys_changed = True
+
+    if body.model_priority:
+        ai_trend_service.update_models(body.model_priority)
+        models_changed = True
+
+    if keys_changed:
+        ai_trend_service.reload()
+
+    return {"status": "ok", "keys_changed": keys_changed, "models_changed": models_changed}
 
 
 class CrawlStartResponse(BaseModel):
@@ -261,6 +338,15 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
         for row in result:
             top_journals[row[0]] = row[1]
 
+        from app.config import BASE_DIR
+        db_path = BASE_DIR / "data" / "paperpulse.db"
+        db_size_mb = 0.0
+        if db_path.exists():
+            db_size_mb = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+
+        from app.main import scheduler
+        scheduler_running = scheduler.is_running()
+
         return {
             "total_papers": total_papers,
             "journal_count": journal_count,
@@ -270,6 +356,8 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
             "source_counts": source_counts,
             "year_counts": year_counts,
             "top_journals": top_journals,
+            "db_size_mb": db_size_mb,
+            "scheduler_running": scheduler_running,
         }
     except Exception as e:
         logger.error(f"Failed to get system stats: {e}")
@@ -1246,3 +1334,84 @@ async def get_subfield_distribution(
         for row in result
     ]
     return {"distribution": distribution}
+
+
+@router.get("/scheduler/jobs")
+async def get_scheduler_jobs(token: bool = Depends(verify_token)):
+    from app.main import scheduler
+    jobs = scheduler.get_jobs_info()
+    running = scheduler.is_running()
+    return {"running": running, "jobs": jobs}
+
+
+@router.post("/scheduler/trigger/{job_id}")
+async def trigger_scheduler_job(job_id: str, token: bool = Depends(verify_token)):
+    from app.main import scheduler
+    try:
+        scheduler.trigger_job(job_id)
+        return {"status": "ok", "message": f"Job {job_id} triggered"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/scheduler/toggle")
+async def toggle_scheduler(token: bool = Depends(verify_token)):
+    from app.main import scheduler
+    if scheduler.is_running():
+        scheduler.pause()
+        return {"status": "paused"}
+    else:
+        scheduler.resume()
+        return {"status": "resumed"}
+
+
+@router.post("/maintenance/cleanup")
+async def cleanup_database(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+    from sqlalchemy import text as sa_text
+
+    try:
+        deleted_papers = 0
+        deleted_features = 0
+        deleted_scores = 0
+        deleted_reports = 0
+
+        result = await db.execute(sa_text("""
+            DELETE FROM papers
+            WHERE title IS NULL OR title = '' OR abstract IS NULL OR abstract = ''
+        """))
+        deleted_papers = result.rowcount or 0
+        await db.flush()
+
+        result = await db.execute(sa_text("""
+            DELETE FROM paper_features
+            WHERE paper_id NOT IN (SELECT id FROM papers)
+        """))
+        deleted_features = result.rowcount or 0
+        await db.flush()
+
+        result = await db.execute(sa_text("""
+            DELETE FROM paper_scores
+            WHERE paper_id NOT IN (SELECT id FROM papers)
+        """))
+        deleted_scores = result.rowcount or 0
+        await db.flush()
+
+        result = await db.execute(sa_text("""
+            DELETE FROM ai_analysis_reports
+            WHERE status = 'running'
+            AND created_at < datetime('now', '-10 minutes')
+        """))
+        deleted_reports = result.rowcount or 0
+
+        await db.commit()
+
+        return {
+            "deleted_papers": deleted_papers,
+            "deleted_features": deleted_features,
+            "deleted_scores": deleted_scores,
+            "deleted_reports": deleted_reports,
+        }
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Cleanup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
