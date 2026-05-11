@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PaperListResponse, PaperCardListResponse, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -18,6 +18,34 @@ export interface FilterStatistics {
   topic_counts: Record<string, number>;
   score_counts: Record<string, number>;
   total_papers: number;
+}
+
+export interface AuthorPapersResponse {
+  papers: PaperCard[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_next: boolean;
+  author_name: string;
+}
+
+export interface SearchSuggestion {
+  text: string;
+  type: 'keyword' | 'title';
+  count: number;
+}
+
+export interface SearchSuggestResponse {
+  suggestions: SearchSuggestion[];
+}
+
+export interface SubfieldDistributionItem {
+  subfield: string;
+  count: number;
+}
+
+export interface SubfieldDistributionResponse {
+  distribution: SubfieldDistributionItem[];
 }
 
 export const papersApi = {
@@ -131,6 +159,25 @@ export const papersApi = {
 
   saveChats: async (paperId: string, messages: Array<{ role: string; content: string }>): Promise<void> => {
     await apiClient.post(`/papers/${paperId}/chats`, { messages });
+  },
+
+  getAuthorPapers: async (authorName: string, page: number = 1, pageSize: number = 20): Promise<AuthorPapersResponse> => {
+    const response = await apiClient.get<AuthorPapersResponse>(`/authors/${encodeURIComponent(authorName)}/papers`, {
+      params: { page, page_size: pageSize },
+    });
+    return response.data;
+  },
+
+  getSearchSuggestions: async (q: string, limit: number = 8): Promise<SearchSuggestResponse> => {
+    const response = await apiClient.get<SearchSuggestResponse>('/search/suggest', {
+      params: { q, limit },
+    });
+    return response.data;
+  },
+
+  getSubfieldDistribution: async (): Promise<SubfieldDistributionResponse> => {
+    const response = await apiClient.get<SubfieldDistributionResponse>('/subfield-distribution');
+    return response.data;
   },
 };
 

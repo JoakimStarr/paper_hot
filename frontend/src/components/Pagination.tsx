@@ -10,6 +10,7 @@ interface PaginationProps {
   totalItems: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
 }
 
 export default function Pagination({
@@ -18,6 +19,7 @@ export default function Pagination({
   totalItems,
   pageSize,
   onPageChange,
+  onPageSizeChange,
 }: PaginationProps) {
   const { t } = useLanguage();
 
@@ -63,8 +65,19 @@ export default function Pagination({
   return (
     <div className="flex flex-col items-center mt-8 space-y-4">
       {/* 显示信息 */}
-      <div className="text-sm text-gray-600">
-        {t('home.showingPapers', { start: startItem, end: endItem, total: totalItems })}
+      <div className="flex items-center gap-4">
+        <div className="text-sm text-gray-600">
+          {t('home.showingPapers', { start: startItem, end: endItem, total: totalItems })}
+        </div>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
+          className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white outline-none focus:ring-1 focus:ring-primary-500"
+        >
+          <option value={10}>10条/页</option>
+          <option value={20}>20条/页</option>
+          <option value={50}>50条/页</option>
+        </select>
       </div>
       
       {/* 分页按钮 */}

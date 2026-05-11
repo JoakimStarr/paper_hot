@@ -1381,8 +1381,17 @@ class JournalCrawler:
                 for link in author_links:
                     author_name = link.get_text(strip=True)
                     author_name = re.sub(r'\d+', '', author_name).strip()
-                    if author_name:
-                        authors.append(author_name)
+                    author_name = re.sub(r'[\w.+-]+@[\w.+-]+', '', author_name).strip()
+                    author_name = re.sub(r'@\.com', '', author_name).strip()
+                    author_name = author_name.strip().rstrip(',').rstrip('，').strip()
+                    author_name = re.sub(r'\s+', '', author_name)
+                    if not author_name or len(author_name) < 2:
+                        continue
+                    if not re.search(r'[\u4e00-\u9fff]', author_name):
+                        continue
+                    if re.search(r'[@\d]', author_name):
+                        continue
+                    authors.append(author_name)
 
             abstract = ''
             abstract_elem = soup.find('span', class_='abstract-text')

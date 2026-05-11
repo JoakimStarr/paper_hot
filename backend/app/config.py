@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Optional
 from pathlib import Path
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     
     scheduler_enabled: bool = True
     fetch_interval_hours: int = 24
+    
+    api_token: str = Field(default="", description="API token for protected endpoints")
     
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
     

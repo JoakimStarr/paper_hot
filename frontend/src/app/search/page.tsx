@@ -6,14 +6,13 @@ import Layout from '@/components/Layout';
 import SearchBar from '@/components/SearchBar';
 import PaperCard from '@/components/PaperCard';
 import Pagination from '@/components/Pagination';
+import SkeletonCard from '@/components/SkeletonCard';
 import { papersApi } from '@/lib/api';
 import { PaperCardListResponse, PaperCard as PaperCardType } from '@/types/paper';
 import { Loader2, Search, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getCache, setCache, buildCacheKey } from '@/lib/cache';
-
-const PAGE_SIZE = 20;
 
 export default function SearchPage() {
   return (
@@ -44,6 +43,7 @@ function SearchPageInner() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [queryKey, setQueryKey] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
 
   const [currentSearch, setCurrentSearch] = useState(initialSearch);
   const [currentField, setCurrentField] = useState(initialField);
@@ -62,13 +62,13 @@ function SearchPageInner() {
 
   const buildParams = useCallback((p: number) => ({
     page: p,
-    page_size: PAGE_SIZE,
+    page_size: pageSize,
     search: currentSearch || undefined,
     search_field: currentField || undefined,
     journal_name: currentJournal || undefined,
     sort_by: 'date',
     sort_order: 'desc',
-  }), [currentSearch, currentField, currentJournal]);
+  }), [currentSearch, currentField, currentJournal, pageSize]);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +96,7 @@ function SearchPageInner() {
         if (!cancelled) {
           setPapers(response.papers);
           setTotal(response.total);
-          setTotalPages(Math.ceil(response.total / PAGE_SIZE));
+          setTotalPages(Math.ceil(response.total / pageSize));
         }
       } catch (error) {
         console.error('Error searching papers:', error);
@@ -120,6 +120,11 @@ function SearchPageInner() {
     if (newPage < 1 || newPage > totalPages) return;
     setPage(newPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(1);
   };
 
   const hasParams = currentSearch || currentJournal;
@@ -157,8 +162,10 @@ function SearchPageInner() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="grid grid-cols-1 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
         </div>
       ) : hasParams ? (
         <>
@@ -187,8 +194,9 @@ function SearchPageInner() {
               currentPage={page}
               totalPages={totalPages}
               totalItems={total}
-              pageSize={PAGE_SIZE}
+              pageSize={pageSize}
               onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
             />
           )}
         </>

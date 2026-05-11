@@ -50,6 +50,7 @@ class Paper(Base):
     journal_name = Column(String(200), nullable=True, index=True)
     journal_issue = Column(String(100), nullable=True)
     economics_subfield = Column(String(100), nullable=True, index=True)
+    cnki_subject = Column(String(500), nullable=True)
     doi = Column(String(200), nullable=True, unique=True)
     keywords_cn = Column(UnicodeJSON, default=list)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

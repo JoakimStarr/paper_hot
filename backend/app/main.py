@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
@@ -16,6 +16,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 scheduler = PaperScheduler()
+
+
+async def verify_api_token(x_api_token: str = Header(default=None)):
+    if settings.api_token and settings.api_token != "":
+        if x_api_token is None or x_api_token != settings.api_token:
+            raise HTTPException(status_code=401, detail="Invalid or missing API token")
+    return True
 
 
 @asynccontextmanager

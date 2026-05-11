@@ -1,0 +1,9 @@
+- [x] 关键词搜索使用 json_each 精确匹配，不再使用 CAST ILIKE
+- [x] 作者搜索使用 json_each 精确匹配，不再使用 CAST ILIKE
+- [x] 作者详情页使用 SQL json_each 过滤，不再 Python 内存全表扫描
+- [x] 搜索建议返回作者名建议（类型标记为 author）
+- [x] 搜索栏下拉框包含"作者"选项
+- [x] 关键词标签点击跳转使用 search_field=keyword
+- [x] 点击关键词后搜索结果仅包含关键词精确匹配的论文
+- [x] 作者搜索结果包含该作者参与的所有论文（一作和合作者）
+- [x] search_field=all 仍搜索标题和摘要

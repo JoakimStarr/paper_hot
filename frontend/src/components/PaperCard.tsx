@@ -1,50 +1,18 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
-import { ExternalLink, Calendar, TrendingUp, Award } from 'lucide-react';
+import { ExternalLink, Calendar, TrendingUp, Award, Bookmark } from 'lucide-react';
 import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { getIssuePeriod, topicColors } from '@/lib/utils';
+import { toggleBookmark, isBookmarked as checkBookmarked } from '@/lib/cache';
 
 interface PaperCardProps {
   paper: PaperCardType;
 }
-
-function getIssuePeriod(doi: string | null, publishedAt: string | null, journalIssue: string | null): string {
-  if (journalIssue) return journalIssue;
-  if (doi) {
-    const fy = doi.match(/f\.(\d{4})\.(\d+)$/);
-    if (fy && fy[2].length === 4) {
-      const issue = Math.min(Math.ceil(parseInt(fy[2], 10) / 5), 12);
-      return `${fy[1]}年 第${issue}期`;
-    }
-    const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
-    if (mm) {
-      return `${mm[1]}年 第${parseInt(mm[2], 10)}期`;
-    }
-    const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
-    if (ymd) {
-      return `${ymd[1]}年 第${parseInt(ymd[2], 10)}期`;
-    }
-  }
-  if (publishedAt) {
-    return `${new Date(publishedAt).getFullYear()}年`;
-  }
-  return '';
-}
-
-const topicColors: Record<string, string> = {
-  LLM: 'bg-purple-100 text-purple-800',
-  Agent: 'bg-green-100 text-green-800',
-  CV: 'bg-blue-100 text-blue-800',
-  RL: 'bg-orange-100 text-orange-800',
-  Multimodal: 'bg-pink-100 text-pink-800',
-  NLP: 'bg-yellow-100 text-yellow-800',
-  Generative: 'bg-indigo-100 text-indigo-800',
-  Other: 'bg-gray-100 text-gray-800',
-};
 
 const subfieldColors: Record<string, string> = {
   '宏观经济学': 'bg-blue-100 text-blue-800',
@@ -62,6 +30,7 @@ export default function PaperCard({ paper }: PaperCardProps) {
   const score = paper.final_score;
   const isHighScore = score >= 0.7;
   const isTrending = paper.trend_score >= 0.6;
+  const [bookmarked, setBookmarked] = useState(checkBookmarked(paper.id));
 
   return (
     <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-6 border border-gray-200">
@@ -74,6 +43,19 @@ export default function PaperCard({ paper }: PaperCardProps) {
           </Link>
         </div>
         <div className="flex items-center gap-2 ml-4">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              const added = toggleBookmark(paper.id);
+              setBookmarked(added);
+            }}
+            className="text-gray-400 hover:text-yellow-500 transition-colors"
+            title={bookmarked ? '取消收藏' : '收藏'}
+          >
+            <Bookmark
+              className={`w-4 h-4 ${bookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`}
+            />
+          </button>
           {isHighScore && (
             <span className="flex items-center gap-1 bg-yellow-100 text-yellow-800 text-xs font-medium px-2 py-1 rounded">
               <Award className="w-3 h-3" />
@@ -93,6 +75,28 @@ export default function PaperCard({ paper }: PaperCardProps) {
         <p className="text-gray-600 text-sm mb-3 line-clamp-2">
           {paper.abstract}
         </p>
+      )}
+
+      {paper.authors && paper.authors.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 mb-3">
+          <span className="text-xs text-gray-400 mr-1">作者:</span>
+          {paper.authors.slice(0, 5).map((author, index) => (
+            <button
+              key={index}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                router.push(`/author/${encodeURIComponent(author.trim())}`);
+              }}
+              className="text-xs text-primary-600 hover:text-primary-800 hover:underline bg-primary-50 hover:bg-primary-100 px-1.5 py-0.5 rounded transition-colors"
+            >
+              {author.trim()}
+            </button>
+          ))}
+          {paper.authors.length > 5 && (
+            <span className="text-xs text-gray-400">等{paper.authors.length}人</span>
+          )}
+        </div>
       )}
 
       <div className="flex flex-wrap gap-2 mb-3">

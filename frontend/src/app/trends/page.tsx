@@ -9,6 +9,7 @@ import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown,
 import { useLanguage } from '@/contexts/LanguageContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
 
 const POLL_INTERVAL_MS = 3000;
 const DEBOUNCE_SECONDS = 60;
@@ -27,16 +28,21 @@ export default function TrendsPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
   const [showRawAnalysis, setShowRawAnalysis] = useState(false);
+  const [timeRange, setTimeRange] = useState<'1m' | '3m' | '6m'>('1m');
+  const [radarData, setRadarData] = useState<{ subfield: string; count: number }[]>([]);
+  const [radarLoading, setRadarLoading] = useState(true);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRunningRef = useRef(false);
+  const isMountedRef = useRef(true);
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
 
     pollRef.current = setInterval(async () => {
       try {
+        if (!isMountedRef.current) return;
         const status = await papersApi.getAIAnalysisV2();
         if (!status.is_running) {
           if (pollRef.current) {
@@ -75,7 +81,9 @@ export default function TrendsPage() {
   useEffect(() => {
     fetchTrends();
     checkStatus();
+    fetchRadarData();
     return () => {
+      isMountedRef.current = false;
       stopPolling();
       if (cooldownRef.current) clearInterval(cooldownRef.current);
     };
@@ -84,6 +92,7 @@ export default function TrendsPage() {
   useEffect(() => {
     if (cooldown > 0) {
       cooldownRef.current = setInterval(() => {
+        if (!isMountedRef.current) return;
         setCooldown((prev) => {
           if (prev <= 1) {
             if (cooldownRef.current) clearInterval(cooldownRef.current);
@@ -98,9 +107,19 @@ export default function TrendsPage() {
     };
   }, [cooldown]);
 
+  useEffect(() => {
+    const weeksBackMap = { '1m': 4, '3m': 12, '6m': 24 };
+    papersApi.getTrendingTopics(weeksBackMap[timeRange]).then(response => {
+      setTopics(response.topics);
+    }).catch(error => {
+      console.error('Error fetching trends:', error);
+    });
+  }, [timeRange]);
+
   const fetchTrends = async () => {
+    const weeksBackMap = { '1m': 4, '3m': 12, '6m': 24 };
     try {
-      const response = await papersApi.getTrendingTopics(4);
+      const response = await papersApi.getTrendingTopics(weeksBackMap[timeRange]);
       setTopics(response.topics);
     } catch (error) {
       console.error('Error fetching trends:', error);
@@ -123,6 +142,18 @@ export default function TrendsPage() {
       }
     } catch (error) {
       console.error('Error checking analysis status:', error);
+    }
+  };
+
+  const fetchRadarData = async () => {
+    setRadarLoading(true);
+    try {
+      const result = await papersApi.getSubfieldDistribution();
+      setRadarData(result.distribution);
+    } catch (error) {
+      console.error('Error fetching radar data:', error);
+    } finally {
+      setRadarLoading(false);
     }
   };
 
@@ -255,7 +286,58 @@ export default function TrendsPage() {
         </div>
       ) : (
         <>
+          <div className="flex gap-2 mb-4">
+            {(['1m', '3m', '6m'] as const).map(range => (
+              <button
+                key={range}
+                onClick={() => setTimeRange(range)}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  timeRange === range
+                    ? 'bg-primary-600 text-white'
+                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {range === '1m' ? '1个月' : range === '3m' ? '3个月' : '6个月'}
+              </button>
+            ))}
+          </div>
+
           <TrendChart topics={topics} />
+
+          {!radarLoading && radarData.length > 0 && (
+            <div className="mt-8 bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-xl">🎯</span>
+                <h2 className="text-xl font-semibold text-gray-900">研究热点雷达图</h2>
+                <span className="text-xs text-gray-400">各子领域论文分布</span>
+              </div>
+              <ResponsiveContainer width="100%" height={350}>
+                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
+                  <PolarGrid />
+                  <PolarAngleAxis
+                    dataKey="subfield"
+                    tick={{ fontSize: 12, fill: '#4b5563' }}
+                  />
+                  <PolarRadiusAxis
+                    angle={30}
+                    domain={[0, 'auto']}
+                    tick={{ fontSize: 10, fill: '#9ca3af' }}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [`${value} 篇`, '论文数']}
+                    labelFormatter={(label: string) => `子领域: ${label}`}
+                  />
+                  <Radar
+                    name="论文数"
+                    dataKey="count"
+                    stroke="#7c3aed"
+                    fill="#7c3aed"
+                    fillOpacity={0.25}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           <div className="mt-8 bg-white rounded-lg shadow-md p-6">
             <div className="flex items-center justify-between mb-6">

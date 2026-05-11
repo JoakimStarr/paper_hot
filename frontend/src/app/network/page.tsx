@@ -1,25 +1,17 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi } from '@/lib/api';
 import { NetworkData, NetworkNode } from '@/types/paper';
-import { Loader2, Users, Hash, ZoomIn, ZoomOut, RotateCcw, ChevronRight } from 'lucide-react';
+import { Loader2, Users, Hash, ChevronRight, ExternalLink } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import * as d3 from 'd3';
+
+const NetworkGraph = dynamic(() => import('./NetworkGraph'), { ssr: false });
 
 type TabType = 'authors' | 'keywords';
-
-interface SimNode extends d3.SimulationNodeDatum {
-  id: string;
-  name: string;
-  count: number;
-  group: string;
-}
-
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
-  value: number;
-}
 
 interface ConnectedNode {
   id: string;
@@ -29,17 +21,20 @@ interface ConnectedNode {
   count: number;
 }
 
+function getLinkNodeId(node: string | { id?: string }): string {
+  if (typeof node === 'string') return node;
+  if (node && 'id' in node && typeof node.id === 'string') return node.id;
+  return String(node);
+}
+
 export default function NetworkPage() {
   const { t } = useLanguage();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('authors');
   const [data, setData] = useState<NetworkData | null>(null);
   const [loading, setLoading] = useState(true);
   const [infoNode, setInfoNode] = useState<NetworkNode | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const nodeGroupsRef = useRef<any>(null);
-  const linkLinesRef = useRef<any>(null);
 
   const fetchData = useCallback(async (tab: TabType) => {
     setLoading(true);
@@ -71,8 +66,8 @@ export default function NetworkPage() {
 
     const connections = new Map<string, ConnectedNode>();
     data.links.forEach(link => {
-      const sourceId = typeof link.source === 'string' ? link.source : (link.source as any).id || link.source;
-      const targetId = typeof link.target === 'string' ? link.target : (link.target as any).id || link.target;
+      const sourceId = getLinkNodeId(link.source);
+      const targetId = getLinkNodeId(link.target);
 
       let neighborId: string | null = null;
       if (sourceId === highlightedNodeId) neighborId = targetId;
@@ -100,194 +95,15 @@ export default function NetworkPage() {
       .sort((a, b) => b.linkValue - a.linkValue);
   }, [data, highlightedNodeId]);
 
-  useEffect(() => {
-    if (!data || !svgRef.current || !containerRef.current) return;
-
-    const width = containerRef.current.clientWidth;
-    const height = Math.min(600, window.innerHeight - 400);
-
-    d3.select(svgRef.current).selectAll('*').remove();
-
-    const svg = d3.select(svgRef.current)
-      .attr('width', width)
-      .attr('height', height);
-
-    const g = svg.append('g');
-
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 5])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-
-    svg.call(zoom);
-    svg.on('click', () => {
+  const handleNodeClick = useCallback((node: NetworkNode) => {
+    if (!node.id) {
       setInfoNode(null);
       setHighlightedNodeId(null);
-    });
-
-    const nodes: SimNode[] = data.nodes.map(n => ({
-      ...n,
-      count: n.papers || n.count || 0,
-    }));
-
-    const nodeIds = new Set(nodes.map(n => n.id));
-    const links: SimLink[] = data.links
-      .filter(l => {
-        const sId = typeof l.source === 'string' ? l.source : (l.source as any).id || l.source;
-        const tId = typeof l.target === 'string' ? l.target : (l.target as any).id || l.target;
-        return nodeIds.has(sId) && nodeIds.has(tId);
-      })
-      .map(l => ({ ...l, value: l.value || 1 }));
-
-    const colorScale = d3.scaleOrdinal<string>(d3.schemeCategory10);
-
-    const linkWidth = d3.scaleLinear<number>()
-      .domain([0, d3.max(links, d => d.value) || 1])
-      .range([0.5, 3]);
-
-    const nodeRadius = d3.scaleLinear<number>()
-      .domain([0, d3.max(nodes, d => d.count) || 1])
-      .range([5, 22]);
-
-    linkLinesRef.current = g.append('g')
-      .selectAll('line')
-      .data(links)
-      .join('line')
-      .attr('stroke', '#ddd')
-      .attr('stroke-opacity', 0.6)
-      .attr('stroke-width', d => linkWidth(d.value));
-
-    const nodeGroup = g.append('g')
-      .selectAll('g')
-      .data(nodes)
-      .join('g')
-      .style('cursor', 'pointer')
-      .on('click', (event, d) => {
-        event.stopPropagation();
-        const papers = d.group === 'author' ? d.count : undefined;
-        const count = d.group === 'keyword' ? d.count : undefined;
-        setInfoNode({
-          id: d.id,
-          name: d.name,
-          group: d.group,
-          papers,
-          count,
-        });
-        setHighlightedNodeId(d.id);
-      });
-
-    nodeGroupsRef.current = nodeGroup;
-
-    nodeGroup.append('circle')
-      .attr('r', d => nodeRadius(d.count))
-      .attr('fill', d => colorScale(d.group + d.id))
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 1.5);
-
-    nodeGroup.append('text')
-      .text(d => d.name.length > 8 ? d.name.slice(0, 8) + '...' : d.name)
-      .attr('font-size', d => Math.max(8, nodeRadius(d.count) * 0.3))
-      .attr('dx', 0)
-      .attr('dy', '0.3em')
-      .attr('text-anchor', 'middle')
-      .attr('fill', '#333')
-      .attr('pointer-events', 'none');
-
-    const simulation = d3.forceSimulation<SimNode>(nodes)
-      .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-200))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => nodeRadius((d as SimNode).count) + 2));
-
-    simulation.on('tick', () => {
-      g.selectAll<SVGLineElement, SimLink>('line')
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
-
-      nodeGroup.attr('transform', d => `translate(${d.x},${d.y})`);
-    });
-
-    return () => {
-      simulation.stop();
-      nodeGroupsRef.current = null;
-      linkLinesRef.current = null;
-    };
-  }, [data]);
-
-  useEffect(() => {
-    if (!nodeGroupsRef.current || !linkLinesRef.current) return;
-
-    const nodeGroups = nodeGroupsRef.current as d3.Selection<d3.BaseType, SimNode, SVGGElement, unknown>;
-    const linkLines = linkLinesRef.current as d3.Selection<d3.BaseType, SimLink, SVGGElement, unknown>;
-    const connectedIds = new Set(connectedNodes.map(n => n.id));
-
-    nodeGroups
-      .selectAll<SVGCircleElement, SimNode>('circle')
-      .transition()
-      .duration(300)
-      .attr('opacity', (d: SimNode) => {
-        if (!highlightedNodeId) return 1;
-        if (d.id === highlightedNodeId) return 1;
-        if (connectedIds.has(d.id)) return 0.85;
-        return 0.15;
-      });
-
-    nodeGroups
-      .selectAll<SVGTextElement, SimNode>('text')
-      .transition()
-      .duration(300)
-      .attr('opacity', (d: SimNode) => {
-        if (!highlightedNodeId) return 1;
-        if (d.id === highlightedNodeId) return 1;
-        if (connectedIds.has(d.id)) return 0.85;
-        return 0.1;
-      });
-
-    linkLines
-      .transition()
-      .duration(300)
-      .attr('stroke-opacity', (d: SimLink) => {
-        if (!highlightedNodeId) return 0.6;
-        const sId = (d.source as SimNode).id;
-        const tId = (d.target as SimNode).id;
-        if (sId === highlightedNodeId || tId === highlightedNodeId) return 0.8;
-        return 0.05;
-      })
-      .attr('stroke', (d: SimLink) => {
-        if (!highlightedNodeId) return '#ddd';
-        const sId = (d.source as SimNode).id;
-        const tId = (d.target as SimNode).id;
-        if (sId === highlightedNodeId || tId === highlightedNodeId) return '#4f46e5';
-        return '#ddd';
-      });
-  }, [highlightedNodeId, connectedNodes]);
-
-  const handleZoomIn = () => {
-    if (svgRef.current) {
-      d3.select(svgRef.current).transition().duration(300).call(
-        d3.zoom<SVGSVGElement, unknown>().on('zoom', () => {}).scaleBy, 1.3
-      );
+      return;
     }
-  };
-
-  const handleZoomOut = () => {
-    if (svgRef.current) {
-      d3.select(svgRef.current).transition().duration(300).call(
-        d3.zoom<SVGSVGElement, unknown>().on('zoom', () => {}).scaleBy, 0.7
-      );
-    }
-  };
-
-  const handleReset = () => {
-    if (svgRef.current) {
-      d3.select(svgRef.current).transition().duration(500).call(
-        d3.zoom<SVGSVGElement, unknown>().transform as any, d3.zoomIdentity.translate(0, 0).scale(1)
-      );
-    }
-  };
+    setInfoNode(node);
+    setHighlightedNodeId(node.id);
+  }, []);
 
   const handleConnectedNodeClick = (node: ConnectedNode) => {
     setInfoNode({
@@ -298,6 +114,16 @@ export default function NetworkPage() {
       count: node.group === 'keyword' ? node.count : undefined,
     });
     setHighlightedNodeId(node.id);
+  };
+
+  const handleNavigateToNode = (node: ConnectedNode) => {
+    const searchField = node.group === 'keyword' ? 'keyword' : 'author';
+    router.push(`/search?search=${encodeURIComponent(node.name)}&search_field=${searchField}`);
+  };
+
+  const handleClearHighlight = () => {
+    setHighlightedNodeId(null);
+    setInfoNode(null);
   };
 
   return (
@@ -344,33 +170,26 @@ export default function NetworkPage() {
         <>
           <div className="bg-white rounded-lg shadow-sm border p-4 mb-4">
             <div className="flex items-center gap-2">
-              <button onClick={handleZoomIn} className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="放大">
-                <ZoomIn className="w-4 h-4 text-gray-500" />
-              </button>
-              <button onClick={handleZoomOut} className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="缩小">
-                <ZoomOut className="w-4 h-4 text-gray-500" />
-              </button>
-              <button onClick={handleReset} className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="重置">
-                <RotateCcw className="w-4 h-4 text-gray-500" />
-              </button>
               {highlightedNodeId && (
                 <button
-                  onClick={() => { setHighlightedNodeId(null); setInfoNode(null); }}
+                  onClick={handleClearHighlight}
                   className="ml-2 px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded-md transition-colors text-gray-600"
                 >
                   清除高亮
                 </button>
               )}
               <span className="ml-4 text-sm text-gray-500">
-                {data?.nodes.length || 0} 个节点, {data?.links.length || 0} 条关系 — 可拖拽缩放
+                {data?.nodes.length || 0} 个节点, {data?.links.length || 0} 条关系 — 鼠标滚轮缩放，拖拽移动
               </span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <div ref={containerRef} className="lg:col-span-3 bg-white rounded-lg shadow-sm border overflow-hidden">
-              <svg ref={svgRef} className="w-full" />
-            </div>
+            <NetworkGraph
+              data={data}
+              highlightedNodeId={highlightedNodeId}
+              onNodeClick={handleNodeClick}
+            />
 
             <div className="bg-white rounded-lg shadow-sm border p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">节点详情</h3>
@@ -407,19 +226,30 @@ export default function NetworkPage() {
                       </span>
                       <div className="space-y-1 max-h-64 overflow-y-auto">
                         {connectedNodes.map(node => (
-                          <button
+                          <div
                             key={node.id}
-                            onClick={() => handleConnectedNodeClick(node)}
-                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs transition-colors hover:bg-gray-50 ${
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs ${
                               highlightedNodeId === node.id ? 'bg-primary-50 ring-1 ring-primary-200' : ''
                             }`}
                           >
-                            <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
-                            <span className="text-gray-700 truncate flex-1">{node.name}</span>
+                            <button
+                              onClick={() => handleConnectedNodeClick(node)}
+                              className="flex items-center gap-2 flex-1 min-w-0 hover:text-primary-600 transition-colors"
+                            >
+                              <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
+                              <span className="text-gray-700 truncate">{node.name}</span>
+                            </button>
+                            <button
+                              onClick={() => handleNavigateToNode(node)}
+                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 rounded transition-colors"
+                              title="查看相关论文"
+                            >
+                              <ExternalLink className="w-3 h-3 text-gray-400 hover:text-primary-600" />
+                            </button>
                             <span className="text-gray-400 flex-shrink-0">
                               {node.linkValue > 1 ? `${node.linkValue}次` : ''}
                             </span>
-                          </button>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -428,7 +258,7 @@ export default function NetworkPage() {
                   <div className="pt-2 border-t border-gray-100 mt-2">
                     <span className="text-gray-400 block text-xs">提示</span>
                     <span className="text-gray-500 text-xs">
-                      点击关联节点可切换查看。点击空白处或"清除高亮"恢复全局视图。
+                      点击关联节点可切换查看。点击 <ExternalLink className="w-2.5 h-2.5 inline-block text-gray-400" /> 可跳转搜索相关论文。点击空白处或"清除高亮"恢复全局视图。
                     </span>
                   </div>
                 </div>

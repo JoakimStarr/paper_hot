@@ -1,7 +1,7 @@
 import logging
 import re
 from typing import List, Optional, Tuple
-from sqlalchemy import select, and_, desc, func, String, or_
+from sqlalchemy import select, and_, desc, func, String, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
@@ -81,9 +81,19 @@ class PaperCRUD:
             if search_field == "title":
                 query = query.where(Paper.title.ilike(keyword))
             elif search_field == "author":
-                query = query.where(Paper.authors.cast(String).ilike(keyword))
+                author_subq = select(text("p.id")).select_from(
+                    text("papers p, json_each(p.authors)")
+                ).where(
+                    text("json_each.value = :author_name")
+                )
+                query = query.where(Paper.id.in_(author_subq)).params(author_name=search)
             elif search_field == "keyword":
-                query = query.where(Paper.keywords_cn.cast(String).ilike(keyword))
+                kw_subq = select(text("p.id")).select_from(
+                    text("papers p, json_each(p.keywords_cn)")
+                ).where(
+                    text("json_each.value LIKE :kw_pattern")
+                )
+                query = query.where(Paper.id.in_(kw_subq)).params(kw_pattern=keyword)
             elif search_field == "abstract":
                 query = query.where(Paper.abstract.ilike(keyword))
             else:
@@ -105,13 +115,22 @@ class PaperCRUD:
             query = query.where(Paper.published_at >= cutoff_date)
         
         if discipline:
-            query = query.where(Paper.discipline == discipline)
+            if ',' in discipline:
+                query = query.where(Paper.discipline.in_(discipline.split(',')))
+            else:
+                query = query.where(Paper.discipline == discipline)
         
         if economics_subfield:
-            query = query.where(Paper.economics_subfield == economics_subfield)
+            if ',' in economics_subfield:
+                query = query.where(Paper.economics_subfield.in_(economics_subfield.split(',')))
+            else:
+                query = query.where(Paper.economics_subfield == economics_subfield)
         
         if journal_name:
-            query = query.where(Paper.journal_name == journal_name)
+            if ',' in journal_name:
+                query = query.where(Paper.journal_name.in_(journal_name.split(',')))
+            else:
+                query = query.where(Paper.journal_name == journal_name)
         
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
@@ -325,6 +344,74 @@ class PaperCRUD:
             "total_papers": sum(discipline_counts.values()) if discipline_counts else 0
         }
     
+    CNKI_SUBJECT_MAP = {
+        '金融': '金融经济学',
+        '证券': '金融经济学',
+        '投资': '金融经济学',
+        '保险': '金融经济学',
+        '货币': '金融经济学',
+        '银行': '金融经济学',
+        '财政与税收': '宏观经济学',
+        '宏观经济管理': '宏观经济学',
+        '经济体制改革': '宏观经济学',
+        '经济理论': '宏观经济学',
+        '行政学': '宏观经济学',
+        '工业经济': '产业经济学',
+        '交通运输经济': '产业经济学',
+        '旅游经济': '产业经济学',
+        '文化经济': '产业经济学',
+        '服务业经济': '产业经济学',
+        '信息经济': '产业经济学',
+        '邮电经济': '产业经济学',
+        '企业经济': '微观经济学',
+        '管理学': '微观经济学',
+        '市场研究与信息': '微观经济学',
+        '教育经济与管理': '微观经济学',
+        '人才学与劳动科学': '微观经济学',
+        '贸易经济': '国际经济学',
+        '国际经济': '国际经济学',
+        '农业经济': '发展经济学',
+        '农村经济': '发展经济学',
+        '区域经济': '发展经济学',
+        '环境科学': '发展经济学',
+        '资源利用': '发展经济学',
+        '人口学': '发展经济学',
+        '社会学及统计学': '计量经济学',
+        '数学': '计量经济学',
+        '统计学': '计量经济学',
+        '审计': '金融经济学',
+        '经济法': '宏观经济学',
+        '会计': '微观经济学',
+        '马克思主义': '宏观经济学',
+        '中国共产党': '宏观经济学',
+        '政治学': '宏观经济学',
+        '法理': '宏观经济学',
+        '民商法': '微观经济学',
+        '国际法': '国际经济学',
+    }
+
+    JOURNAL_SUBFIELD_MAP = {
+        '经济研究': '宏观经济学',
+        '南开管理评论': '微观经济学',
+        '中国工业经济': '产业经济学',
+        '改革': '宏观经济学',
+        '管理世界': '微观经济学',
+        '数量经济技术经济研究': '计量经济学',
+        '中国农村经济': '发展经济学',
+        '经济管理': '微观经济学',
+        '农业经济问题': '发展经济学',
+        '财经研究': '金融经济学',
+    }
+
+    @staticmethod
+    def _map_cnki_subject_to_subfield(cnki_subject: str) -> Optional[str]:
+        if not cnki_subject:
+            return None
+        for key, subfield in PaperCRUD.CNKI_SUBJECT_MAP.items():
+            if key in cnki_subject:
+                return subfield
+        return None
+
     @staticmethod
     async def create_paper_from_cnki(db: AsyncSession, paper_data: dict) -> Optional[Paper]:
         """从CNKI数据创建论文"""
@@ -338,6 +425,31 @@ class PaperCRUD:
             authors = paper_data.get('authors', [])
             keywords = paper_data.get('keywords', [])
             
+            if isinstance(authors, str):
+                try:
+                    authors = json.loads(authors)
+                except (json.JSONDecodeError, TypeError):
+                    authors = []
+            if isinstance(keywords, str):
+                try:
+                    keywords = json.loads(keywords)
+                except (json.JSONDecodeError, TypeError):
+                    keywords = []
+            
+            # Clean author names
+            import re as _re
+            cleaned_authors = []
+            for a in authors:
+                if not isinstance(a, str):
+                    continue
+                a = a.strip().rstrip(',').rstrip('，').strip()
+                a = _re.sub(r'[\w.+-]+@[\w.+-]+', '', a)
+                a = _re.sub(r'@\.com', '', a)
+                a = _re.sub(r'\s+', '', a)
+                if a and len(a) >= 2 and _re.search(r'[\u4e00-\u9fff]', a) and not _re.search(r'[@]', a):
+                    cleaned_authors.append(a)
+            authors = cleaned_authors
+            
             if not authors or len(authors) == 0:
                 logger.warning(f"Skipping paper (no authors): {paper_data['title'][:50]}...")
                 return None
@@ -348,6 +460,7 @@ class PaperCRUD:
             
             year = paper_data.get('year', datetime.now().year)
             journal_issue = paper_data.get('journal_issue')
+            journal_name = paper_data.get('journal_name', '')
             
             if journal_issue:
                 issue_match = re.search(r'第(\d+)期', journal_issue)
@@ -359,6 +472,11 @@ class PaperCRUD:
                     published_at = datetime(year, 1, 1)
             else:
                 published_at = datetime(year, 1, 1)
+
+            cnki_subject = paper_data.get('subject', '')
+            economics_subfield = PaperCRUD._map_cnki_subject_to_subfield(cnki_subject)
+            if not economics_subfield:
+                economics_subfield = PaperCRUD.JOURNAL_SUBFIELD_MAP.get(journal_name)
             
             db_paper = Paper(
                 title=paper_data['title'],
@@ -370,8 +488,10 @@ class PaperCRUD:
                 venue=paper_data.get('journal_name', ''),
                 published_at=published_at,
                 discipline=paper_data.get('discipline', '经济学'),
-                journal_name=paper_data.get('journal_name', ''),
+                journal_name=journal_name,
                 journal_issue=journal_issue,
+                economics_subfield=economics_subfield,
+                cnki_subject=cnki_subject or None,
                 keywords_cn=keywords
             )
             

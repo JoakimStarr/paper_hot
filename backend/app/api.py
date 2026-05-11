@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends, Query, HTTPException, Body, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, Body, Request, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
@@ -9,6 +9,7 @@ import hashlib
 import json
 
 from app.database import get_db
+from app.config import settings
 from app.schemas import (PaperResponse, PaperListResponse,
                          PaperCardResponse, PaperCardListResponse,
                          TrendingTopicsResponse, TrendingTopic,
@@ -18,6 +19,13 @@ from app.schemas import (PaperResponse, PaperListResponse,
 from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD, PaperSimilarityCRUD, PaperChatCRUD
 from app.ai_processor import TrendAnalyzer
 from app.fetchers import VenueDataFetcher
+
+
+async def verify_token(x_api_token: str = Header(default=None)):
+    if settings.api_token and settings.api_token != "":
+        if x_api_token is None or x_api_token != settings.api_token:
+            raise HTTPException(status_code=401, detail="Invalid or missing API token")
+    return True
 from app.ai_service import ai_trend_service
 from app.glm_analyzer import glm_analyzer
 from app.config import settings
@@ -55,16 +63,24 @@ class AIAnalysisV2Response(BaseModel):
     running_report_id: Optional[int] = None
 
 
+def _clean_author_name(name: str) -> str:
+    import re
+    name = name.strip().rstrip(',').rstrip('，').strip()
+    name = re.sub(r'[\w.+-]+@[\w.+-]+', '', name)
+    name = re.sub(r'@\.com', '', name)
+    name = re.sub(r'\s+', '', name)
+    return name
+
 def _parse_json_list(value):
     if value is None:
         return []
     if isinstance(value, list):
-        return value
+        return [_clean_author_name(str(v)) for v in value if v and str(v).strip()]
     if isinstance(value, str):
         try:
             parsed = json.loads(value)
             if isinstance(parsed, list):
-                return parsed
+                return [_clean_author_name(str(v)) for v in parsed if v and str(v).strip()]
         except (json.JSONDecodeError, TypeError):
             pass
     return []
@@ -194,70 +210,56 @@ async def get_filter_statistics(db: AsyncSession = Depends(get_db)):
 
 @router.get("/stats")
 async def get_system_stats(db: AsyncSession = Depends(get_db)):
-    from sqlalchemy import func
-    from sqlalchemy import select as sa_select
-    from app.models import Paper, CrawlLog
-    import datetime as dt
+    from sqlalchemy import text as sa_text
 
     try:
-        total_papers_result = await db.execute(sa_select(func.count()).select_from(Paper))
-        total_papers = total_papers_result.scalar()
+        result = await db.execute(sa_text("""
+            SELECT
+                (SELECT COUNT(*) FROM papers) AS total_papers,
+                (SELECT COUNT(DISTINCT journal_name) FROM papers WHERE journal_name IS NOT NULL) AS journal_count,
+                (SELECT COUNT(DISTINCT keywords_cn) FROM papers WHERE keywords_cn IS NOT NULL) AS keyword_count,
+                (SELECT created_at FROM papers ORDER BY created_at DESC LIMIT 1) AS latest_created_at,
+                (SELECT created_at FROM crawl_logs ORDER BY created_at DESC LIMIT 1) AS latest_crawl_at
+        """))
+        row = result.fetchone()
+        total_papers = row[0]
+        journal_count = row[1]
+        keyword_count = row[2]
+        latest_created_at = row[3]
+        latest_crawl_at = row[4]
 
-        journal_count_result = await db.execute(
-            sa_select(func.count(func.distinct(Paper.journal_name)))
-            .where(Paper.journal_name.isnot(None))
-        )
-        journal_count = journal_count_result.scalar()
-
-        author_count_result = await db.execute(
-            sa_select(func.count(func.distinct(Paper.keywords_cn)))
-            .where(Paper.keywords_cn.isnot(None))
-        )
-        keyword_count = author_count_result.scalar()
-
-        latest_paper_result = await db.execute(
-            sa_select(Paper.created_at).order_by(Paper.created_at.desc()).limit(1)
-        )
-        latest_created_at = latest_paper_result.scalar()
-
-        latest_crawl_result = await db.execute(
-            sa_select(CrawlLog.created_at).order_by(CrawlLog.created_at.desc()).limit(1)
-        )
-        latest_crawl_at = latest_crawl_result.scalar()
-
-        sources_result = await db.execute(
-            sa_select(Paper.source, func.count(Paper.id))
-            .group_by(Paper.source)
-        )
-        source_counts = {row[0]: row[1] for row in sources_result}
-
-        years_result = await db.execute(
-            sa_select(func.substr(Paper.published_at, 1, 4), func.count(Paper.id))
-            .where(Paper.published_at.isnot(None))
-            .group_by(func.substr(Paper.published_at, 1, 4))
-            .order_by(func.substr(Paper.published_at, 1, 4).desc())
-        )
+        result = await db.execute(sa_text("""
+            SELECT 'source' AS kind, source AS key, COUNT(*) AS cnt FROM papers GROUP BY source
+            UNION ALL
+            SELECT 'year' AS kind, CAST(SUBSTR(published_at, 1, 4) AS TEXT) AS key, COUNT(*) AS cnt
+            FROM papers WHERE published_at IS NOT NULL GROUP BY SUBSTR(published_at, 1, 4)
+        """))
+        source_counts = {}
         year_counts = {}
-        for row in years_result:
-            year_counts[row[0]] = row[1]
+        for row in result:
+            if row[0] == 'source':
+                source_counts[row[1]] = row[2]
+            else:
+                year_counts[row[1]] = row[2]
 
-        journals_result = await db.execute(
-            sa_select(Paper.journal_name, func.count(Paper.id))
-            .where(Paper.journal_name.isnot(None))
-            .group_by(Paper.journal_name)
-            .order_by(func.count(Paper.id).desc())
-            .limit(10)
-        )
+        result = await db.execute(sa_text("""
+            SELECT journal_name, COUNT(*) AS cnt
+            FROM papers
+            WHERE journal_name IS NOT NULL
+            GROUP BY journal_name
+            ORDER BY cnt DESC
+            LIMIT 10
+        """))
         top_journals = {}
-        for row in journals_result:
+        for row in result:
             top_journals[row[0]] = row[1]
 
         return {
             "total_papers": total_papers,
             "journal_count": journal_count,
             "keyword_count": keyword_count,
-            "latest_paper_at": latest_created_at.isoformat() if latest_created_at else None,
-            "latest_crawl_at": latest_crawl_at.isoformat() if latest_crawl_at else None,
+            "latest_paper_at": str(latest_created_at) if latest_created_at else None,
+            "latest_crawl_at": str(latest_crawl_at) if latest_crawl_at else None,
             "source_counts": source_counts,
             "year_counts": year_counts,
             "top_journals": top_journals,
@@ -272,37 +274,48 @@ async def get_author_network(
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import select as sa_select, func
-    from app.models import Paper
+    from sqlalchemy import select as sa_select
+    from app.models import Paper as PaperModel
 
     result = await db.execute(
-        sa_select(Paper.id, Paper.title, Paper.authors)
-        .where(Paper.authors.isnot(None))
-        .order_by(Paper.published_at.desc())
+        sa_select(PaperModel.id, PaperModel.authors)
+        .where(PaperModel.authors.isnot(None))
+        .order_by(PaperModel.published_at.desc())
         .limit(limit)
     )
+    papers = result.all()
 
-    nodes_map = {}
-    links_map = {}
+    author_papers: dict[str, int] = {}
+    paper_authors: list[list[str]] = []
 
-    for row in result:
-        paper_id, title, authors = row
-        names = authors if authors else []
-        for name in names:
-            if name and name not in nodes_map:
-                nodes_map[name] = {"id": name, "name": name, "papers": 0, "group": "author"}
-            if name:
-                nodes_map[name]["papers"] += 1
+    for paper in papers:
+        authors: list[str] = _parse_json_list(paper.authors)
+        cleaned: list[str] = []
+        for author in authors:
+            author = author.strip().rstrip(',')
+            if not author or '@' in author:
+                continue
+            cleaned.append(author)
+            author_papers[author] = author_papers.get(author, 0) + 1
+        paper_authors.append(cleaned)
 
-        for i in range(len(names)):
-            for j in range(i + 1, len(names)):
-                pair = tuple(sorted([names[i], names[j]]))
-                if pair not in links_map:
-                    links_map[pair] = {"source": pair[0], "target": pair[1], "value": 0}
-                links_map[pair]["value"] += 1
+    sorted_authors = sorted(author_papers.items(), key=lambda x: x[1], reverse=True)[:100]
+    nodes = [{"id": name, "name": name, "papers": count, "group": "author"} for name, count in sorted_authors]
 
-    nodes = [v for v in nodes_map.values() if v["papers"] >= 1][:100]
-    links = list(links_map.values())[:300]
+    author_index = {name: idx for idx, (name, _) in enumerate(sorted_authors)}
+    link_counts: dict[tuple[str, str], int] = {}
+    for authors in paper_authors:
+        for i in range(len(authors)):
+            for j in range(i + 1, len(authors)):
+                a, b = authors[i], authors[j]
+                if a in author_index and b in author_index:
+                    key = (a, b) if a < b else (b, a)
+                    link_counts[key] = link_counts.get(key, 0) + 1
+
+    links = sorted(
+        [{"source": k[0], "target": k[1], "value": v} for k, v in link_counts.items()],
+        key=lambda x: x["value"], reverse=True
+    )[:300]
 
     return {"nodes": nodes, "links": links}
 
@@ -401,7 +414,7 @@ async def _collect_papers_and_keywords(db: AsyncSession) -> tuple:
     from app.models import Paper, TopicTrend
 
     result = await db.execute(
-        select(Paper).order_by(Paper.published_at.desc())
+        select(Paper).order_by(Paper.published_at.desc()).limit(500)
     )
     papers = result.scalars().all()
 
@@ -686,7 +699,8 @@ async def get_ai_analysis_report(
 @router.post("/crawl/start", response_model=CrawlStartResponse)
 async def start_crawl(
     request: CrawlStartRequest = Body(default=CrawlStartRequest()),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token)
 ):
     try:
         active_crawl = await CrawlLogCRUD.get_active_crawl(db)
@@ -723,7 +737,7 @@ async def get_crawl_status(
 
 
 @router.post("/update-trend-scores")
-async def update_trend_scores(db: AsyncSession = Depends(get_db)):
+async def update_trend_scores(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
     """手动触发趋势分数更新"""
     try:
         await PaperCRUD.bulk_update_paper_trend_scores(db)
@@ -902,7 +916,7 @@ async def save_chat_messages(paper_id: str, body: ChatSaveRequest, db: AsyncSess
 
 
 @router.post("/papers/{paper_id}/recompute-similarities")
-async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends(get_db)):
+async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
@@ -917,29 +931,209 @@ async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends
 
 
 @router.post("/recompute-all-similarities")
-async def recompute_all_similarities(db: AsyncSession = Depends(get_db)):
+async def recompute_all_similarities(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
     from sqlalchemy import select
     from app.models import Paper
     from app.similarity import compute_all_similarities
 
     try:
-        result = await db.execute(select(Paper.id, Paper.abstract))
-        all_papers = [(r[0], r[1]) for r in result.all()]
+        batch_size = 200
+        offset = 0
+        all_pairs = []
 
-        if len(all_papers) < 2:
+        while True:
+            result = await db.execute(
+                select(Paper.id, Paper.abstract)
+                .order_by(Paper.id)
+                .offset(offset)
+                .limit(batch_size)
+            )
+            batch = [(r[0], r[1]) for r in result.all()]
+            if not batch:
+                break
+
+            if len(batch) >= 2:
+                similarities = compute_all_similarities(batch)
+                all_pairs.extend(similarities)
+
+            offset += batch_size
+
+        if len(all_pairs) == 0:
             return {"status": "skipped", "message": "Need at least 2 papers", "pairs": 0}
-
-        similarities = compute_all_similarities(all_papers)
 
         await PaperSimilarityCRUD.clear_all(db)
         await db.flush()
 
         from app.models import PaperSimilarity
-        for id_a, id_b, score in similarities:
+        for id_a, id_b, score in all_pairs:
             sim = PaperSimilarity(paper_id_a=id_a, paper_id_b=id_b, similarity_score=score)
             db.add(sim)
 
         await db.commit()
-        return {"status": "success", "message": f"Computed {len(similarities)} pairs"}
+        return {"status": "success", "message": f"Computed {len(all_pairs)} pairs"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recompute all failed: {str(e)}")
+
+
+@router.get("/authors/{author_name:path}/papers")
+async def get_author_papers(
+    author_name: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import text as sa_text
+
+    count_result = await db.execute(
+        sa_text("""
+            SELECT COUNT(DISTINCT p.id)
+            FROM papers p, json_each(p.authors)
+            WHERE p.authors IS NOT NULL AND json_each.value = :author_name
+        """),
+        {"author_name": author_name}
+    )
+    total = count_result.scalar() or 0
+
+    offset = (page - 1) * page_size
+
+    result = await db.execute(
+        sa_text("""
+            SELECT DISTINCT p.id, p.title, p.abstract, p.authors, p.url, p.source, p.venue,
+                   p.journal_name, p.journal_issue, p.economics_subfield, p.doi,
+                   p.keywords_cn, p.published_at, p.created_at,
+                   pf.topic,
+                   ps.recency_score, ps.venue_score, ps.trend_score, ps.final_score
+            FROM papers p, json_each(p.authors)
+            LEFT JOIN paper_features pf ON pf.paper_id = p.id
+            LEFT JOIN paper_scores ps ON ps.paper_id = p.id
+            WHERE p.authors IS NOT NULL AND json_each.value = :author_name
+            ORDER BY p.published_at DESC
+            LIMIT :limit OFFSET :offset
+        """),
+        {"author_name": author_name, "limit": page_size, "offset": offset}
+    )
+    rows = result.fetchall()
+
+    cards = []
+    for row in rows:
+        cards.append({
+            "id": row[0],
+            "title": row[1],
+            "abstract": row[2],
+            "authors": _parse_json_list(row[3]),
+            "url": row[4],
+            "source": row[5],
+            "venue": row[6],
+            "journal_name": row[7],
+            "journal_issue": row[8],
+            "economics_subfield": row[9],
+            "doi": row[10],
+            "keywords_cn": _parse_json_list(row[11]),
+            "published_at": row[12],
+            "created_at": str(row[13]) if row[13] else "",
+            "topic": row[14],
+            "recency_score": float(row[15] or 0),
+            "venue_score": float(row[16] or 0),
+            "trend_score": float(row[17] or 0),
+            "final_score": float(row[18] or 0),
+        })
+
+    return {
+        "papers": cards,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_next": offset + page_size < total,
+        "author_name": author_name
+    }
+
+
+@router.get("/search/suggest")
+async def search_suggest(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(8, ge=1, le=20),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import text as sa_text
+    from app.models import Paper as PaperModel
+    from sqlalchemy import select as sa_select
+
+    suggestions: list[dict] = []
+    half = max(limit // 3, 2)
+
+    try:
+        kw_result = await db.execute(
+            sa_text("""
+                SELECT kw, COUNT(*) as cnt FROM (
+                    SELECT value as kw FROM papers, json_each(keywords_cn)
+                    WHERE keywords_cn IS NOT NULL
+                )
+                WHERE kw LIKE :pattern AND length(kw) > 1
+                GROUP BY kw ORDER BY cnt DESC LIMIT :lim
+            """),
+            {"pattern": f"%{q}%", "lim": half}
+        )
+        for row in kw_result:
+            val = str(row[0])
+            if not val.startswith('[') and not val.startswith('"') and val.strip():
+                suggestions.append({"text": val, "type": "keyword", "count": row[1]})
+    except Exception:
+        pass
+
+    try:
+        author_result = await db.execute(
+            sa_text("""
+                SELECT author_name, COUNT(*) as cnt FROM (
+                    SELECT value as author_name FROM papers, json_each(authors)
+                    WHERE authors IS NOT NULL
+                )
+                WHERE author_name LIKE :pattern AND length(author_name) > 1
+                GROUP BY author_name ORDER BY cnt DESC LIMIT :lim
+            """),
+            {"pattern": f"%{q}%", "lim": half}
+        )
+        for row in author_result:
+            val = str(row[0])
+            if val.strip() and not val.startswith('[') and not val.startswith('"'):
+                suggestions.append({"text": val, "type": "author", "count": row[1]})
+    except Exception:
+        pass
+
+    try:
+        title_result = await db.execute(
+            sa_select(PaperModel.title)
+            .where(PaperModel.title.ilike(f"%{q}%"))
+            .limit(half)
+        )
+        for row in title_result:
+            t = row[0]
+            if t and t.strip():
+                suggestions.append({"text": t[:80], "type": "title", "count": 0})
+    except Exception:
+        pass
+
+    return {"suggestions": suggestions[:limit]}
+
+
+@router.get("/subfield-distribution")
+async def get_subfield_distribution(
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import select as sa_select, func
+    from app.models import Paper as PaperModel
+
+    result = await db.execute(
+        sa_select(
+            PaperModel.economics_subfield,
+            func.count(PaperModel.id)
+        )
+        .where(PaperModel.economics_subfield.isnot(None))
+        .group_by(PaperModel.economics_subfield)
+        .order_by(func.count(PaperModel.id).desc())
+    )
+
+    distribution = [
+        {"subfield": row[0], "count": row[1]}
+        for row in result
+    ]
+    return {"distribution": distribution}

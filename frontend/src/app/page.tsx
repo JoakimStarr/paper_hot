@@ -6,13 +6,13 @@ import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
 import Pagination from '@/components/Pagination';
+import SkeletonCard from '@/components/SkeletonCard';
 import { papersApi } from '@/lib/api';
 import { PaperCardListResponse, PaperCard as PaperCardType } from '@/types/paper';
 import { Loader2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { getCache, setCache, buildCacheKey } from '@/lib/cache';
+import { getCache, setCache, buildCacheKey, getBookmarks } from '@/lib/cache';
 
-const PAGE_SIZE = 20;
 const INITIAL_PREFETCH = 3;
 
 export default function HomePage() {
@@ -38,20 +38,22 @@ function HomePageInner() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [queryKey, setQueryKey] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
   const pageCache = useRef<Map<number, PaperCardType[]>>(new Map());
   const fetchedTotalRef = useRef<number>(0);
   const prefetchedRef = useRef(false);
 
   const [minScore, setMinScore] = useState<number | null>(null);
-  const [selectedDiscipline, setSelectedDiscipline] = useState<string | null>(null);
-  const [selectedJournal, setSelectedJournal] = useState<string | null>(null);
+  const [selectedTopic, setSelectedTopic] = useState<string[]>([]);
+  const [selectedJournal, setSelectedJournal] = useState<string[]>([]);
+  const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
 
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
 
   useEffect(() => {
     const journal = searchParams.get('journal');
-    if (journal) setSelectedJournal(journal);
+    if (journal) setSelectedJournal([journal]);
   }, []);
 
   useEffect(() => {
@@ -59,26 +61,26 @@ function HomePageInner() {
     pageCache.current.clear();
     prefetchedRef.current = false;
     setQueryKey(k => k + 1);
-  }, [sortBy, sortOrder, minScore, selectedDiscipline, selectedJournal]);
+  }, [sortBy, sortOrder, minScore, selectedTopic, selectedJournal, pageSize]);
 
   const buildParams = useCallback((p: number) => ({
     page: p,
-    page_size: PAGE_SIZE,
+    page_size: pageSize,
     min_score: minScore || undefined,
-    discipline: selectedDiscipline || undefined,
-    journal_name: selectedJournal || undefined,
+    economics_subfield: selectedTopic.length > 0 ? selectedTopic.join(',') : undefined,
+    journal_name: selectedJournal.length > 0 ? selectedJournal.join(',') : undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-  }), [minScore, selectedDiscipline, selectedJournal, sortBy, sortOrder]);
+  }), [minScore, selectedTopic, selectedJournal, sortBy, sortOrder, pageSize]);
 
   const applyResponse = useCallback((response: PaperCardListResponse, p: number) => {
     setPapers(response.papers);
     setTotal(response.total);
-    setTotalPages(Math.ceil(response.total / PAGE_SIZE));
+    setTotalPages(Math.ceil(response.total / pageSize));
     setPage(p);
     pageCache.current.set(p, response.papers);
     fetchedTotalRef.current = response.total;
-  }, []);
+  }, [pageSize]);
 
   const fetchPage = useCallback(async (p: number) => {
     const params = buildParams(p);
@@ -109,7 +111,7 @@ function HomePageInner() {
         if (!cancelled) {
           setPapers(cached);
           setTotal(fetchedTotalRef.current);
-          setTotalPages(Math.ceil(fetchedTotalRef.current / PAGE_SIZE));
+          setTotalPages(Math.ceil(fetchedTotalRef.current / pageSize));
           setLoading(false);
         }
         return;
@@ -128,9 +130,16 @@ function HomePageInner() {
 
       if (page === 1 && !prefetchedRef.current && !cancelled) {
         prefetchedRef.current = true;
-        const pagesLeft = Math.min(INITIAL_PREFETCH, Math.ceil(fetchedTotalRef.current / PAGE_SIZE));
-        for (let p = 2; p <= pagesLeft; p++) {
-          fetchPage(p).catch(() => {});
+        const pagesLeft = Math.min(INITIAL_PREFETCH, Math.ceil(fetchedTotalRef.current / pageSize));
+        if (pagesLeft >= 3) {
+          Promise.all([
+            fetchPage(2).catch(() => {}),
+            fetchPage(3).catch(() => {}),
+          ]);
+        } else {
+          for (let p = 2; p <= pagesLeft; p++) {
+            fetchPage(p).catch(() => {});
+          }
         }
       }
     };
@@ -145,6 +154,22 @@ function HomePageInner() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+    pageCache.current.clear();
+  };
+
+  const displayedPapers = showBookmarksOnly
+    ? papers.filter(p => getBookmarks().includes(p.id))
+    : papers;
+  const displayedTotal = showBookmarksOnly ? displayedPapers.length : total;
+  const displayedTotalPages = showBookmarksOnly ? Math.ceil(displayedPapers.length / pageSize) : totalPages;
+
+  const pagedPapers = showBookmarksOnly
+    ? displayedPapers.slice((page - 1) * pageSize, page * pageSize)
+    : papers;
+
   return (
     <Layout>
       <div className="mb-6">
@@ -158,25 +183,29 @@ function HomePageInner() {
 
       <Filters
         minScore={minScore}
-        selectedDiscipline={selectedDiscipline}
+        selectedTopic={selectedTopic}
         selectedJournal={selectedJournal}
         sortBy={sortBy}
         sortOrder={sortOrder}
+        showBookmarksOnly={showBookmarksOnly}
         onMinScoreChange={(v) => setMinScore(v)}
-        onDisciplineChange={(v) => setSelectedDiscipline(v)}
+        onTopicChange={(v) => setSelectedTopic(v)}
         onJournalChange={(v) => setSelectedJournal(v)}
         onSortByChange={(v) => setSortBy(v)}
         onSortOrderToggle={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+        onBookmarksChange={(v) => setShowBookmarksOnly(v)}
       />
 
       {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="grid grid-cols-1 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
         </div>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-6">
-            {papers.map((paper) => (
+            {pagedPapers.map((paper) => (
               <PaperCard key={paper.id} paper={paper} />
             ))}
           </div>
@@ -190,10 +219,11 @@ function HomePageInner() {
           {total > 0 && (
             <Pagination
               currentPage={page}
-              totalPages={totalPages}
-              totalItems={total}
-              pageSize={PAGE_SIZE}
+              totalPages={showBookmarksOnly ? displayedTotalPages : totalPages}
+              totalItems={showBookmarksOnly ? displayedTotal : total}
+              pageSize={pageSize}
               onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
             />
           )}
         </>

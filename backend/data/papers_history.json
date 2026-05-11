@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-10T20:07:33.950787",
+  "last_updated": "2026-05-10T20:24:13.566615",
   "papers": {
     "中国工业经济": {
       "2026": {
@@ -6823,6 +6823,1454 @@
             {
               "title": "技术技能人才的工匠精神研究述评",
               "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wDnpnVagQWpp32HcO-XcYY2ZC6iQHREw15PmO8vvdDPo51IX5GGsuOECukwu9Aud7QsUfpwl0dlpESYzWyWIa8z61vVvPSaWoTNoncGOD96LQyowwMQL2zBwzz1cmOerEgjBvLDiYWlex00Z8y-TU2qseN7quia5RqrslTQbEUBg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        }
+      }
+    },
+    "农业经济问题": {
+      "2025": {
+        "12": {
+          "last_crawled": "2026-05-10T20:18:37.074274",
+          "papers": [
+            {
+              "title": "加快农业农村现代化，扎实推进乡村全面振兴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zEbzPXeddeoL4khMGwcrZqX1t9o5oDAQgAHY35wB29d6aLsS4EmRcaomoTMgfO3MpRChOHrmtD-wWp2WkPGRIG3qv9BzP6VoTjJMLyOSQ4-L3SQ8NsfD9JW9x4gH9e3dkCBbbHiqW_3iEMiOa4uJc6nNAO5IwHgEm90wxK7gJ5Zw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "推动农村基本具备现代生活条件",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zEbzPXeddeoL4khMGwcrZqX1t9o5oDAQgAHY35wB29d6aLsS4EmRca8N4jQycYrH8kXmr3xRXlcX6On-2NpPCJjsVwk6vubqRmKLiz7N2JEoi5oft7IBsCtHhVNoyzj7KBDamdwGFFewxWS7S-LL-gXHszLOkQ9cY5F0bmBpGQHw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "顺应乡村人口发展趋势，扎实推进乡村全面振兴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zJ8GUQH10CRc4-iWancbIXr0JZ41uv-WD-rAfi1wY9W1llWWBNDFx8TdoU_WvnJvnTgBJCLm_t1ClG8Luod8bjCFPT6mH7EXhGKCrNw6-fpCwxL5d7C6MOGh_scRIeboQZDJ9iStBiVT3zA5h4w5XEdhKqOkF59Fm1wF1U377vKQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "在建设现代化农业大产业中加快农业全产业链升级发展",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zJ8GUQH10CRc4-iWancbIXr0JZ41uv-WD-rAfi1wY9W1llWWBNDFx8hL8hfFuVRU9LeM08KF8ZmbCzlC0z_FQvtdzfrffHu1jWCZCvZwcWcgI2q5l5Z-0SejDG1-SLmA1VWx0kqWh1P95oZfVS-2_62titw1KxjlZAiATXEXnFCw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "发展乡村产业仍是确保不发生规模性返贫致贫的关键之举",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zJ8GUQH10CRc4-iWancbIXr0JZ41uv-WD-rAfi1wY9W1llWWBNDFx8Re_lP76dSjc_KY16Y7CE_06DsVfy91iYKRzUav6b6hHz7u1RBzwwsf1G1DVNxTkV1qht8cly-Nv8dD6-xcjgAczrnAzfD78_Bugx-Np4KNuMVSBwSpICPw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "着力提升农业综合生产能力和质量效益",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zJ8GUQH10CRc4-iWancbIXr0JZ41uv-WD-rAfi1wY9W1llWWBNDFx8fCVgcegRmqj6VvYkvdqWuVsU5zTzqbpTn7zid8BlUFyS6vfXTEaZaO7OYTy41ub_E23l6n96NWE4FW5K0av_IxRYl-hrBiOFEy6xDB5KdLt4OzKXQNVmTA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农户差异化需求下的天气指数保险——基于农户、保险公司与政府三方协同的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x2rPaWT5H4yGBRAVha4N0KZ9SnlMmh-_Un63YkD6obF_Ok0Yf8mKmR_vwoGyNEiNVBe2enI0dDaUDmVq2A55cUT8dFYcJDy2zdqxN_QavPEGI-VUYTkey61vm3COymSqxKJ56LtRrg6UMTCxkW7p7KYNtIsmsBjs9nO7UUA1bgVw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "电商平台主导下农产品流通主体的权力重构与利益分配——基于陕西省周县S镇的案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xZ5BZq-Kw1sybot02QCuGez-jXw4fCxAvNQj79Ror-P-ei3GsHCHVGC-QycjXVxGAERowI8xDqwBNnNQAkDgmE5yyaJlKvyMglAoNBAPe3b_13qgG1tGQOE7H4GS7johQyL9HNhinxyuIBi_gDfYrPME6tfJhkgAE2CEQoHEtB2Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "全产业链数字化如何提升涉农企业韧性:基于青莲食品的案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xZ5BZq-Kw1sybot02QCuGez-jXw4fCxAvNQj79Ror-P-ei3GsHCHVGcEVMhXX8cAzZfRFgDuaEcaHtSZkdGRqtniITnEpCfYpPtX9S16Wco9aLEqzTTz09Sk7pTHwrUOsqidllNlMJ9JhQSPHG0uM1-l3HUfzdWjeelO7DyYKFAQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数据要素集聚与农业产业链供应链现代化发展——基于大数据综合试验区的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zEbzPXeddeoL4khMGwcrZqX1t9o5oDAQgAHY35wB29d6aLsS4EmRcaBCN8kCebKs0Am014ZqqV4DSXkYTzj5COvFIS7k4A6qUGE-iQbRQT8F6MKfNXlXWBXfa5BycRJ-4kdRfRU_qsV0o8Y9rxSAd8TPOKZ8TLJftJ6dpyVMwJRQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "重塑治权：集体经济发展向村庄治理效能转化的实践逻辑——基于川西W村的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x__cvLIVPQNn3qpZ8_FWN9SKOjlH0DY90a_vGaKP0wrRYbYwPSU5Z3rbCK_mcGLgv2stu0vPCdnsfkh_mVjoYdi0R-QnkJORUd8SuSM8p9jcsD70RAcZa5G_r_hvX4KDcKiz3w6P8Z0Ya0QG1KgWKnm7pSNHhajaPvUvVa1ihJ8w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "聚合、赋能与重构：村庄社会关联促进乡村振兴内源性发展的作用机制",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x__cvLIVPQNn3qpZ8_FWN9SKOjlH0DY90a_vGaKP0wrRYbYwPSU5Z3BtiIwYgADOrbQ3bEZdyQhC-FJzPcopenvTwnZv_UlVy8C3CCz5OoJKRaxnMJADGaN7LRbZH52kw0gVGuzRizqn-EunpfXpZu3dTpSvoMcW-6UDQGnqI2oA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政策性农业保险高质量发展困境的实证研究——基于理赔保障效率的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x2rPaWT5H4yGBRAVha4N0KZ9SnlMmh-_Un63YkD6obF_Ok0Yf8mKmRJMWsL7mSq-_H9miWTlKdKyzqmro2qxFNO5_q349ZdyjMccvuO07x0jkgNFlFoo9rxMvyhwdsFsOdLb1AMSygjuNhOROr8EBxunK93IGig0dOxPrjbEf7fw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "11": {
+          "last_crawled": "2026-05-10T20:18:45.207071",
+          "papers": [
+            {
+              "title": "中国种植业生产力区域布局演变和区域可持续发展研究：1978—2022年",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xSNtvS_Ulz2dH66Lryjk7qwfcQU95wqDZrCXeGoM8YYxSIyIYnc8DF9zq_N776QjjmYjfgJuo2Jg3cgXGFEPWz01Hic3i0VsGi8KOv9rreInka_BxazjbUC-8lwA7hGVgP8Nu6iAIBL0nTRwVHHQBu7GBzfMiTgnbKDtkeZZ91KQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "基于样本优化与可解释机器学习的农户信用风险智能评估研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xSNtvS_Ulz2dH66Lryjk7qwfcQU95wqDZrCXeGoM8YYxSIyIYnc8DFf93GwPR7QTORzMsg0uAD4G4UWRehgJmH6BbIarNOlhPlEPogvHKqwnAne4efoOfa5tkfSkEUDtA11LUEITiDZ5iGtRCpUoVpUGKPdlEhgF309QFRqoySMA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "机器学习在农经领域研究中的应用前景——以粮食为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wMytirfBfG0NfApx6g8fpqe1D-1adDAC92Ugfk9bXH9BR_EEAuuNibnvjRho_UkMRT__5xgX6auLg5ckLuI_okxCUPUzdIaXmlyPLg_HGBmeb35RcPv1cVEQZXsK5CXaH1Iqy8U4Yjd22HE4B7RXzSWx6i3Ojg2PqdKNHPYcXHrA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "城乡融合发展下县域内城镇体系优化路径研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wkoZNrE2f61toGnSUFHUapniaGCVf9RRJJVK36rsSHkK16l5OY6xeklhKOd8ZqPdJ-QKAVPTZoKzpvhlPJaSj6fjvCBCBxmOOBQ9gBe6yu99qLanE6KezpCHrgbDf8oHwoXbwLMWD5dRkNrik9G1KexSIIRLGsrJquiGoNVryNzw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "城乡居民基本养老保险如何影响农村家庭收入流动性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wo0fQXc_5w6RugDgGb2eC9rGPkRWG9NeJcLI7mJVPLtb8cNmcN8N5VvXDrvsDDINPgoGyWdvD0qfcvNMQWDA2mAFXF4w17vxmphfNvRRrkTFms5Dj1VUCt4LFpYosd4gh_L9PPIKxv9Kqy_SFwxKugChV7rbryo-xq-2ylxlbuRg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "同步推进城乡融合和区域协调发展：多重逻辑、关键问题与政策方略",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z4pADKQ4Thgg-3bsolz5kd_DuH8yRIL-fbaQIgKgYA4RjnpI14jeu0ygaYzeJMI2WmisWv1FAcWMF5wGXyfTBonakR3DE8hsOMIuEWZGoFKmnPyHap9g4XPAZYP98TuMvnt-vUozQ2oFJzF3NMsEZFP_CGBSN36CYWsffRQ67b2A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农业社会化服务何以促进农户减排固碳行为响应——基于交易成本视角分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zLq1KDdOoO_n7CtSDkxDE3Xqljqx4lyw5awNxpErzNV7wIBI67HAA5Xp06BskFII5emagrOJBOU2G0XKkqcXPnGec23dfCR5VWQpw_DNX-irG2Y0PVfk2NmbDVP7Op2CR9Td1Xa50w9K0G4lIIzghEhxMnyX-keLk6cpGxrNsBMA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "代际失衡下农村老年人的能动调适与生成机制——以皖北农村为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zLq1KDdOoO_n7CtSDkxDE3Xqljqx4lyw5awNxpErzNV7wIBI67HAA5GA8U5RIbcRHp9gSsQWRYnAeV6PrLk3aEtcXdZ7gnGyS9mptMpsK8scC2bYaGwM2H7aMXq8lv21ze8EBW8b5TQSb2SNKP6wqE1Tqq3POOClTz7qnC7Pmf7A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "10": {
+          "last_crawled": "2026-05-10T20:18:53.337455",
+          "papers": [
+            {
+              "title": "关于机器学习在农业经济领域应用的若干思考",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wZ203-16GPt_shVRRb2g6FBRORF6mjF3v-pLKX_T5JLXBM8SzKbF9ydg3LW3nzEuwR9jfno1_amoipFxoOXOg-opCIazrLUFla1m1ZzqJKLXvBXsXvOilMcHwA_IgyMfHqtnjguzabW9fv_cSkrtDhK0aRoQUKWGFrEUCKuwkVRw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "铁臂与民工：机器人兴起如何影响农民工收入",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yqQ62XPxTMOcEv50ODaXgu-jMXRkYMcxbmsaWudHczGXSXf2BEdQK43IXViZXK0KdSmI-WV9NupRiiC1lUc98mPS8D3v-YgkA7ZVoeeClheREdSjBcKtpyBnqNv0g1AkvDQQBmDwkZHbW5OQhLLCoB79jl_iugxtrdNo99997vWw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国农业新质生产力发展：逻辑建构、水平测度与动态演进",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zmR30wHMJpRrkcO9Ge0b6ZyQ3DDERcWEmsmug3PkCHZEaw9sYyXYzCyq5qylK3yH25j3Jhsa-D4kfXQ323yLj2qD6RMxiPH_2bWNxO51ds1EkvLF-NYybv18wrUnpzAQpWdrNZDQwn5BW5QaxfLZFMQwjdtfSas-LWW0GWZUHNyg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡村产业何以振兴——来自农业产业强镇示范建设的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yUb71Ndcc__MUxLYPNX283GhEuTeyiydSwMpFpRXtqRnzhloXnkEZx9tk0yqaqdWpiNj_cHAA3kYs3JVDc35f2oFmnbVelgkbtgw_k8e7gsFkFf5B99Nr4WZ7vFJYHIR9V4QEzwL8uFrL2NcAtnB6hQP9S20OHkLzWS3r32R3xfA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "县域城乡融合发展：基本认知、实践探索与优化路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wMdtkVnkALRDWmsk3qrEESoJOuf-GtCvKltclR7xnaHHHS4JWQKp5r9kTL0C5pD158ry2GZzsidHW2IhWwBBky-z5kw0DQhrEOkD4mHwW2O4Dq6aNUy52OyEmCd3AtkA8eeKH7eRvjv3eAvTjTYzsecRE7rO_vy9T_5kxRj1uk1w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中央统筹下粮食产销区省际横向利益补偿何以实现：基于共生理论的分析视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y46T-4VM_qBs-mOvZtGI5OaCSmtrL88tSx273ikL-ZXnNadNq0dJ5cHzqs-dqi2qi0wNCnrp-Do6HAQBnq57Ae6Mxd2T8GtLo3J81dU-p4n9gpUpElisQBgsUTiiV5-fsmd_CKLhntlFByj3gRCh_ovqJnGBXsKwXuiOWtOPtNig==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "家庭生计模式变迁视角下的进城务工人员市民化路径选择研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wdZOifnxpihtKXQ7NOcAyj28mbn5PCOYp8BGav60BipXBLzWDejJXfY5KoCqFMCP8xQ-Kncp2RPBOcaVkFkxM1jaCBKQNPHfDPt5VYFjzcjAuy9r5TQzWNgLJu4SwOlF6oC-hX-axDRxua85HABr_8irsAmx7xq1hos8RiHURIrQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "同途殊归：混合嵌入性理论视角下能人型村干部的村庄经营——基于华北C县两个案例的比较研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zlYnWKXp7dszgcxcM472LKWaceOww5u1ZeITCHqT5r4w1TJ7GRIid1urZKurzlmixpVjvMXMjO8yD0Fhwf3EPwMv5Qo8wFoeMn4lmkfBnG8sqnQ-3IXQXhIOH5U1AZKb633Mku3MFFiqXpxVBcJOOHzBGTpm7NMAGoezJDArJglQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "粮食安全与健康福祉的交汇——评《作物营养强化对改善人口健康的影响及经济评价》",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zlYehWsw1TeNZfDFxIse5wpn_rnuQeMuhrpk7aF_iJTe9bFuPAK0_-uF0q-QsvhfYRQ9D4grm95b76sw6-fJpHsTa0zLTULCwZ0o7FbFCD0Wr2BDvQuDiJU2qmIARyGjE5t033lw_7C3ZpsxFyDD1iD6IWi_7rA6VeHE0Z2X5kdA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "09": {
+          "last_crawled": "2026-05-10T20:19:01.458520",
+          "papers": [
+            {
+              "title": "集体地权性质、土地占有与第二轮土地延包",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x6RX7lwvXteJc7vSk_i1-0POk6wuS4BW0O6b_XAupLp82UAT7BMoO4shMhi43cpihdqWrzt9XJaX-86TtUg6mWONQisPbvFCkzlRBtqD_YnH0uuUMpggSNfIEGwjePOo2dqLZPwRetEAVXq4gM4u4DgnPB6GaaadkTlNHzI6IAEA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "奠定农业新质生产力发展的农地产权制度基石",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xzB8aBX1pAYe9MebmGDGVSlVB5NQuoC15rlgV4iBqdWapeIqds7PJo9cFInYPjjllJ8tpcCafRcaqLY6UClmew0INbtsXQn82sWvG67ClVo1WMfwOCKmuUycwmbIV5og6fbRIhYtfXgNc-6L6LjcrAdHzo_qrq6NCdZFnHS5T0Lg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国农田建设政策的演进脉络与深化改革方向——基于以“三农”为主题的中央“一号文件”文本分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zMZP7zE7QU_gajVnbqL1-ji7Ohh-JLprtmiGtJP89Y3-1flNiF0saOTV-K6BMTPKZRPDbRockQDrdw1mR0yHz2hBLvbQWk_slDgH06DRDdOOjTS4WN03vVWI4DEsJo2Pw5ZxAn8cRJgD_vSB_lvWQ46ehfxq9bmotEoTGwMnc7uw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "承包地“三权分置”改革何以夯实乡村治理基础——基于“嵌入—调适”的分析框架",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wzssPfEi8S9XCC-e3Hrk5HeVxflcYXlD4HgPmWjaQjr76hx_1QbPpdtdiV6u5ry3kIIOWW3_yKYuV3H94cSVn7dnGBUi79niaDweRSaQ_P0-Skwdmlv7MQ9xbs7dXNI2x8r6sdgro9Z3HTAQVuqeQDaffgXvabtZrL6qaafPDFYg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国反食物浪费行动：政策演进、存在问题与优化路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wLviEMtEyjE451ADn-y9ct2_wLILOVZDcyW4uBe-0mMsx7XJ4UhBbZVwZpQrSUIDJ0zmNG3hFbSu4zRNVQ9lPSOr7FyvzVOtbNKK_q8BucpV7dkKKKYGmmYHRppiWbZlRFY2nx5wYH6xooiiUGG45Papqhry5650BF3cgGaKa7Jw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政府抽检、供应链可追溯与水产品安全源头治理：监管威慑抑或市场激励",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wP-ojq1WDeJUptSUKA7WhG1rLzkTImoebR-FoHoM3Xp1poJdXhlhKHXkB9EQvf7x9Jbm3n5tK-QT7a9qmBriO0V3BDLXmyMX2qQsd0-3Jdapt3tgCVvrGwGDDtd2LLMfp_A1x8S3mPvNcTrOxfuEIDIfiexoXKOTZdvSizPun9MA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国新型农村集体经济发展水平、区域差异及分布动态演进",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zzB2SJGhqu8Ewuv04Ujd94A-nq615yVRWdTZcRYNzmMat_lrKmLX_2RZ8JKEnvgSOWhkIIpqaVQhWxOEcC49Yb6vkJudA4l8ge1b-au5C_gupx1rL-fAVXVFac5N-_seMue__1ETh4-U-Ti2L_6QpnxTage1NBGKfIqFah9l9mxA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字普惠金融对乡村全面振兴的影响研究——基于新型农村集体经济的机制效应分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wGAeIiGRrBIJK1bpmXGdmU8oh2KtLZBnmegKfQPniRi5Hq1AbM_A3Ea0EVVA2Qt1iFCxjXwbhhDOMmyLAyd7FV4fTrmHQsLk2DDEPwwslwTTwGbE8KVaXF86pmTHgvyA7aeKltorm1LitKnTYN1aEzbDFA3WDt79wXNJXU8i1YgQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "循着生动故事,读懂中国脱贫攻坚理论密码与实践答卷——评《吾乡:中国易地扶贫搬迁纪实》",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xh6JDpaHEv59UX2HZ48ATKnOD2kL8b_3wFdG6WjbAG7s9HEqazEVCxopM2tpeODr_PKh4HU1Ap6q3PeLxKmP0F_I4PH49CN-hOAikZnh91VAmVzbp-9mWUjp1LQzsygPhGfmRgtrZpM9qHrs2eubWyDEGiTXMXi3xCpffWZTUN9g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "08": {
+          "last_crawled": "2026-05-10T20:19:09.893100",
+          "papers": [
+            {
+              "title": "推进乡村全面振兴的“十四五”回顾与“十五五”展望",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zMBgaBbWI7NJh09ta8PkKGO4pz0OkhGPVleR2GHWN1sqWPtKhAYLk9BtzvpJKnIa7gq5JKUWT2Jbl7-FGKS1Ab-j7DgpS00DRuJZH-MFoZezfvbPxV8F6OpJmiHZRgh0TtEBzGkrwApuIFnIA4L8HPSMufMxBeYVMCbNpeK2e2vQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "金融支持乡村振兴：农业全产业链视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wHYVESclcNwbuW0cK8vXy5jBFZRv8wdQe-f6M4K2H8BZeJflEZjulFtydqPCJSZowaNCPfp45rKIguHB2YfnK0fNxfMN1ud1J0wvtUhUBeYVLvC7AIqM5x7DoQviFWZoZob1JvbqZIUG0LjqWDIRVEOvItnw7MYEIuX4net3TiVg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "以城乡融合发展推进中国式现代化的生成逻辑、现实阻碍与突破重点",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zMBgaBbWI7NJh09ta8PkKGO4pz0OkhGPVleR2GHWN1sqWPtKhAYLk9U8yTazK-2Sd25Cd9xheTmpEGKbBagyBSqR2hScQf_GKXyhT7jT7aPgjezUmPuxwB04tU6vyI71SYM1a3Ifpu_SGIxjlPdWBo9Jro1cIiRzwhXTtHnxqZPg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农业经济问题研究中的机器学习：回顾与展望",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xuiwJYqoOjVqyAJENayR9fa_iw-Zj1nxEll9r0g_PfXftGWWhUstfo4_Yc4peG3yC9uIsuOrXKWzEPG2ip7bJoID0lMvPAsudUYjCsKjmMw-RsOCngnXXhKwb_d03YNhnqUWzhprrxfIFwXKdbpr8AWF_aRywvsXbGHJNoIyVV-g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "资源公地化与利益一致性：乡村治理共同体构建的实现逻辑——广西河村的案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wwLc7UzDzBUJKv2d-Pa4_jXf_kETpeOq0jFAr27UbNLaEP_LUNrjoJ0sT_7CHT4xFjIWlf5kOVdMdeKxZqYsfJ2yEQ5S3In8NRt30HxDKl_FZrA1fv3GTgMyBNZAHM7LgIBInxSsCEIWUUq7qcEzLbbMA1-QpXaTIJi5Fh9-poDw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "村社统合：项目型集体经济发展韧性的生成逻辑——基于陕西省安县L村的案例分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xuiwJYqoOjVqyAJENayR9fa_iw-Zj1nxEll9r0g_PfXftGWWhUstfo_R09gjPK-RwQFgVsCr0WoyYmDVIXHAqhHvAmDiAPrbxS8LJSmZFMWcGFPsMnmo19HePCdHTzgZFOE1u4FaURsoloeNTMo-oNNJT6fCdoZAolGxsryA3wMg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农村产业融合发展的产业结构效应——来自国家农村产业融合发展示范园的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y5JT1sY9lVM3DcQfUU1Ld22TfPWFMqnbRrwhnT1bhipvfxcJT2n-Gsmr-KQq33xFhzubfJqU0iWEbaDOOXEABjIKDV_7zmcjlYVgv87mH50aY2OJAjrsuMoK68AojDDefIF1fMLEbbX11VQCOWU6zCyzBt-2DukH2XKjMJlpNcaA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国农产品供应链数字化转型：内涵特征、理论逻辑与实施路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wHYVESclcNwbuW0cK8vXy5jBFZRv8wdQe-f6M4K2H8BZeJflEZjulFk00h1xnbn9a-P-pZJo7MQSn8zEUud2fNzvpY0ood51yyGc_6DJU1OnZBfHBrKtEBOLcFbZXz4NJ7aaywLfAc2-cnPGNq2Pwzbx2Ia-Qj_eAYrgDM34sV5w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "亮点竞争与非对称合作：农村基层示范创建的运作逻辑——基于G省L镇J村的个案研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wwLc7UzDzBUJKv2d-Pa4_jXf_kETpeOq0jFAr27UbNLaEP_LUNrjoJP8x3PIj_4fiEE3zW3kvXnP8LrEWY6quVw6n44V9zbzXMPIGqI--vtCFpUloV2DXR2ISaSTDFiGbwUF0dc_BBOuE5zfh-csBnAUcke-fCy7Ch73ZkdblljA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "07": {
+          "last_crawled": "2026-05-10T20:19:18.024712",
+          "papers": [
+            {
+              "title": "数字化赋能农业农村现代化的机理阐释与推进路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wfQND95d_EsW5HOVvORdSq_zirWK9VfyI4kk_URzyzl53H2y5D0Tj8glgQCOBtltB63jCvKpp6syZhQ2NVVPGoRkgSkOneNdOekD4BXinQgWQ_sqgj-oOtRKkTvqHKzLi2CYbuAqjgZxEgUy2BvLjZqwfaroFg28FRhL2GVT6oWA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "如何构建粮食产销区省际横向利益补偿机制——基于三方演化博弈视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wcSQ4QCr-HqY5G3oZdg4nzGF2c_oXz2vw6CFquDNQ1JjD1aNc5tfQdTR9w1WG-RPqlyTjIlvTRq8I7DQiikHALmeHeoMEw-f7j6x86jMABg6OUspy8cRH0f4dpsRKTrUfSwJlix-h6kw2mPDYpzjfI181tdCMqJHGqykxsT4EidA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "反食物浪费的国际经验与借鉴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wJKvxSqFCJel_QAUYIBGhZxpuZNnneK2yMGuQhTlrKk4NX7aPbFrfsMLCUzzaW3WCiVciZ0JahZDgBQS522UvZ-bOstP4yjOv0T-TNcdzyDubqZ5l2n_sKSToagWI3zJizu422teeEjSyDIKcpae6CtesWTejvinlIi-cXnkHPcw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "粮食安全维度下俄罗斯应对外部制裁策略与镜鉴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x0SaPl3AZ55DpJKbBE_Zo4V8kDRH-d7JMUsgP9cYd3KAE60DWCkXROnmLBLWLlKJIzBvlE2q4X3IkPZ69bM9xkBfI02TQQZTrbAo-Qutv9wKvtTt4FDk-Wm8k4dbgkH6DJfwcWWcR6qRVVNnSLJIKVtgU42XAtGGsCd3u7xHLr3A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农地如何定价：对土地流转“同地不同价”现象的经验研究——基于多元市场化的解释路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zfPaO1PBBDgT1rRTo4eJ282iSrD6VxKY2A2Aq1Nh8JR3v8atHFc9_RCVIAkASldprCg5doncHC60Wiv0vMByhRaC38OsMcNm9SsZKvtHS5syjs6Dt5-PrMBBnKfPhzdMq55eabgRVV9sfCd8TfJTsvCiW-8OEE0LW3JcSEC-ihRQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "差序合作：农产品经纪人构建流通渠道关系的路径研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wDHj0VzBd5zwiMDlmpaz88_hpfRehZPi_KHv_CS8ZJepKMC8Kl4lDbl59VHrWYu9ojf8dhMJRazYnRhX6O3_BiLAyclQsfWiPXcVIS4i7fzvdxntDx4U2kGzev4wvcg1rX0lfthuDkq8OuFR0oxT6kZJnjU-_9dx_XKMVA9xbZDQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡村产业振兴的理论逻辑与多案例验证——基于“有为政府—有能集体—有效市场”理论框架",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zIW8XM_TfdZaBcFXd3p0N5dM9igK45CbnjNLDM4tgJc2XjOLgeg-XGJrl3ccoQWBBTjwCKBCOHpONoL_OyuqEmpg7F_tsKZN7PYPx6gC88cK2Cc8HQqFU5iq2JAMg3PBzRtSDk9NyEanYBiPOV9so77UfVAVgL75g4xb6c5F4LOA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "制度逻辑、组织共生与农业强国——基于农垦企业垦地融合的纵向案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yN8nt40fFxuZOGm9JfEgQa5XHdmuyOwHIWOBlnLQvi3AVjUscLHUZinfXgcB9XHeypGndtRv_0QIIgrHVAFxxojV56F8C5nXE3FaOGJ0AFDfi9EBi9dfHJ1Jto0JAztbFkKnA-M74Pv3XzifSSzdpR609N7AUbWA3tYEG0Wh0AQA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "参与式集体经济：迈向共同富裕的新内源性路径研究——基于浙江B村个案分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wECdeQInOWV95Ek-tqfmTg75rS9ZYhlxDjJt0jQPpE9aKglHMTI_vSHlMzm1JptOmT8OzPELSpKjGYr8WnEf0Qowhwu0cNJPuvNvVzkA6HdjzosPcAvOBzp0td2mKVn1QvDM8tLhSNagodrzcei6O44dA4CS0oAcEjMf4eANxqyg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "06": {
+          "last_crawled": "2026-05-10T20:19:26.152786",
+          "papers": [
+            {
+              "title": "绿色发展  节能先行",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wXnCaW3M1xeQGqO6ajYT9KkaOxbkvSLXW93LwyxEf-rbWlOj9u31hSwkfj4GXs2UbHTUPwP0Tw0VtqU-96T_s2j6imbYJXk9j_M5WUI1sarUPFHRL263Zt9cv2toxMuCqRW7yI3MFfBGjzr_s3YeaiKhywiiKyi0qr-pY_byYXrA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "迈向2050年的中国农村人口和乡村变迁研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wshve-zXakua6tYNAA_zoEWFK_qUAUcC52qS8haeGbsdSg8wdOVSiPl0zed5sEPSwxvOk5tgGMm4HKSJcydIZA_ChbODp7rTZ5eQf43_Bn3OY551lSKUnUfnr6VgtVaUPpJo4YYxyeT9pn2Kdv02fLAii5u8OUhjl0VP5m-l-dxw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "顺应底层逻辑变化深化承包地“三权分置”改革",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wshve-zXakua6tYNAA_zoEWFK_qUAUcC52qS8haeGbsdSg8wdOVSiPRlQagP55Lq9RKsmDjBiLTG5xNcsE0UbSn9SGGHqXdOdxDokLmzSmpkI-3XNO8-EE8yr76GExUwl37HhmK2ka932AvPq8urvc698KaZBlS4DcZhcnZzqAiQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国与中亚地区棉花产业技术转移：逻辑机理及实现路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zO8PoMSWhqALUXbmZhJWbzA5tJVVAflaoGNR5zaiWFdIiGMppsNOxlaVkL6CCq61f8yhzYj1OkVY9hqVz2FyxnAag20eAzGr0qwTqRAR5EiAj5XRSCVeCfqXpyw1BdDDKvFHbqhYuk4G8jgXI4gcWIfoG2Onp8zUuaXLjMOC1xMg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农作物秸秆利用治理的理论逻辑、现实困境与路径优化——基于江苏省如皋市的案例分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zO8PoMSWhqALUXbmZhJWbzA5tJVVAflaoGNR5zaiWFdIiGMppsNOxl0su1pj5LouwpPBdEr1JiDE5h79ZXxdhRq_CjfYqrRfw8Kh1OZU9_wuxZ_mcSUx1dgwHLy_ORhNFl38VMkveeM1LIrpjlcutm48AKxcMmYte6Ekm2u-158g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "大豆玉米带状复合种植的盈利困境：成本与产值的双重解析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xf-8bqLf7FV5uOianv7Yrt36FCqGSxyWBgKWO6MGx2WeL0d-9FRTwF-r2PaScxOeogTZCRTvbLERSEu-KihpSKpY5oXvCzZHQ11RAg4WsQbSVSoQHEszs_gWyHyuZShnteRMUwJ0QNR16FvNZkm7cMN14isHAAy8WMRLsqYBJg4A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "城乡融合发展与农业产业韧性的多维测度与影响机制分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z44EXp3eyciks9RTx__43Guo1mEszjbdpjsjsvfGq8FxarJQ7tm2BRGhFXh8zTFN2NE3f_PY4PvwhG6vecDVnrgVRCeT767PTP6kLh6RQst6NY_SuvyNLs29phLqY5tMsJLB6XhHxZFwMk8nXf7ILROk0B8A5N-eb_RI0WR1CZCA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国农业农村投资政策演进：内在逻辑与优化路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z44EXp3eyciks9RTx__43Guo1mEszjbdpjsjsvfGq8FxarJQ7tm2BRYE7SEEsFU7GDGWr0pMddTgW_IWn9EU5abVdbGoNpY2_rK8SmkC-_pyKYur5QRZgokVlZulhyjnV9xTm4IFCRZyZ7uSVlmT06r2dZM6VDcRcxCxRJIoANbw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "嵌入性视角下村集体企业促进乡村治理共同体生成机制研究——以贵州省岩博村为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3za9TXahU-ygSjE-ri_QxpcCjzZbgODyiKDrkPwRYlXFdBWQ98bYmdmhmmazTiWDN6XDNRK3fD6iGinfyINrr4NeEec07FrhVXd9DWEHtHX_84y_wZtpIIvY2esIZ2_7_dKNkvbNOiITMlyAJHjVU0V5_wj0gCWcAV9YFAqUxaBsw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "从“公地悲剧”到“公地喜剧”:发起人社会网络如何影响农村产业公地培育",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xh05cH-r00kU_a_zQ_jlUsCLw-0ljM3JJwdE7267p-N3mg2fZuw7j96k3ru3mE4jpXwBKVEJQmmpA5HElb5Kb19pd8ixqwEM7JSnSsT6YN9sV0LIlCDYO5Ks2FZZ6WKJII0djD8mAovS8b_o8rmWFNN4AfyTxFkdjzr80op6QU6A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "工商资本下乡与农村集体经济组织价值共创的过程机制研究——基于四川天府新区T村的纵向案例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zyKOX6VhTsrRocx74X-KZmlQ6TulrqCzlqHwniPVxw_fx-5yHSDtes9rRzvKgUVoGRKeFemRFCQMY57YLqd2chzIZgBqM2SHKaW0AJIuyI0OCulAV9Lr2fI5nNN2GH7YDBDO4Ls8uYY9C1yMyjZNMw-5JwG4daFCeMeZUslyhkCQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "05": {
+          "last_crawled": "2026-05-10T20:19:34.302178",
+          "papers": [
+            {
+              "title": "绿色发展  节能先行",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xBcVf0NVjcv6W9z-bkQHFO8Wo4l1vNXxzNYRt_YJLYFFEOPN-avkKUrz4EklEhT96rI7GpmUd2WrkljhvTDxUFaPh4QuTu0oP-CLyevq1l3RVgBpPeHa-taNvFEbSY187vA69w3tFNp9lVLi6unau0WRSQFL_0GxAfOt4zdjesig==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "人口发展新常态的“三农”影响及其应对",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3waYCYXCX04TwMWxl0Akh5-5oJs_SMkCTCnpbBv8C6o2DvAtxeiS_foServTlG7JI2iQUB6Ct4-FB1APhL1kTWLsrbqed7kv8tbhw-P0wmyIoo4eYBY665Z322aepG3lrL88I9LTz3HCOlo0aiFgnBVcrm7sXe9o50UeBNYLOmXEQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "牢牢守住保障国家粮食安全底线的思考",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yvuURbveRGkZcYCH65AB0BV66vLklg9zsSOYWKA4RKO322rcjQyG2MrIe3XIy-BtidtPBYpN57z5OKk_tjvko7qmgM_0C4eRNZIQhdTupM2fivZH5jDGM0qaL4trChY8IHuqSnFD2CJLYt0y629uMaqSA7bb4JSBFL8eD1wDpx6w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国式现代化背景下农业农村现代化的战略方位",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yzslF_sFplSww6fC_IfCcDDBzAXbAQaKVB1qSNBa56nga4vSec6XkbaCzImKhl1VL3UUuRq5h8YVjIbWuyhcw56a0H4zF86nz7eA5c4jL5qSbRyd9bkABej-0cZIzxdNZ1kQSzMrsaf-ta7tVNwbo5kNCh26pBGYiLouq5Jh6T6w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "经济分化背景下农民农村共同富裕的实践过程及其机理阐释——以陕西省袁家村为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yROC7NTSQUNSiC_dDItFo10ATdMnCjUCYLkapl5OUuqy0tieUVvLuoaI-wVpBB--vg0-Gp0fU_lGwN0t4cj6DPuTrBJUhYDoneKjdjS9TGfIGTc7qYcHF-PfZ5HI3ygZ1ktGW09L2faURdmyR58QZaTuxej2jwl-Cgvp_gYrZdNA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "新型农村集体经济组织的市场化运行机制及其持续机理——基于S省Q村的案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ziCPWhfOj_vVUz7WQqfe-4C9rhl79u0sVwxnx71cD0VnjXwi2wsIbP5MPx3-JSk46pV4BnGRt873oNkh8FEx-EyDrM_u_8YU4O-mxC4vfXCO_rhAwTZbYQK9n3aUk_3zJNxzilWEbKw3UZgNxbmrQt0VRCLP6fhfKkAiNuFfhc-A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "党建联村：一种新型跨村集体经济实体化经营的实践逻辑——闽中通汶联村案例分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xYBjudQmw6SCNK2lzqJdwctGtfw9FJjE2wz0K8URtb914QEdU8NpB0MTVBerjSwqEFnPbQytE6oHWAqHZ45BIdiaoJjmUHaYtv97acup4idk1Ra4EnAKgneqdGPTOAg45asi5FOxlLA_Wid6ewi4FuMp9MDYcRe7Bj1OdoFmfdHw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "从远郊到城中：村城融合型都市乡村发展模式何以生成——基于共生理论的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ziCPWhfOj_vVUz7WQqfe-4C9rhl79u0sVwxnx71cD0VnjXwi2wsIbP2hicfoZXLs_g13NGkGVhHZ2fg7WoWx6oFT14289rDIWxPIBvCxorQXVVVgBZOR5n4AvbV_kdQDqjDwrmgiVPuHGV4Z3n64PCxJJe8MzFxy8Yu4GTe422mw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "县域城乡融合发展的理论逻辑、现实困境及推进路径——基于“资源—产业—空间”的系统分析框架",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yW_k_6oNAy6THJu-4vkyFj36NKIxQjhvTeG3lUpH8epvE6ZbJE6bwLwDzP7xaUHtnjogIOQ9kngJ570IfUVXQH4B1k1uwq2h7o0HKTd_AJNNsYF99sWe9QfPg-iIZI64GFRNyOKLeRHrv9mxQKpvlI-pzW3ttwdVbN_rWvKqs-4A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡村环境复杂适应性治理：理论阐释、运行机理与实施策略",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3waYCYXCX04TwMWxl0Akh5-5oJs_SMkCTCnpbBv8C6o2DvAtxeiS_foIiJIVT6SpDmLo0yq5WgyUTbUfyiQjxEFfnc4bjmO3iF3y6Y-n_EdZ5cL1X6QGL_vNL6pS6qYKy91Z-o-eyujOGguNCyM4n-dEULXM9gXZMs5sMRNv6z-aw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "大国治理视域下中国对外农业投资风险防范研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xBcVf0NVjcv6W9z-bkQHFO8Wo4l1vNXxzNYRt_YJLYFFEOPN-avkKU181sBc2YByxOHd66lnKpvu4TSed-37bc1FE7lD8sm05MaXeHOT-yH2IRGhPodmzbp2fU71oMyqYE2uTfjHHtKID15TCILSU-idPL_Dyegba08g_qvsAvsA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "04": {
+          "last_crawled": "2026-05-10T20:19:42.448499",
+          "papers": [
+            {
+              "title": "绿色发展  节能先行",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w7mzyje9VqVQZXfXlV6IuxDnF7smEsh17PQXGZit4xS95wsN3d6OG6tt4A9EfP6UnM5iLlMTqAKy4nnOlo1R7hW3pQwpqK6nLQiXcMNi6M57srzjoFQKiQbbkahkgO7vx7Sel-_89Vtpb00nnETtzCve5vxWeFZ6hr6WNucGBuzg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "粮食产销区省际横向利益补偿的底层逻辑及建议",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xh1VzlRQiY6fT2w2SpveTf6ZuuSelxW_nuWamdcHNJWxSasYCcUCDJfbGbFYR9eS4zQWulW6MbWXhlb8wpS8E8SIYD2wrDuHtzycbzQJFVhntaVj6yuflys-OGo0MDF6Dx79A_qLfr26E1oedlv_IJCcd0pjjcbM0N3BQgzZimRQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国合作金融组织剩余控制权模式：从“两权分离”到“两权匹配”",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wBHzoK0L5rMvlQcMnf1agvugPWgi5g2TH8dtYrPSptWTZu2QjqRy9Kne4OuyAqnPZoY2fbg7nVHl91X-_moQCBsGgepHbycbhC2rksouyrz9LdxnN0KkZ54goptMOjkcQDcig_uEIYTmEesjusYsH_7sIlU8IT2zyAhb8dZTrr0A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡村振兴如何实现共建共治共享——基于浙江省溪头村的实践考察",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yNkmEaL2Sx2FjuEWQS_tpAhz6uU_O4ZbH3QZ_64UIlS9p1JwsU4iLGrM1TduOHpVhclv8P8l8nn744u_UCYHR6Xk-VUmhiBgpHEiHNQqfRoubQk77FXuhGAIOXeFtvKktaYtY9K826956DMoOss8slrSeO1f1siCPzuF3cHyWK3A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡镇“全域三变”:条件劣势村集体经济的共富之路——基于重庆市城口县岚天乡的个案研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wANFuh8UbZZq9-YXNnG9QebAxVqg6Tr2DdWbQkgo4Qmw73G7oFwHI0gCNPvg1yAJOnYrBMRij6Z9EBoPyLIqeSIWI_kVCmAVouUKkic1XfwXZfoeDfbHfwnO_JPakJZdG-0bg_ckl1ocOrVU_opyymcAmduAdcX8I9GEEiVCcc5g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "新型农业经营主体与小农户紧密型利益联结机制何以重塑——基于云南省宾川县小乔甸村的案例分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yF3Rdzy-ui893crKdTl1osTy0HQp2TPKvpKV33PhSLUvVuXyu_Hpm-W6XlvgiCjzI8LGDUl0Wg8pLLa2_omR6RrG8FvavFepzxysbAm-gXTGsV6Q1PBydfAEUC7T44w1py2n6NfrzGhpfWoL8m0-MCbBgteGg3BeJ-6wjWhtBUNg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农村土地权属优化配置路径与统分权利结构",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z4U5lujH_dqcEfY6Up69ASYGYFVjsIcUunlA3zRxt5bNWpQCl9NiplEzTU-O7HaZ-7MgC69_prEfAAyhBJyqMMRGS8pwOb-kDxTQMivRKKiLtsF3FWwxWx2Bj8NhLv7hUQL-GJUY3sJkwjBPL8m8DnBj5279HzxbjYjDJp6OCsqw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "资源禀赋、内生动能与新型农村集体经济发展逻辑——基于闽鲁乡村地区的多案例比较",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x6n35gqMjFGrxoAXDcUbN4eRb0JGLerNztmxBqEt0inm0YXVReJxk-6GLS0nFL_DTEvKdIPRsurZkQ_rU8JJV981ZIJZV1fX7HIxsuG7QYOvd34TgI660ldrO4zwPjXyoGOiiiuWyE8USf5CjAv0Nm_V4cxL8Fq3e5N2-YsQEMuA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国粮食供需格局的历史变迁:从“南粮北调”到“北粮南运”",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xDcsfzjMGdMVqCH2NirHb9CTXZk6RBTZyCENE-nFgjcexbr6y_15d6PNJcHfxp7lTT4T8Y2mU7EsLY82g7F99Py-VpoaU8pan7UkwaDrA-uLj8BvOuDnRqYQt9LTQUM2IPYnaytX0KFcd7uc0ZQq1p_qfF5fXEs3CgAU2MCmuFUg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "生态素养、环境规制对农户参与农药包装废弃物治理行为的影响——来自河北省1118户的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3waqNJIhSxqTAlG8q3MAVN8Bu1AWlZSqBLXCoZMjKNVH2-ddBCFc4fHLxrMkCmZI3K22vGgggCZHdd1gZ2tamglLJlkFPvwqQzkSXUG04LxyGXiSRyQ2VhRu4qNWfbSlXIP1F4vwvDN_6CXyNinTfY6hfsLb6Wf9w3vpCbOj7U3dw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "03": {
+          "last_crawled": "2026-05-10T20:19:50.635396",
+          "papers": [
+            {
+              "title": "低碳生活·美好未来  珍爱美丽地球  守护自然资源",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w86nRZg8_PvVVPrVv3AFS3iTpuK14dbqUUie6p85SFI03BkbQthKUI4b7B0vjMKfmbJusseCC7ChzNUPWdgQDcy0-Z_p7X592Ew8mR6OLdAEMx9YYqYk8NIvbWqvQpwTkrB71W5AFDZU-TA3BLZLsH5pCqXo63V3zaLZMfcpwe1g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "涉农贷款发展的理论逻辑、结构性问题与实践路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y__PMFop4iUnJjSZTG76Y3V9ksbimOIXrlOR1ASQGNrApotqMw0dwICLS8EUAIeDWGWFF7jjBKU2SjuvMM2YpV3Nii5R_-FZ1SF-SScpZ4bOGq89ibT1qFkRuIMqNgjc6Oj_BAFVUs7f7nJvZV4-vnDQ2RoLJf3mxsTkxGYuwIJA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国农业科技投入强度、结构及政策取向——兼论农业科技创新“最后一公里”的经费投入",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wP4BcFxOgwrg4BcAWfNK2tSwpll2sBkQ_2IzGobIqW4hkLC_LHP3zbvbjmjx-duxsympoBbtXxKMhxGDrw1mAw1xJs4IJFUZpiSvHiyx2y6N7L8QD5obi6sk9_fRu6zQtahamr9I3SnMwxS4YoV14JzeV6dDBLd677rvpMbTzmUA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "WTO农业补贴合规性判定与美国的技术性“合规”——基于美国农业国内支持通报的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wAE09gwewpKS9fgh_ifo9l3jwFItkcDrOofciS3bS15taIvvEo4PwYcGnhex97-mNiqGeSzCJUxjfbe2Ztltc5Cf7zQWItnRoVdsV_I7AQpCIJfjtWgPFAlD_0hQma_MdmISCX6mlFr50OqkQN7GcHOUhlL5rUmWXUu4SmVmqJZw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "新型城镇化的共同富裕效应——基于国家新型城镇化综合试点政策的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zxFTuYcEDCt_rksLrEXT2AK-jO_ClzUaO4UilsiHuVOxLynHeV8nO7Yc13kKsgdzRnOn-4jpWWTlNY5X17ALEyra6sLbmw6slsgWeNG288J_C6hR46zMv2jHAxORgH9QPwIn-pf2bfb-tnpnhf7mi-zjPtcUwJ9ZNzZKJRl7GxoA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政府推动型城镇化改革与县域城乡融合发展——来自撤县设市的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ySiB-gkjtRc-icSSHOrEuWF9ZNYeudyYIz47taka-5Q2RsmMzRbztr3jTq9sJVbOXeZup7tx8wOwSniytL0U24jTH9OuzHIxDCwT-iqpJaNKFP8R3F0buxNP_ZXKKBxwrnnPTZc6-ud2Bcm7lBJ4L8LCg5i9QCa3gdVw6wCO1hSg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国特色农业发展的水平测度、时空演进及障碍因子分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ywL7s-kNhK38LX0BxkXuUNwtww39B2kBAWM3uh6CrX_ex-8YGkaqzrU0nSNggSJUAi2_mw5sI98NwlSxO4f6I1MEXPqII5ElAtu2fPtdYOKVj3r1t_zqxFE38UD1jLK_N2yXT0RUsvZjVejwy2qBrWsovMG-vxyxQFAChjSOBXrg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "金融支持林业碳汇价值实现：主要路径、现实困境与模式创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y__PMFop4iUnJjSZTG76Y3V9ksbimOIXrlOR1ASQGNrApotqMw0dwIMaRe0_F7RMqcLxC3d88ctUf1hPnTtz5VY_Ax2tZ1x2VX-2okIk-bzuyMF3tCJwIaPVgUr8ZdseWg2J-sJZ9hGVnfH840Pq_RgDKlRt89tA1sKtpOa0USHA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "畜牧业高质量发展与高水平安全良性互动：理论逻辑、现实梗阻与破解路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xHAlzmCCeq8WCcAHFbiUenL9IxSQmSNDkIc2hmv9jaL-uFiTAhHUCeuyuy0zqb0WlDlbnd2n-nbhbX8u3bg2hSlhJ8Ayr4d5b3m7m1ykIk9Qnu-2rO5PnoBPjZd-99F3UBPfd0JhNmal3DmFxWfV9mBkB00yTJw85HrCy8OGiC-Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "高质量发展下中国奶牛养殖业安全风险与防范——基于创新驱动视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w86nRZg8_PvVVPrVv3AFS3iTpuK14dbqUUie6p85SFI03BkbQthKUIs98efbCryKupsvHnU5wv-pWGHleAYCO0sq5weP0_WiRSbCttKlSJfv45Mi8TQDl0ye7KYajnC9v6MXCOtwYa0ZKkh6RtbKoSsFMaqjoTbOPz-lvNiaLrWA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "02": {
+          "last_crawled": "2026-05-10T20:19:58.761564",
+          "papers": [
+            {
+              "title": "生命之本  低碳生活·美好未来  珍爱美丽地球  守护自然资源",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yhNArfNEuzG4RRRQLN570d1AiQlQK7a9s7hT0tDoGHEeMtSG2kx1YMK47uhLuvaCNNLCe_QqUgmuEiCfekZk5-M3YL5bI9cTWTDGA9dQ43gBJuDoHTZ_5YiGvptF7RnsgJmLFS9KoO2enOjER3gXRfxCoRwMkbIIpj0HkgPrKedw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "推进城乡融合发展：经验、挑战及对策",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ylcePz4-RBotLD5gOxhzBgLoHhWo4sLjOZnQpcZcg8JSEqqlYK0e9fVN974hDSxsX5sxO50ZpXQ4Ua-Uzqe_ZO5dV6G-oRj4KlcOybMq0T-d2cojhcezZGURl9MtXmbexM-PxVLQ-aZMVw-pEYtaSrpVdZzk1C67_l5grUFa6p6A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农业绿色转型与高质量协调发展的理论逻辑与实践",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ylcePz4-RBotLD5gOxhzBgLoHhWo4sLjOZnQpcZcg8JSEqqlYK0e9fWSTOnWKsSEKcFHXCLDokiHsKLR_ueCnjdQu5j9fijECX3RvMjpfiRmlzt3eoVAMi2I4E2TKwnQaX-0bodNN6u2j2LgN-jKMA-aPGrkMCX_0dujFLQCSmaw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "共同富裕视角下农村集体经济利益联结机制重构：实践模式、运行机理与保障路径",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w6BBuL-7ytfRw7ZUEIjhdebnxwu5WyVXWJ1OThyGHU6tUueQqVSXYMA51TQRp9SfwiKBESSB2ppvYzAQvfNIyL-jMYZV-F1nZPGvC37tTY0HAJugr7aJJuYEKsiEKvnh3-nULYuWfZLeVkrtlclE5rkOnuBQDe1Wwu4qga35douw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "地方政府建设农产品区域公用品牌的行动逻辑",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xIpskuy30Adr3_qFrlKt5_hL7WfPXsJ0FMHAtnymiU264URTuvrNsRYsmSJ44Nln7DjJDtg2LidkXTPOq1xwJj3iPz_RkSFoeN5LBgAR0BHkIifPgUdfIX8D2VsM1nn7YyggnXs327iE2AazaRDsPB2kiEUKbkLbW2MG0Z42RGfA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农业规模经营的合约性质及其治理逻辑",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yhNArfNEuzG4RRRQLN570d1AiQlQK7a9s7hT0tDoGHEeMtSG2kx1YMMDRFCGOlHJW2E4tDg9pqB29JBsu6u1zUSmSU6ShBRn5kVbivpURzgVDpHRBbAB-70fugNRROP_TAy76bMtjFIJlX0JxDrvo6XaAp0gd2_RWnze_iCmS7Pg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "基层政策宣传何以影响农户制度参与——基于陕西省H县城乡居民医保的过程追踪",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wjdkeJQEvG9qgpTq682CqIiJGw4mSVALLfhigfr_tgrysNS5eQGdt1fUNpL9wlDTy4rz_fdu2469P51PSrXG11PX9dHsl_HY8Gu70zWrcqhZxMpmONLpBCUIn_xlHWJjdblTn2537BIQhfeaJpKBTGRCl-VnpUgFmILDDYxAOi8w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农村低收入群体增收：理论逻辑、形势研判与路径对策",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xV0Wi9P_YVlVa6ciCMl5wTXIt_sWX9wH8F8aRCftq0-KOpKlkJ49MetzNE0s6ebaaIhshdXlzBv9zgHR9K6MdDMyeUMXcI_nCXAtq0FACtiArJThW2rStTgA0HjHFtc3UNyiF8KRSwD-hx4NymR4GPQI4zdt8-A12syUh4bP2-9g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "“三权分置”背景下农地流转市场化发展：新近状况、驱动机制与政策建议",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xV0Wi9P_YVlVa6ciCMl5wTXIt_sWX9wH8F8aRCftq0-KOpKlkJ49Me7qDYGoyiERVUnduOF1Q2Oux1i10gwMEO24iEMC9fnh_LuWujHZW7gk3nHTTIb8YXuwb3GcMOFAfa9K6NlqoVTdWdp49mbvsT6_lBXlXAMmLZNBfYLjpVDw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国造林增汇潜力及成本有效性——基于经济可行与社会最优视角的再审视",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wjdkeJQEvG9qgpTq682CqIiJGw4mSVALLfhigfr_tgrysNS5eQGdt1GgrIntBoY5Xz0l3GNM2m7aik4GvWkp_Mb590gMtvDlOhqBciHU5YYNIa13PNlGx_w_pf8TKLfvQNGCqFgHxsxPMkCZJXGOpXlWlkmMt1nECPIgmI2AhyQg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国大豆进口市场布局多目标优化策略研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yhNArfNEuzG4RRRQLN570d1AiQlQK7a9s7hT0tDoGHEeMtSG2kx1YMehUE_70esZVzZJFNVFi5o9doxERmmycKfeOK5hEFw1gMcSpuwdeEeZGRA1uvNjesJrf4pjZ01o5i_ZKbo-KUYJhqqyAq64ak6iJfpGgg02mwt1qQ8s0s1w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "以高层次人才为目标的研究生教育培养机制研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z8PeqAFy0c7IomZE0vZatlzX9s_9V3aVnIp3ZuFDQ97V54mRsFO2WqEaY0QmzutoOBwF9197ur72LLjbY1scYdRpbwz63XUNJFDAMQAV8KKgMBXsD2IiMCcdzGWkUb9W0PZDq6h0Oi_xVCt6qv1AHWki8JZUtcnd4bMVPfhSaY3w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "01": {
+          "last_crawled": "2026-05-10T20:20:07.179013",
+          "papers": [
+            {
+              "title": "完善农业经营体制机制的几点思考",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z-a7VoQ562Ir70A46GPb5E9MQLwD5Nby5G3nemxE5ee7aerqaSWp2-ehNJnBjvXiVFk3zZ93wFY0vzNk7ImAnZhI5EfuCGah7542NCcD6TDnc506xNaJDk3Kfriyk-NyfrrVbJ7lTBMQkYe4Gv9AWMHFy_fLtfLllXT71AqCCHnw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "面向新征程和大变局的中国“三农”发展",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wnV_NBmEyPPIs9Hox7iF9uhBpUUEvFX-8AbcjiSdCNDPo-lMwkYc_jvlVQEAVinNAplYtOwiyo-62l4RHX5Ib-nH-ANHZYnigFp8pWeNQBxwbXnZ6TM2393b7qlEmRPa7e45P-Z265ZAQu5YwGnDWLNr6XS0OM_JlLu-9K2sCnGA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "承包地“二轮延包”:关于政策指南的思考",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wkwS2W_Yxv1FHBnTuP_IaOphW8SZlAuIPBQvjYcRPqya7KlCJTCa1xq0jJ1dowjnA-7164AyW8hipGuRZhFyD_mu68xuX654MoA6gKaIhfan3GrYDzwtT0FSgdgscczSECwAOdn4vi7wMFo76ZK8xMAnoZh7MD6-G55-H0KAGgwA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "乡村数字金融的共性规律、发展逻辑与障碍突破——基于农村金融改革试验区的多案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wHpZ0igUzlwRYodNRu2JEsfsOJaYCs2vXookmC-Yw1x9CWpt9aQ19ZSSb1IHppyQy6t9LJp_K4jccgnL_qjOHCRQsk96d1nN42Cf7pBzr8SAVOYgL7XO3Jy4kJ-0gwHjhI_20aSiNj1LNgQEZZ9Ft-KkkMRsO4HCOj6IXCx5YCsQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字乡村建设：国内研究动态与展望",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z-a7VoQ562Ir70A46GPb5E9MQLwD5Nby5G3nemxE5ee7aerqaSWp2-tiytNU7aWlqpGONKDwR8PatQWAEiyPsws7wpMqG2TpGyuQL9tunOfoz7X7gKhypcpXfSRYCDW9Msp7Jd1xxeTLb4vsKUSaWqIxqQvrImwSjLc6PiyIEwpA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "差异化整合：县级政府政策执行的有效策略",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zZoni54dugEc-2LwGfPilkWRRixgrxoSxv2C2jtTAHH7dRg-nE5BFBKABbxC9oyAX8McsEtmZL5GAd3vVq2OmjOztunkW-fG80xrRU9B1bx34NdOVAZJWgRAdA4bHCKIACGsG1l5UZg85UFMS1bPWQIClAe4HL3R0BlSl6HTf18A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "城乡中国背景下村庄保护型经纪的返场逻辑——基于P县L村老人会的个案研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xtCbBWS9ctW5WS1POnZCkkvTbcIYZ-dLRpUKcTofOIEybaMyahOxBoVQsuzgY6GIjAi2SKXF0fpjYBK4qQYK71BkK9AD78ys_m8jFCsHJLcemTbTPaY4IDpJtTQiNhR_pmNGSMp2Ll0bp6nhkEcrvFyohd1BafoiG3kKbNjkkABA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "如何防范农地规模化流转中的违约风险——基于江苏省金湖县的案例分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y4WrveqgkrpKC8lIHTjS60zlgLxYpwhwwVoDXx2BGqgjo19EkylUe3orWLZuCm86AD31wGvtQTuPoHMkrtvwTc1tcS1ElH62o0YztoCIC8JkauuzBWQY0EQjgu2qCg6w1FBwl8nrujrGhpcQLIA_Kyn8BMcgynsoh0t4O3WNMAtQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "跨地流动与属地管理新制度主义下流动人口治理悖论",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wjezsA7q8Y6vy0P6sTt4j3jvOaW7yLsZErdZc2rMCak1QWwwp4VVXyeUZcm40eFo8llt1DzMcajh05KcyXt_36mVKhxFA5Z361TcrPHUqQS4VPNstn_pjwX63cxE0TrC8HM1fifQceqRKMwzRVIXJmEXcdiPtvdCnpf0lPucMeCQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农业转型时期劳动力农内配置的内在逻辑与社会效应——基于中西部传统农村的实践",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xtCbBWS9ctW5WS1POnZCkkvTbcIYZ-dLRpUKcTofOIEybaMyahOxBoqBgZhxLqgK0-PlAJm_JLdQ6c1E6umnn0Em6iC0zfMbrLLVH9POCRnP8ueW_Df0_r5U7qw6HDoJ1JDqKVWdTsJgMYcKl_GvSE2g7Mjf_fXkBY4gVcC9LMMw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "从机会公平到结果公平城乡居民基本医疗保险制度的演进逻辑",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zs6FYwUCWKNRlZiV-nAEGnAhq-wY4Z-HEL_DcTz0fofOJAmqLFjeB9QMiHXYTSmHUeDky7fxOar16nHHfS7rOGdNL4c3WkSXDhridEPfLNiMDrsYjcducJuV8GbaIGE_VRfXq1wQJz6vHSzkFD628XyyA8lukge5Fn9ueBl5t3dw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "如何联动内生多元主体促进乡村产业振兴——基于G村农家乐协会的纵向案例研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y4WrveqgkrpKC8lIHTjS60zlgLxYpwhwwVoDXx2BGqgjo19EkylUe3NBQ6WB_l-GOJpn-jevQ9iJD72fVRfayrnNyJt4iHWkzM65fQ2ZnEZAb69KEn_HfHQuXG_-KqkOui4umDTplAuSvryQ87uEIh_kisDYpZmYRWBMCZ2ZqS8g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        }
+      }
+    },
+    "财经研究": {
+      "2025": {
+        "12": {
+          "last_crawled": "2026-05-10T20:22:43.830433",
+          "papers": [
+            {
+              "title": "党的纪律建设推进国有企业完善治理：历史脉络与创新发展",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xllyw5UKiDy1ZHf4FTWmBTKSz6C-NRA-T42ocG0cX-V9C6pbXmuGVtO_bInjKNI-QHroo4PKdSAYe90dzb1joM9KyyszQDwsBUBiWVw8zOYpF5LtNAYZSzIXJWFPLmTw8CNhKdT9MGMI4R3Pi1WFKHjz-lQdP71U2ddtXIQHSttw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "排污权交易的产能重配效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zIILzDtaF3GZVk2ttZL6YIUUKo4O4rKe96HhcIRJy2GY5cOSBE7W8wi4c_LpIhJurmNWmN-0d4m_li7FKzzUy5Tcg8sAM6DZMCqR0P2c-RMYdmZufpRUOBZ6euEl8RZwWRXsiPZDUN2QvbsHleo4Nv8Ojzwyxs8GiLDLP-fOFvTQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "碳交易与企业数字创新——基于全国碳交易市场启动的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zUYfPaREzQ7xcoHvjG7pB_gj0TezOIRiBMEa0jHQANBC80xtSdOKRz-c7UkNq693eGPeSiKi8Tll-rXoXRxcWs45EN6ht7Kk_gw-UxYFz0iPa7kS7xSJ0SJ5ifW6OfvixGA4mJrESajmY1KQwonF47sQB7FDNCyI4uMThLdxFBlw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "民企—国企战略联盟与民营企业关键核心技术创新——基于耐心资本和人力资本的双重视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wyyGiYzuqVWgkEwOqRLnPGiWRYUcB3rwZphjcNIhW8B97eAy9SRm2gx5NlB1uvCektX4duRuzGshyDOCJKcPBuU8lgvf6otO2oBs92MAlEvbHbTkcW76pGtXnLNEMki5SrY_mG2GoV0H5QJLLvpmbEOXFqgjbgLU5pLH8KOcmzyQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "地方政府欠款清理与民营企业研发投入跨期平滑",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wyyGiYzuqVWgkEwOqRLnPGiWRYUcB3rwZphjcNIhW8B97eAy9SRm2gcBytjpScuHjz-p_8r7aBy4rAVk-lPlm_6p2aFjCmgcKjW3DUfbpSz2y7l3lLZTLGhyOJOLKub5OheyKfcG5zYPS2GWAgVpNKW5QSH-cvUG8wRi7i-D-JOQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "绿水青山就是金山银山：国家生态文明示范区建设的农民增收效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zCuNtqoNFc435TnlJBAPFChOXFzYvfo5jWjGsK_hkEcgDI3cGkH8sOTPEeDEvSzHXpNYxXkqfz2w8_COK_JeGFybma7CUavJM9GxoL6oqwAFvxBmM1X6J6_4PHIozuIxDVJXrmbXBTPVzLIH0HIhR-0rQGp18E33N0_YWD9dW-0g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "资本跨区流动与企业全要素生产率提升——兼议全国统一大市场建设",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ygIhYlgpTJwF34joAsXY1IYa1uhR7BmWy3hok9MYx4-qSXkd0wLVgpdZOgPRoJttconmNPb9o1-CX0-VqBun6tCDw3-kqPJcH4saCQxNB67wdmm4_fVj2RzFn4KF67hlrLxN8F-x9ize10B7TRFMbD6LrjrBIjxcjCm0QucdQy0w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字经济时代个体非正规就业选择研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wu4TNqaxrMS_gfJYNrPjUGN77oxezagcCxqXgAY1NCW78R0RUq1HTdJlGIASf-vbVMD3yh0PZHnQJIRNPLPLSk4EMNNEiAp9N8Y2WeovaloTpesbRird2nAQar6S4i9jHp5jTnxnE2okk-qN-5oj7ZGWeoFzI7Hu9zCVWcQCJaVw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "和谐劳动关系能否促进企业创新？——来自“全国模范劳动关系和谐企业”评选的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wThOC07WXZ5Hwsgm599qDxnu_aTBYo36HGnH2AlFGnjbEIrlvDW8ET3pIy1BAqDUfdC5ss7c1iZjBne-ZElufY7CtQJZOgCvjEPMW2gcctcY5g1BWSLKnqlENisES-pZbYLwjfxnWqN0maVrEm5oe2_iZTu78i18rg3Y6Sd5fsBw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "文化认同与国际旅游贸易：以进口电影为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x6lYWWoL3ruX-CynE8QJtbgZ2dG-OHwVqlT-FqbOlffQifW8yzl80hrOOpvr_WcWzTWRRwjkx9IUyJjQeWej9_SbGxjYfuaXPawfjt5gsat3bQ6b3QPwb-mJadXiJUqOkcl33SXp8j0u0e0ZGHfewu_sGfciUHQIFwwxuWHfGGBw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "一诺釜底能抽薪：誓言消解处置效应的实验经济学检验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zhRTKM_xk7VIZM4DcWcWB0bQg3QrzznEZE_grKfAnJDwEFB_BZORpuNhAmu-zYeQ-we25V6wZMvYA8botOWpOitOObzKZQXyu2Gam5157dRKA905WPtC-Kvat348QOlJO6v-AKTkHyukLU8NfW1dvhC74swaT7gHEF4xzXm2nyxg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wThOC07WXZ5Hwsgm599qDxnu_aTBYo36HGnH2AlFGnjbEIrlvDW8ETaV8BH3tpY8GjpHIIDlMVArmjCAdbWSfH4SaqAonDVS0HDURwqaSoYwNwle0gbZRE1Tc65-lrwLHVcd90gHhfkBWl1-kyF_SLFknTLTvh5XsqdJXY9pMx1w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "11": {
+          "last_crawled": "2026-05-10T20:22:51.959724",
+          "papers": [
+            {
+              "title": "习近平经济思想的逻辑体系研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yqx2mPlfDDEEPHhMQKmP--GLdhjC9k5FgqYumB8nk-7e30IAtviEjtyl4jZlD4YaY_z5jXEwloFneHrIUYKE_2kRRCXRu6V0EO9weSE2vh75A9VsYOstMgfPJHqCQX00-4iJPPDwZm0K8wcRepuU9tx2gXG3cC_oZWxxfIXsBGyw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国产业链韧性的结构异化辨识、内驱动力解构与经济安全赋能——基于战略性新兴产业的理论解析与经验观照",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zp1RYUglSIpVANNDySY5njAu23qskyNY0t1cB1KgOx8hKKw8b9dSpCz_MvZMRCa4WSbgIQAao95WCTpM3gEAm-9jjacAhGm5VMiXoiLHI44PufKxc6cMOEgB1GCSd6WjQuzNYy8s6wR29qLFY4ATwoHHCySZDLxE7E5wSusfTidg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "关键核心技术国产替代与企业劳动雇佣：促进还是抑制",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zzxd-k1Kpuw0q8wsyEK-4Fk45rSWwk4DMv-jOnqmvBQ3gwz9m3EYTI3TSENWqFWgR7F4Uj0-U42Hk5FXv1iYBPcyDoSPHAcqLWO-QJkQ1lhVQeV2lV1F-1gthY6u-IpD5NvDxA4TOMmK8JyW9-mCCL4vDIhViztJiBCMS2YK8BCQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "供应链共同分析师视角下企业绿色创新的同群效应研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wcHKwXa6tydcwPBLO9M5DMavjNYoC7ScRU9AKybagpv-HKhah-VE2aIgUAk4TXokai9SyPXJO9gnWgA__whRAiqtXWnl5vpdYgvZZrAppOoaHz3JeYlwsA4k-jOxSh2-DY0uuCpHj5pVieWShFTUZ6ffWwELhnXOAKwaO-sa3XSQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "财政资金投入对企业持续性绿色创新的激励效应——基于“拨投结合”视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w8sd_q53aJB0w9rQURqBg2d6MUq-ld4XwVCLI7VmEWR0FpndLiIUOeD1s4LePtSej09YO-VuqFvMyJeu3H_HswrfOlqy52-h_632Q5uFldHuu5AlCuFkhDZtsQ-xi4xPktGeHFP_luYzbxtydEwQmLomCpqpeDPr0Xc5hjcvP5Mg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "情绪宣泄、信息挖掘还是决策参与：投资者绿色互动“画像”与企业绿色创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xKcUf63k7OqV3xqTadQPpZjoI3N66PbMKX4xc1U5al4jdfsi6Kp6wd-Vj--RrmGQwT2qVt-4WyBNUD09Dx5DEJw-VGQSEGM3f8njfIzuf_stbIFGh03vDK4n6_LHZvoKPSoJjJfC97ysHuHElz8K1XnparBS05Ej6pdy_jN6Kj4w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "科技金融的收入分配优化效应——基于企业内部薪酬差距的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xiJxTyzOwHGQ4jtyuvMOvIvFfth366wB3k8s0AcJd_dyzJ-h_HioLBl9CTuD8LPerQZDIkiUYWWr8EHDX8ZsCdh_tO3Kpn0dCTZxO6D1tXAey-W8hWELoz-CPoR7LJFmjT5E0wUp2VDKrS_8aDnzSbOpBoWERMzFKkU1O057PapA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "户籍制度改革如何促进中国加工贸易发展？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3znuiL0ECddqb8gMNdkoMJPPIXJ0QqSw5uA-UPqHuH_GNZ-o0gZwQ1Kzbf9oHMW-sbEc0I9k7ji18fsU2MbeKPJNZjGSMXmmlZ7xvQn9hpD9ttM6Tq_QKljN0jl-MyqWdakXZe-5t713dnG-RqYsft9kFx2HEPgoxm9eY-auwIxGw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "技术集群与人力资本创新：增量提质还是低效“内卷”？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z16wOj90Lu42SwKk-0gyEUyNhn7OvnEmh3BMPzIb_J4Tv_XmhpoWSUU-8jCyBUMdtNnjSVyQdWBgkCV9_de-wQB4I8hVZ0kHYRxtNUDk0gKr5gxPeU9ofkiYbf4q_4SDS6CFPl_TyHujLhBdRiU3FWJovcw2Huztgzva1YKu6XjA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "财政电子票据管理改革如何抑制非税收入高增长？——基于征收弹性空间和监管效果的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ywzTPfI5bssENgoJ8zcu9n1kMbQdLpTSOhl_TWwYtx0AahypzrAcVQ4CT8Sp9St4FrFq7Uy7bGoIUB0Kdw1r6wywNMgFGXXnTiusp_XzOJzhbbW8K6EsFEyIE1jiuDNXzvsTXvi0hZixU4GVL_NHddtdYKtOxSRSVTiG5WoCb9SA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "地方政府债务风险与宏观政策取向一致性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ylBwa8dNoiFwpNB4JsPL_t2kaqAugc0gy1pozp6htFa-P9sK2vQnURl4fB_tO8qqYrTbgoR6V-ZOOu-bovn8VTrdZEnS3yW8WfeDRMEF9c5IamTHOlEfJQIbWP0gJFGg-MT0q24_IMfFE5T6xq8Fzr1I9xfEc4iZlXx6jSUasGiw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zutb8XD0RBKvKfRm3FMlM1Zr37jUvb6mj7Q8B1mr1mkiIPUnCjUBWFPhTLkPBJmbuFcX8-silkoL7vW5aEnDYMqyKayJzloJIQH70TY18uOfVaQui7q-G3lUkT5Y4dGXfil0HIB_hMOVMgGzRvchXD1lIIAe7xHPLftr1ok9yC7w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "10": {
+          "last_crawled": "2026-05-10T20:23:00.098632",
+          "papers": [
+            {
+              "title": "数字经济、预期形成机制与货币政策效果——基于卢卡斯批判的再审视",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w_PoIC9WpD_reN7e4k0mlzQHiW9l0c5n5-tHNCUYX2Apv_xt99PmWdEmzoZKyiM-KJAwGBVsmlEExoBrLR8_stO4cYdogL9hahInKbp0DDhftr5his90AGFYQ-BmrX0wKcxz3T_TcYu2eN_wzGClMrzxICqT2JGQ5MDV661B4Sww==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字鸿沟、财富不平等与信息普惠政策——基于HANK模型的实证研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yBZYoeIk4Hmasao47ZmL83BUnDPdDOAA5GgW1bTM6kVgIj4niNFdL_Rxui9_dogovVE7XMt4aSvOTH3JMqEJyapwyBM936ndg0iLeG8uZ0B_mSqHJLECWSbeD7uUtLntKgCUZk4Y18SgaVTN5XPoe6nrqVcSbsdeQgu0cwRh9WEg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "“数”风凭借力：数字经济时代的性别鸿沟弥合",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xBlRxEOjCUszVJaClo2X1EJJNnrXhz2LhgZw9hf1r22O8ldjG198s7hG0HaXlVCZ7U2Zcun8gbGFWZMwtuHJRQoS7bDgQsKKirfpmasP-hCbFWetjoBn1RHrHHWOwpTukfJp8IdgEz8BDvPFvSflWFEubBBHgdQQvcTQI6Jlea-Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "公共数据开放的新质生产力效应——基于企业数字创新的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xCwPkjA-Gb0hnftV7Gs0yv_1Xfiw35TCMPsZEbIktFKBRxYBK2NObgkRiCbE6sLas_SYEAX0NUkHfgzEiOzRGXYEPn8i_dVtBvhz_lywhtFGnGYFkfh2HMJ-KZBBlyb0HwayuLLSe8gsNX5AldyAN4v6x-kX3xf6s2GETL9jhVaw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "公共数据开放与企业集团异地发展",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xBlRxEOjCUszVJaClo2X1EJJNnrXhz2LhgZw9hf1r22O8ldjG198s7ij2tHDaHiZht6qOUiuKXCnDpT-ht86_jRnBuTNI--UG8UNTRFr06T1ijbG2e7ZW51Vj42sYi_UQsdbBIlpsbrpcrxZRH5wpSTOkja1-nlhTZVXZhEhstuA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "促进生育之道：生育支持型税收政策能够提升生育意愿吗？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xbgnqc01_eDPLUcULGzQLYJibj_RW6rte7iAVbli8Fc4e6dbxrKRtgrek-dwm4tEg6ZAfQea34dly5tN3T-WcgSNcQ3PjwKmko4GwXjMO0kFJAKQ8SAq8qN0y0l5YvIGiozFa23UG8bv41Q4jOkYc9Qq01CgRcFG3hD4DZnSof_Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "翻越那座山：如何应对“中年失业危机”？——基于家庭金融理财规划的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xOETVa9lPPaHXrHSkDys7M0BYoswVJfg_Tq_YSBUFPb6F0nIBIlTHLrezme7BMPaZq4ECpi5jbw3YFUW9j7HUYjUpejYtaZoWD2SxzJeuiO3EhBTL_AJszswb_2XoVA1sJK9x3QTc6Yce7WWbXHY2zo-KJbJLdCRVif3mRLZYmJg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政府引导基金与企业韧性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wTNUObKKJ3ar3nnRPLd_M1b4Ty0OMDFuNooznqcGA2w4Tz02Ou6im3Ypk3zJRlKbrhj6UavirkZjgIojSgmK6G7Fxw30PznrZYRYBvXYSvhmWXpd438f_xvwanC8bb07cscOlHGd61R270OOOWSCnDlE-QxroE8-zZnXImO6DRXg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "从风险保障到生产赋能：农业保险能否促进农户采用生产性服务？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w_PoIC9WpD_reN7e4k0mlzQHiW9l0c5n5-tHNCUYX2Apv_xt99PmWdSbwPHRbcHYCEvjFbUk87HH-F5L676gTyR2YIiVfE0MSzPsb3Nvo5rRmqCNSlVdvaNdBzM1TvUc8vN9b1FYLW1pcmGJkOWDPrF3jVF813FSjncoAqxFwyKQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "西方经济学说传播与破解“古今中西之争”的近代尝试——以对重商主义的阐释为中心",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xpvwpnuTZ83IPdFmWkrXHReDuHnyJ_xzh_5Dc5j8cI3sIqezNWbngpdq96P4KZr43uiKNi6npVJz3x11bjjrn5LBTOHQf9IOB7XtGH9CAyv__jw2gNLdhadY-iXpTILvi-XhrI1blZcCCB328ovM-AmNl1Yt9uODDFKfrtkCmlvw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "从“在中国制造”到“在中国创造”：研发中心外企进入与自主创新能力提升",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xOETVa9lPPaHXrHSkDys7M0BYoswVJfg_Tq_YSBUFPb6F0nIBIlTHLtWzmbtyGdiPp3dOzDSGiHWPngYcJyxCwXBaHtQ49ze9zdwyNTgdEtJYumaaHEhaI1GY5tFK1ZqZXQ35x26a6VQKxo5rlVJ47cjnXI2Bg-KpXWMPlxnp6Rw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xpvwpnuTZ83IPdFmWkrXHReDuHnyJ_xzh_5Dc5j8cI3sIqezNWbngpvBN17sp3olgu3KE4ZxIIB_KXctr1Q1Qc4HEnCxmLUyPnHLCcSrXRJEAw9ds-IqOHdRlxV5cbHk-ql2aQY5HamEJbBLjOiYuUcqbZPVAKV_Q-lZ1vXoGTCg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "09": {
+          "last_crawled": "2026-05-10T20:23:08.496047",
+          "papers": [
+            {
+              "title": "绿色转型的要素收入分配效应——来自强制性清洁生产的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w60h2Lgnd3WPwj5g5o32qOVOAUKRZ9ZlWhy1d1CVGgu8m67Y1hrqsIqA2srA9Udl1jCX_TKAlEDpVU_rfuobPi6oxXrkjEVW30ilMXOSkfr0szxCwdfQAZJg6lADdXzbhJurt2nhUfJv4pt2B9O8zvHaHfqG0LhcFmZC3xuTjHgA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "绿色保险能否为企业绿色创新保驾护航？——基于环境污染责任保险制度的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w83UrLGouKXQeNF7iM5t089X6L68W-kqfUU9GTHnjNkIERx1bDq4GXe0wrXv5SXptbk9Cbo_mnXFEMSoQBPtbI-9WvdCCDSrCA3ytIV8yKSZWdf6bH8-iRPQSIqftAT0yitnIqxGD9at7FEvT3iJUr4H9y7-Jupco2OICbDXTngw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "指尖赋能，阡陌共富：数字技术如何缩小农户内部收入差距？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yHJn3nFLx5V5cBI6r1jPVtUP6V0ESI1jTa6oQd3XZqfsO0lEbQBvnBkJxNmU23a1k2okpJAk12SZl-Eh16Vp7VtGjLY7KvlJlRJ3NZn_icElYFf__pQvCaoEZ9UD3hKCKu2-_iviX3GMqZ5ZbGGdsq2ldCKlcFGn8IR8nLz5c4mQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "工业机器人的应用如何影响劳动时长？——来自微观个体的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yHJn3nFLx5V5cBI6r1jPVtUP6V0ESI1jTa6oQd3XZqfsO0lEbQBvnBL9g5Rf7MFX_Y3D3ZrVY4bZwjnRr1YDdmtp4unRCbZyeMr5PbX4WbG4Cd_HB_YTiYhvsZfKLPFIRDDVeY6geD6jWOghOHJYaTq_7uR3-5SJYC4DzznWu41A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "和衷共济，利在其中：国家医保谈判的经济效应与健康效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yNxChShINMYU2V28V7mVVHfH62VNb8gm6GS6fIQGvxbW7cLOqrXYyjQsVg9qCV1NpQsgRAz0Oz65Zf98_7n8qpdloC5Rni2kKKLDDIRKpMDP27UeIvud1PPDfBPbEPX4zbfiu4_H_II8qFwebZHPnCXmUjABeIKAioKIAu1a4Ezw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政府绩效考核体系转型如何促进粮食增产？——基于破除“唯GDP论英雄”考核的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w60h2Lgnd3WPwj5g5o32qOVOAUKRZ9ZlWhy1d1CVGgu8m67Y1hrqsIutshC1K3tCSgYkcqPvKo76UcwLu1Qc-Q6-_O-dEzyRCEaYfOf7ekQgS0KpazLOtbQG9nXZuuH62SSNDkZOG3mIoEgGFFp5W2DyJXFRS-03_z5S7Yak7ykw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "预算联网监督改革能否提高国有企业投资效率？——基于人大预算监督的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wO4zfBcT2wrERKKu5lJOyQ7bGQGSj_Sc56QE2O3nZOU63FPNqGcAIIHrfLXloupJlYWQW_UVUKznL8-bRSdRR62K5OdM1E2q7h0FzLzG4hzPdni0-0FSDT6i9BBD_aVYIEsswPtdnSdIXX1StGcaBf2D6CFS1llAImSDYCuYTMmQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "国家财会监督改革与企业税收规避——基于常态化财会监督改革试点的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z4L9CVuktDVTzqPwI3hpARZG5nPwKei4r0IfoEBnyGHwGhbLiVU3HaVgAubhB0DsGcDdIfVsNkyRWpHDc0ceWxBkKH_7FJLWROvxuok01bKhSNe0qGtObAxuBvGxk1w7cVImnMwQiM8r3Mc9wevLWAPDdoSkesAgWdm4V1KlLBxA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "货币政策空间收窄会削弱货币政策有效性吗?",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wO4zfBcT2wrERKKu5lJOyQ7bGQGSj_Sc56QE2O3nZOU63FPNqGcAIIFkNoWuO4RploWyvre_csUY4XGQ3MTuHotd0gHVL8KNJVcpjT2LPM65Y-OVn9gshotcjQwxiqolYScUpqnUiK9axYludTkRzm7ZrZpTtfTf_qlSgIJW3aBg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "VIE模式、双重股权结构与股价崩盘风险——基于在美中概股的实证研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y8ufd1CCDdTtnw_nGpoIrzruhiEVGGbB1xwnIzdhy4KmP4IxALpvdrL42EduDH8lhIPA0EUgzA3iEgckBLY1BcgPSVeCuv3j_eYTZq92yCsYA1JO3PqesN7DNejWRCRt8ZIig8g9MaDgG4w1EpNhHQlk-STMMMwrPg70Ka04Zkwg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "现金分红“硬约束”政策与上市公司股利分配行为",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zKOFKYRfQi2c22oNWzLOcs5ftvvQwPRs2u9KysaHoVsMTUYdJjQqn7V6sCCNB1JNJba34sAt_fn9mdu2JbqQPsOmzIfBWLdgmQUfdcUkLQwT8XFJcGOz5OZOcUeCrbBnjEtj7zwbwOuPI5jY1MsdfjH-n0Df6N6yEZtri1mCTROg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "08": {
+          "last_crawled": "2026-05-10T20:23:16.623219",
+          "papers": [
+            {
+              "title": "中国会计学研究主题的演化历程与未来展望——基于研究主体视角的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yUXVhX4zUof8u2ySCinubonOjUdTyTYnrwXfWDOjct9VDkZQNA8TFYcPC0P8cQEKx7c1TBrTQIYF4aX_4uAkk0mS-3Qo19Q5T-MMo-Ew1fmGpRarv9NxHeOB9-yaFCukDKIsQprcrU9KIvgbUw_em65enyD_BOWCYTlnLJkgr5nw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "城乡融合何以纠正资源错配？——来自国家城乡融合发展试验区的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z6xgA_NjktPzbIJT5JptTPWSfiFiPOX4LjhtRIALmDr_qs8ar_tO6luE4f8SHPD3Y9gS_4PrsJ26SQidgWut8CKdeE7ErdEwYo0splXIlGtCjTMoRIxSara2Xh5lOceOcc5rfPqsJHztnU0-oERhgh4Cn0ZvAGSnf0q3zxiRexAg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "农民合作社发展的增收效应：基于村庄内部溢出作用的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ydk_ue_bQ3jj_Ygp0LjoJ9_iJkYkO4_Ufnt59QHt11Dg3DGyWvGyC6C5RB7JF7wqfyZJDDySQEETx6XvHEiZyVZdgFgMJTKfd2oo1H7-nPvkSxAKMQGuYI2X_ELuo7YouGqQmm1-6W1ynONYSS4g-p2mha_8QrJVwlyTS5q4uUyQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "行政审批改革与企业成长：抑制还是促进？——基于不同类型审批事项取消的分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xFE--aVIgLJSW6PsrTFdxE0UOWY0oaKxE4ElIbKWzjMyBEN366i3JdplxrChRXfzooyk6RN5IKQPin5SVueuRRI_soM2HTX5Nop2Cfx6XgT2eZ5RkCZeVM-ny8dMk0-HtnV6Is8SOuN5BdYpouDR1AZE0KEAgfDhx1SQ-xAMN3pw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "人大监督数字化与财政支出效率提升——基于县级预算联网监督的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wpafYtmqNuaYnKlK0z4QeMftiPQnxXzOuN7VvuXgn8rdzdgzLWbvqBGawZQRu4WZwjnY3d-TVg1PzNZ-XcMSExBWS5MAhue1EKmyEMGCTXKv_6a3mbc4XVzLfBUlcYnzCvyImpHitMmYI7I49StrLsPRaBod3rBJYiNF_lDszd0w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "莫道桑榆晚：积极老龄观下的年龄认同与老年人健康经济收益",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wNjALRxENaBeYe2ioN1TbYdH3JV4Yz9XvbW29_7QYg6_FtJ3Jjd87X-F6zP-LDKgckPpwvGCHKJrQvgCKEbzsKStjq3dJ5q89HRT4gF13YCKloROLXesrbyXMrGqw-dVz2dUy86tufffu9ezVMBSNbSAekaIaqVeVI8zrfJKgb8w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "制度型开放的出口技术含量提升效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xFE--aVIgLJSW6PsrTFdxE0UOWY0oaKxE4ElIbKWzjMyBEN366i3Jd3gfCBWqZWSjeM-ljl5_gTSLRziuKHF1ne8UkYrn_FeqAnjZTxRlasaV6JBiWKGDsmCdJ_gAH9CHril95BHt98EOmZ3ZDwZ-Xf4ZHK6gjJgAbJxV_meB8Sw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "金融让利政策推动银行“实质性”让利了吗？——基于贷款损失准备计提的研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wNjALRxENaBeYe2ioN1TbYdH3JV4Yz9XvbW29_7QYg6_FtJ3Jjd87Xh0waZ49f7MNJZpOlNpNYt_vSGxM-s3Bmu0XfzkX5JWBQ6hPoSTB3hbZQYPm7qlEjUI49E2qzej9A5rYY11JInyArZOt4KMuBcyHo9ke1dOWLBZuWIclSHQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "可持续信息鉴证与资本市场定价效率——来自H股折价的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yUXVhX4zUof8u2ySCinubonOjUdTyTYnrwXfWDOjct9VDkZQNA8TFY_upgn_HbSO641lUyaJVt0emSS0E_l7cT6I6Sfj3I9wSImvWq0JDXafOuepU_LLeDzkrVYPx3-cox34PmMMXJ3PyMzI0gce27-TvlJ4kgPOu9LFg2NL_3YA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "股东数字资源与企业数字技术创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wpafYtmqNuaYnKlK0z4QeMftiPQnxXzOuN7VvuXgn8rdzdgzLWbvqBHuLZvJrfa7llTj9hcBNHDsztPXK8qPYMKeUvhYynm1Bsn-MFm35oJ3ZihEdcluIlwcKph67tA7ulxFHUJmvrNJyWitOo5mq9kXugfTIKfjoKNkVrLhVFJg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "产品质量信任危机与企业融资约束——基于央视3·15晚会曝光案件的研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z6xgA_NjktPzbIJT5JptTPWSfiFiPOX4LjhtRIALmDr_qs8ar_tO6l0-Td_Y8ALWWcvAZVb4scfPjjKAH0-7NFP_yi9q6j8ObHAm8iucJyPjpSt5MgQ9e1YEk9ZuyxlJIc1up01pW-1srlhS_iq5OoD2C7Y8pMu2rl0NtIiB_r5Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wNjALRxENaBeYe2ioN1TbYdH3JV4Yz9XvbW29_7QYg6_FtJ3Jjd87XmyGPFL1nbjf2fDQThLz-XgynndHygKTDsCndxYKrFZI5_ZdGVdSouu51G3A3fTeih5blDljf2zSg5VLPN1r0wVAo5FlZvRHid7O1vNfYIBBBuBjXiA2fgA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "07": {
+          "last_crawled": "2026-05-10T20:23:24.764042",
+          "papers": [
+            {
+              "title": "建设全国统一劳动力市场的经济效应——基于移民盈余框架的经验分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wF7oheWsZyPHWS8Mlhcd999A21zkBy1JcGBA_WGdOMpE52bAheMaL5YzngmJIlvvBwpPOvySmlcYT2kYUpNDkCc15wJ4n0IuOXq0OPowVqM_oem3yK-yh04GACFUr_eYWNCpgF2rUEz2eUnAl329RQeijP15DgRE4Z0aT4UhRcYg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "智能制造与劳动者健康——基于个体微观数据的考察",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yBEjZsEG3K55dcxu5hbplEhI-IgftbhBt6_uwfKj3bxVt1ZD9Tj7VcSqpTevrLdKNZ0LxaZwBY93gEVCH0aQ2b3UyD5Xk-3f5IVR92rnMlJigxMTZl2carqzCzEyFBbrj2HsSVSW_rCw2ZLuRviDu_9jbBTOAF3XAShw0gcRgRJA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "资源配置扭曲与数字平台竞争力",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zQOV5BZvS_cboUBtQBS52VtkZ3d3PIS5PJY7ISaWsjPNmCajGcpOGV0dDPBIPY3b3ua5Kgon42Pu6JOYLnuHBAZrqREcllwzddNG0nspAEwn-QlJpuXAhYRL2JydMK0v1MxIaaHV-nRm328ANtuYtNetriBig6WtaSUJaGo7uy2A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字时代的“韧性密码”：虚拟集聚与城市经济韧性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xnjoEyC7pyWOIbltcsp41t_0WkkED-L0BYeckF-lwqjQiJxHk-hFOnP9D4yTYNsMAK2NhO4AQvk-oXI08tDhI34mkic25fB3MOQs2I5DGpXw7dN7v8bf8HFzqkD8KLg3KPDn_9D0S5N4TSgqhoC8SGBqQqv4W9HPJBoOiU47hUOQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字金融与新型农业经营主体培育——基于“千村调查”数据的实证分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zZG9CzMgFuPzIO70FAMH_hWIz2QsDHj726ErBZU3baDA7bpsdhkfDP-ItJ50r6EWRS4ZEdU-FzWuw_OT9LIeTR8l89yIM0xFB2ZX3OUZS8JHZ8p95aOj2wd_6kttXZqbOagfBDs68iSwrUFtPRAAtI-FyYsUj2uIDkSzMSp95qzQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "消费升级、碳排放与中国碳达峰目标实现",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z564pelN8PTeaV9htMEfEr_mBIj7tUe0Z6IYEMKz0quqCEdJx1I5j1h8-dKAN7heyuZsuEX7eo3kJtZFaNA9BiRm8sr-bm-50qBWcf7B0rD6IZVb3q-2Zu1WJE8v3EZRqjimBZGeGRkbWUndBrSNVxvHDMpD9D83oGUKWkR1U5RQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "对外直接投资如何促进技术进步的节能偏向?",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xBlhwwtfczx8z3eVMtYkCguoRrfKhHThbu0jwgW8IUwWGaomv-mXKRguk_SWEyz0MD0nq5HT3SBZOQqGzqlakVpGl9g6TxcFNH1MMSPcos6dIwtDZefUXBwi6axwCuLprS1TmSX5FM2zWRq4_VS_oLA2cfRV1xi4AjCIjQjYv28A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "公共数据开放能够吸引服务业外商投资吗?——来自中国上市公司的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yMMSRxjoEbb7z0QZ4ajos8qWQjucyyF1RRuq1ix0t7eo6gPg3w3o78T7FtMG_SpkgQ0zjm5QpV_kGyBp120WXoHkGduFE86wtyH5BzNG5ch_R0BpfsaoJB4WaFwmaAsvGpxfTFq_cN-7G2GlAOdpmfTNCp_HxG0XuguIZ6rYgEHw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "向“智”而行：增值税留抵退税能否促进企业智能化发展?",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zY15IOZZ5Bgxx9MyCbdCfuPP27ZHyZrJw6tWURH_uHg8EC9FvFOC34KJE3ULLYH3_iBhAXdwJxvwBQKju2UBCEqvSoDP8-97PezBD0ZRC2ii_zxTNfxgxAIgyfUkfUNU625PyWFT572bLwHcYoMOxUfGTvNc9pMzB6z2ZTFvF6zg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "失信惩戒、威慑溢出与共同股东联结企业纳税遵从",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yFbaMglAh9y6G7dx1ubx3go9SUjwWlxFcm0OjgbFDgwpkfLLAfJsdNd5xylavEtP9wGZVrBGAyrIPAfRfCYhpuZCTmz-3Y8WItvF7OGDzGQ0ZgqkemnH4IWCQH-406XHGwVT7VmuxdiRZpxRLPkWPUSr6sWjkC611D_A7BxrOPHw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "ESG评级与企业避税：基于信息风险与税盾效应的解释",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zn2ZEIgJNWc2iVSHwQkkUdASHZbUrKHEve2nKRVj3_eW6Bdx8rUhyHWxTo7SJYeFe-eLtYXfK2NZ1CwqUGSERJVeeoJKFT-GU5Z2X3O8o8Yw3FdySXkKSsEFKcfNV97c8UcRf9s93vql-qRqajvAjhSipcXy8sY2h9Tcn_Sj_vTQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xu0ko-0t76lCtTqCuZKxM6lyBZvXcv2566PcLHQU2HqvLNyDkb_9x-vNxotvhBQ1RQCG16r4GYYrpAOSpIDdGPYt43QQ2QUkRxyxVcdM5WYeMZQYcMNEYGRQJddOiqMJi00ftXNSbfsSgevc7P1CTkxp-qTDtE5bEDN2rlRJFm5w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "06": {
+          "last_crawled": "2026-05-10T20:23:32.924666",
+          "papers": [
+            {
+              "title": "物流标准化的减污降碳效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xz6L4t_O7QMXFGEbNu1pcuIh5BN2t2ihPN_5DVCVL4jFPahxZQHrnEw6Rtn1fFB0r0BnR02Y2kxL0DyXGQMz77M1GdIMzVnYWn-yje3TegjDrsQpjlRYnjqdx9jYlDLpOAG8g5ZBtnZDK9gPUTRfWmYC-h8ZPqZ1cX3xL-wgpZxA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "低碳转型如何影响要素收入分配格局？——基于技术进步偏向视角的解释",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xz6L4t_O7QMXFGEbNu1pcuIh5BN2t2ihPN_5DVCVL4jFPahxZQHrnEy0xM9l-w2_zyPaSlpBk0rPec7bE01epWHJKcv9FBOG5pTI76yu7tRn_1YFo8i10UZ7fkFy_D3vLs5I6rTyoiiu_3jhr9MGzPX6_f4BY8uekWlqDGqY-daQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "强县之路：城乡融合发展试验区如何促进县域经济增长？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zYuJFSv7NqewyaDgDAt1KAM8h7nl7tEzPLUQU19eUBlgy6gAGJvg6RqLvno_QMp0YAHSNDf_lG3h_XG8q-by3h_iXHNcPq23nYu7bP1MoB7Yp52wOfzgzbIFyydxDqD-RK0_UXynYOiUkY-Yld7b_lUj7Gx8zhjoh61PnM_86aXQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字化环境下的非遗保护与农民共同富裕——基于CFPS的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xZu2y7paqpwia3miCiAqdpYRFZZ7myudn8EiNyS48QeZe0Wu7dFwGGP_cpWnG0aIXvgNsOhXHgb-yZPJR0Dpz4p9undXrS6QYFmSF_rL4Z5ETlsLqOF-PN9grUX5-5sPgzfHBFW4O9NELBR8w9CGbdoVBk1SJKss3gOip9kDLFHw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "地区实际税率变动与民营企业存续：不对称性特征与毗邻效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yRag77rUe-yIsz5PpyZjHSISqc0T5IxzafWdnDZKHuizr3aaeXagYaZV7Ay3Ngy3jQIefbRohXMuaC35LXz2qwhaJQJn1ICqVn4zBcVnxtpacbjA5lUeiK0k2dCesSn-6j3yuCWnlAwSPizp7Sy86MTpz5_h3UJKaSJwP28T1hCA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "企业申报税收优惠持续性与政策效应动态变化——来自研发费用加计扣除政策的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yRag77rUe-yIsz5PpyZjHSISqc0T5IxzafWdnDZKHuizr3aaeXagYadjF3hocaF6v52QAJqVXVwC0Q9obYy76ysJh75XHGMqCCGysi5cwFEK58o9r-Oi8cRypPO_335rrLCVUWfrKF4S-_W_E0E3zt0x_qxB0pF9EKMIEEF0_otw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "RCEP原产地规则对市场竞争的影响——以中国汽车行业为例",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wXdMGzhYjWIZZx7TsvmGr6NMrktpscApM7yJvwbaCOGFm7UvDmUE6LxwaPh3mbf1gRa2XqyxZ9fOhgP0BrbI4RfA-nm_3dtUjheCVNGhNzPPFIIEAqYJHwmmAocS4aJ_ZV5eoW5w0VM7wVq1HSEHyijJdigNnHp-TTnyQDEXcAjA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "人工智能、财政支出与制造业升级",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wXdMGzhYjWIZZx7TsvmGr6NMrktpscApM7yJvwbaCOGFm7UvDmUE6LcIl0-MxNxYPSOzOapi9pptVaxY0P0pl5Vud9_Ns9a9OipRFL14MuHfLn2LeXFLFLvXXIfeMJ_bf-0q2OjIdh8Gh_9AsCVeX_oKGvh-jL2hFmYUHvzt-fig==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "供应商—客户重叠、专业化分工与生产效率",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zYuJFSv7NqewyaDgDAt1KAM8h7nl7tEzPLUQU19eUBlgy6gAGJvg6RwbJ40WdQy2VDOmtk0-UAm5Z1asfHJeOsKX_RzWh4dMxNaHBzvjOh6Piac_STTWjhxMZQ6aQVUQNEoVaNs_bFKKWVzbCMOdNLJV1nFZwU6oiNptGESn9FQw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "银银合作能影响企业杠杆操纵吗？——基于银行联合授信的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zfh-mcX6jKptmvDIjWoymMR5s_75opmygQ-p55GFvXF7A1w846rR8W5JstWPluv7H6pPnwgwaXFSIdLsi28UuPxiDBhSly986ecFcZxJPYPtN5PSVE7uKRB6lfrW-r1ZJfCAOEi0vSL4F5LKwxEndSIc-82X0JtNLgD37xgdwjog==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中小银行重大违法违规股东处罚的威慑效应研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wGsiPEM5qC9uw1KDRLZfVfBuqOhYcrnrBA9J_4FGIuHIXzHExUXKVNZ-PDSaO5rjq990X4Z1N6b4MvpAqS_icEF24GPSxZ3eKztEjf9HQLbreFFR1zSW9WzQAs8ZFbbJeU-rhpCMrtxHTveFtKL-NKfQjwkkV6lnUTtM5X5WQEHg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xz6L4t_O7QMXFGEbNu1pcuIh5BN2t2ihPN_5DVCVL4jFPahxZQHrnE2dUtoFn-JwgaV3f0WyDRfbtlZ2rYT2AuqJxnFtzgRVCeKKCQNlQ3C4DWgpy94R9l3uxamWAuNaaW4hraklLXDTTYk5YQESqumWBcLxNDUV_bip2W9YAVRA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "05": {
+          "last_crawled": "2026-05-10T20:23:41.057424",
+          "papers": [
+            {
+              "title": "大数据产业政策提升了货币政策传导效率吗？——基于国家大数据综合试验区的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x_F914SOXuli0PosDyTGtWDoBe_E9TfSnXqAZfAXnSlt48qip4L9Y3T_rJPIfQ5xAHb5zxPRebnOpPkB3GShrEF9YhE7iK2FxSSNKDhq34uTF0Q-IDMEs9yPYDeaZr0KrqYMPlv2XaHct8blcWaQv5fK2v_7Pq4x4E2LjMWgNR5w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字乡村建设、产业振兴与农户收入提升",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zi-rKQCbGgd78TYXaWrl5y8XMuCAL0x259-_7oDRHpN1WLbzphWlpkMIKn0mlD1z2_172FU72c0swdXp9JjBzlvHh9nLEUWnjN0cmTzzFR7NFDP5IMU6j7FK-WYwMZJllAmHnHIpBOP6jXhGqjjNKgmF1f4fRkX79u4U_XwZyXNA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "投资者ESG信息传递与企业ESG表现——基于网络互动平台的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x2VE9B1XPWo3GI_K2hwxEQqAEEMB8_dn4aCg2aFMCK7FlW4YFt7IbtxT-6reUiSfBoUQyGfmnT9vqUyN-zB5b-uCGS0UJ2_TxTmn1fylbZSXMxJSLzhV6i9bsGuW1KYfFOFHvR0aLQFD2p8oPcaF_EHpKsFbhL5YvmQoYUDAgHCw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "ESG评级与企业劳动要素配置——兼论效率和公平的统一性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wecdFbt9V9fYP8doLnKbPWr4JY7ievAHy3WJ3S196-TSb2I4iFwBoRrf-qXREj5mjd9FCwzBgoF3-5mjZlst5E3E8plKMSE2ho8r81d0i19L-Ap8p-KtChTWCcz3bcFHkXmo0cUcKGxPWOlvvMEKOxYd92_nrEgb0X7VTqY3oI3A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "ESG评级分歧影响资本市场定价效率吗？——基于上市公司股价同步性的研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wYedWv4TtPv4He73xyu4r68PKzcK8XTGi2-BlarXc3PkOAU9fJOos5XVl7zmcGO_6Uqh3p2os1Aup6XkdjVEq67SB89OFWozGdDZuydvCdlDc3EVe-YGwOoXh9sgwxaIICTJFn1LIeorszTE3xtCb72K31N4wA7orjhn4Zr-_NrA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "金融创新能提升实体经济质效吗？——基于信用保护工具的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xrPmtyF4oEytygdxwizlQTb3MkM9Obv-VxGdlNzVDLuBSeeO3mWKfXEWpLg2WiwfkCaPFhGrYyhm8n5SPJoRxE2EtgXPnPcdMvN1a7YM5AfBox2kwB5gCcjdNffeVa9_EDnC4jE3v2EON81ZIm_6P4So89PA3zkLLTOajNsD2PjQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "银行授信额度、授信实际使用率与城投债券定价",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xq8Qb1WO6KHSxuua2I8rhCQ1iIUQ69gdWIsX7szEIeQoMBXuS1fRoxZ6tcuPd_Mbbk7x_prWt6Z2xUEsDLLlT09CrUODaxwKVIAETLlPljKJ4iSYW6G94-bbRlQE5l_q1rORfTfqqjYwk_qnjMpT9Gkf7a4MSzzVduwe0yU_sX7A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "藩篱破,百业兴：市场准入管制放松的就业效应研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y3nOWPMcLyXfyfOXVll1UAP5n65mDdtM2yAPSZpdnC_yczEVKz9im7bYZOKwEGYOlbVAiWincheEviDKManpZJXtg95QANq2Faas2I0dG3uwPtJLBAi-kOryEnRv8BdCqK0E16CVuYyxWL_s6yZbquGLjpxFDa6KGpkZqNWG_v4A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "共济之舟,何以压舱：养老保险全国统筹的基金省际再分配效应",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y76s788u7c4SPjkaHvapXu8WZr5DUK1Nf7djxoBFXOMqehqf0AxUXdCTe-kIm12QzEPEX5VCtFiky-iYD5gIVeHR6Uxr9ZW0fbn4hRug6Q9z1JguBmnAsExo515C1nTR-UXj3bK_YaLXgcyOdvq43gLHWAFYks6Hz3UhMDB7kWGw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "环保垂直管理制度改革与企业进入异质性",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zi-rKQCbGgd78TYXaWrl5y8XMuCAL0x259-_7oDRHpN1WLbzphWlpk8OBOfzijlFrwhyp5dtxMte0_zDUoczqtKfB5T3HuLwXBezBNmuBgJBwESHjI87I1gzp9vrsHMVxSRMBieEFcoz-AVuemYspcT7x1IfhxCfXt2vxod7AUqQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "省以下财政体制改革如何激发县域创业活力——基于财政治理方式的机制分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wbhG-RciDDDeTIu60zoRGVmHJVKmZAI6WpJlndtT51YAzUsDN-G0y1atiB9YF_qW7SczOjBb4Xd45uCT-nVGK76aIj8ieEybxxhYyf6VG6DNuP0JdGLB5DYH4JAi2C39aZm0RERq12SfntGobMzDTdSkv-b1dbSVd9eoh-wUad3w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "04": {
+          "last_crawled": "2026-05-10T20:23:49.182298",
+          "papers": [
+            {
+              "title": "企业ESG表现的供应链“扩绿效应”",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zhQVbsFaPzxMScPcO3xqYckRUv6aLXwVrx2uWDvqnrgECTPboX2x4lDYHmbmtywM58ZDG5L-ZEz21hRsVNxXTmErbCCL8aV_QktnGxABnwfqnsewZ7Whqe6L75Z5RUio3oZ4t7K0jYrtKG60UJxshDVUvn6_eLHVjlN9DAJbTF5g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "ESG评级分歧对供应链韧性的影响研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xGq_kVPzDu0vXYC1AiO7uPzmHWB0Ee4PssoUCeK6P9JucYZZugHNdmiL42bYhJFHx2kDQ7EI7xuMFXEeylbLe69TM7kPWvwaEoBPpbGwqfgYl5bxtJr9xs1hzS_3qrcoqW4DQbBQYZ2pQxi9kYyhBbeRK0Xv8j9-Bxu0iAhJgMWg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "西风凛冽,东风何往：美国加征关税与中国企业创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xZOpjOxGtVbcTRaxCis2yOSlZZfzXFHiHcQJP13R83o5Szu8H9nC4VKKCNUKyMeIj0vntHgb6vJ8BeNEB31Y_Fg-i7Hw_FpyadCNwVwBc-AduTI2yK59t_JeRz5Z5fY8Tl95GZJAkzuIBcC6LnPqdBjwufbAovvC3dDw6Dztkbnw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "失之东隅,收之桑榆：美国出口管制与中国企业数字化转型",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y2pPwjlV_0ymiR5NTmyANHfquPns9ejl0OaMCWCdg8A5sl2MJ10quIOnMX9mgZp7gCUeesbBWn4tPbSeQBrTA9beGWOlGtJgHHPyXBRHlMx265Is-UHz9RXNp-8FQGEf7Nu3w6tcBH3Axwv10VqvLvTQIYSfxtgx0iqHMlkaT6_g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "因地制宜,因时制宜：家庭生育资源错配、人口政策与人口数量和质量转型",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zhQVbsFaPzxMScPcO3xqYckRUv6aLXwVrx2uWDvqnrgECTPboX2x4lg0zHUwybCWFcfQx_sr9-c9Yvn-en_dG47P5uadxw-ol1vskGM5684LejgIWbgA1kFHFDbAeDjHCskf7R8_l0xBfBBZ4_Hyxzd1TiKjyzI_uvBwbeC5X6Ew==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "破壁通衢,智联九垓：人口跨市流动与城市间合作创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z5RHS8W80Ce5KVwgdwEKM0VANWziqRB_C1nyuOkqDpPsgtLBnUWW2_iWFn2f-IEVDHJfjhHXBgVsUWWf2lfW949Jo3b18HLWgzG95Gsc-lnsw3jg4XFqYqp37LHyANAjqogAQyM16M2g6ZctNFo1pvXn88eiKgjhc-02wBbHXa4A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "巧妇燃新炊：农村妇女非农就业与家庭能源贫困",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z5RHS8W80Ce5KVwgdwEKM0VANWziqRB_C1nyuOkqDpPsgtLBnUWW2_V0Td4RLMpY6WlKTlGOYI3YhRfMKx-Sf5T9JvZG0AqM7J-G1E_r5STr3Jklx6qH0az04J-kSLmN6lUbkfgvdItEIWjwVPaQjV5r6JqqlH1i1rpz2I3tvlCQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "证监会随机抽查制度与上市公司商誉减值",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3y2pPwjlV_0ymiR5NTmyANHfquPns9ejl0OaMCWCdg8A5sl2MJ10quIrF5FacqyXoFOzWpiSPa6rMyMh-a8mi0HjZVVFl2LgQY9JKiHmpA0xdUGDUYWlBQKOaoqPqlSuQlWQ1SGDgI0z3zli7dKZ3FAJ1qUu6Ck2JWLGM_njd1xEw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "基金监管为何不能一刀切？——两类基金风格漂移的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yXTEbgm_sr0DjG-ZSeFMUbuIhMhEdGA9vl2hfVdZ6PPV1Ugbi6SfcKjO_1h57XGsu6pktrMKJXo7ov9PawNAIbGzhHRFA84EdX94H9PTwbT-mPHYySQq0BjWZN41gRv6DZkgWyp-W14ocIogdNRBoYkQvKGJsuDWk8i4k4xTA5nw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "整合信息披露、信息处理成本与投资意愿——基于个体投资者判断的实验研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xjDkbVE9_W0rKURsLcnxF0Gfo3YkqG6p3Nh7IfJFgg2Vfd7nkmHV4QN4_jGhVQ5CZm5QZeIWInYzVVBPo68ycazRhQiNsuYP_eT1RFn9d-VFCpgaCJMECu6hv6-NQVrmHYJXW5_TxMuW479-o-4VwuNrvzYf6jKHR-zVlgtdUGwQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "企业成本加成率与内部收入分配：基于产品市场竞争的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xjDkbVE9_W0rKURsLcnxF0Gfo3YkqG6p3Nh7IfJFgg2Vfd7nkmHV4QMf5Z2AIxwO0nerVDVsyh4bGQclHX0yczKYNJFXoPeV1FPa0Ei9le8lxkhLB71xQXL6nFzXNxMYLlKAomii2MCrEc6qqrcer-drbpscNaeqja6F60B8fVsA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x0IAc7rRLOknVyGgJjnJPsUoJN9971RlglF97RRzX1bq8OOK8JDIW3uwFPpZz3J4uMMQ8AtXOwicrSUpUQ3rMjNtLb3szPgWZ1QTrEtcrBbz2Kbgoky8gAfBO1fRO6mVdbqyDiTa4SaJF3WZzKnSh-zEKt_GDbsAf8iHNSCFdZVg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "03": {
+          "last_crawled": "2026-05-10T20:23:57.313356",
+          "papers": [
+            {
+              "title": "中国长期潜在增长率的实时测算及其下行风险来源甄别",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wOFD7E5xqv98wozY7hsKJBPpKHnyfgqDLpT_ccFL-GVyIWDkBFKRbT1m2ethmfG9deb71N7xHDOutSk4qefrnR79BaFygfdtuC5VJb2y1sT-wfIwC57z5ysKzM6PMf1fOfAUj0ePRPQvYcfi6AfbU_xJKBZb2TTDzrGrXxD_kS1Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "地方政府欠款治理与民营企业信心提振",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yhdlRxBumNG7xBL6cyMZX_UQFMC_iW93cZeKS0S7O8RLzhKQoyOZX4qsaXABb-yoeXqzdrVelwS8bavfq9CVAD0zwdeo7a8H2wIeBceav3WuI-DdVI0V-PFQ4pI9_sUSgqp-zO3fRXVzeLzbBqfDdT2BkIDcbPcGkD6r0RBUYgeA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "畅通国内大循环是否推进了共同富裕？——来自中国家庭微观调查的经验证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wOFD7E5xqv98wozY7hsKJBPpKHnyfgqDLpT_ccFL-GVyIWDkBFKRbTgf_t15-07ItgHneBWTAlqx4kGqA_yjPZPyN67lQWbFCW-upQfG1tQ9oCoYkJGWmIWW1UIB6wI_qlPSosWaNqcz3OwBkVA-vA3mgfVgZ94JRlSdpiWwKckQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国经济总体战略论纲",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ypBDh-lGPSJ5ghoMpQLCDL_4_JA6gv14RME0oNCY6cN1pAEDcj43v18FRTgrPk9lTdCXyEJDE7ZZM61DTT-t5MVXEEMo3DsT8intDK0_R9Vc-vB4Uh1UH7qLA5Q-pK_4g9gKOi2D80EqjnIzd2JmskfQeqq78W0FC_OAbOl9ph3Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字乡村建设对农民农村共同富裕的影响研究——基于财富创造和普惠共享视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wFx1DMGivndL2wUSKDXBPbNOHPB4TaiL27JqgNyjQ7_YLWpaTWbyqLdPkccVlS9bySiyzq3RmGrvgqZUL7bT7k36uawBmNa9x4Q7mH4-kJhOoLOeSatOtzz0tcKwpaCPTTfVcNrniZRWy5SWfINr6WhDfnmIaUB3cgTkoW8J7aaA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字乡村发展能否促进农业经营转型？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wFx1DMGivndL2wUSKDXBPbNOHPB4TaiL27JqgNyjQ7_YLWpaTWbyqLnjuQviZjbOVpcc6T9TkmemD9_YCqBsC6oHPaSB6lpPTghAhd2c2EYWpPRduZTlT2loQwUF-KDJlmDSao4t9CwX8pwFXAnJx_2Yv39GX7wlNppeQdFqD8Nw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "政务新媒体与城市对高技能创业人才的吸引水平——来自政务微信公众号开通的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xn-y6m7i0DEMKkA1gy_IRDnfEc5_7ZlAP7qJf4vd8XWNyR_2eXouPoOXi3rSYzvNaHHtlylfCMC-jGceFgK4Jc3I4-zB3NluxXufw2N2BZbQpALVtZ1LFIZyNw_k0dopQGEdDOPh2EhuMHL6XM9G8EKaJ4P5lrNYX09jSXZB_yNg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "供应链数字鸿沟对供应链供需失调的影响研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wvlfu0XxNlXtaxbAh-60X6FXYDn_tVskBpLe2mS4MgMkA59ITjansI245_9t0h7ZXGZHn-VtZa3b72ccm_nOxqISJjfftTxr7IsErZLVUp_mXDghNaRBmL6AWZB9exd5YgYkxsHx9X8wGn-gnSpDcL_SCCaNaIgCcrH9KbBeePRQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "最低工资调整对城镇家庭消费不平等的影响研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ypBDh-lGPSJ5ghoMpQLCDL_4_JA6gv14RME0oNCY6cN1pAEDcj43v1bjWQqCqHvc1F_EsQw1-gkf9b04f0MMMf5g65U1Y8IIvQxPqCTHe85sqxYhVqEYz0exZVY1rqX3fDIAh32U_5jW8glmytSdLr_Hrs_Cyi3AZjf65d9Uhq0w==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "公平竞争审查制度与企业ESG表现",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xn-y6m7i0DEMKkA1gy_IRDnfEc5_7ZlAP7qJf4vd8XWNyR_2eXouPop226v-I7aD4-LI5BWjVYb6PpECeDRsdIq7dBBRuKUOy1CbFF806dO0GiOgkKF0c9_uQqKiA3C911W3HJuEezTaX4Lbq5INMroxbzBehj5X49bDpOaDYLLQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "业无信不兴：代际传承与家族企业避税",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yhdlRxBumNG7xBL6cyMZX_UQFMC_iW93cZeKS0S7O8RLzhKQoyOZX4Itvf5nKJEicXuCCo5XDxzJ1uX8qZSOPr2i1bp84wmiMjd_EhT9rsOGoUhxJK3y_PYa5RHnbTcYxVzcQw2gYun7rRwJGQdwxzFTEl6ln9JcUrpk63-s8CSg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zID_JujsfghaTSgrBCks0U2Yp10kW__4LSI-xGrLFfJns9pURki0oky4ABTyTEW2BZbvAWkMUJrOEKqG0ZCgjdQLdqLwpk9PlD4YborU-44DEe2ky67oA9Q7-1Pg08NpdyBBSbSmSPLAF6dJ3WQOOYETc7r2nJgVQk-JqqH5c2tQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "02": {
+          "last_crawled": "2026-05-10T20:24:05.445461",
+          "papers": [
+            {
+              "title": "全国统一大市场建设与中国企业“内外双链”地位提升——基于国内供应链调节的新视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w064YRzrTSTyBJ5yARHnMb50hyXuw-6Dvqj-aYoN5bizZeUkrQYJC2C0D_Y-d9NpqMT6rh1oIXR1VkfnJnMWSY2LlWSuRWT7q8B79roFb4bBxsAlPRmMizPy2uw5Uk79R3b_-W1DtQVS64pIeBP8RVGcC2_tjIPkB4Nid1g1Gr7Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "公共数据开放与企业数字技术创新",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yo97V86RRF_dnrYBRF1horomRGMQ-hhrFY_kMCvuxIKLRGq-q_ojF7vlQ0BP8_OGz3y6pUTe-ExFOk7vVuUMdWjapkBJESxxAvdEL1w77wnSIjvLFxC7APldqcsmt3Qc4uKVjEMwzv803WZaq0f_2LzGnFIscRiwT2x7Gwk2JUNw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "国际人才引进、创新网络与关键核心技术赶超",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xv7aMQMkdJ4WsTvZ4wBURfyWgmFqbptjosLVLe54-VpxI_E-9nJQhuSyvxIXWR5IVhAJ6sgO9Ha2m6K93JWftHUCNZw19kJd8f-VIm2OtKE0IvFML1qhxNdv-4pu9MA2UjYp1o_KvZokjnfunVKFl5R9PBLwBrS5DyXt1KgupNdg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "中国传统经济思想的问题导向与丰富内涵",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wbURUaFBSSmucEU5mJMKSID-gTNGxKTlPiw28aDe1wcsRrz72vB5yt2tE75Wa9tfCdjF8VfTVGTCSwqd6eIuAdseduKmEieGXsNgUxSySSamKh7Rf985eXknDAgM-CBw3-AZo3nhj2sgEWcg1_wibtnCIOBfoL7rVBtWPM9iLifw==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "共同富裕的文化土壤：儒家传统与农村集体经济振兴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zQJJUUVtMHgaM6CEAvzmoDBuvTCA_rF-OYzwtvMOg3M3PidvXacnVzlPF2mscyHQbMP0bq7aEi6DUTkJilS7VfoUXPklOS4sBNEI3mcrmUCM1DQUAkCyqP4VN2XrjR4cXrZ67yHtJsu-39vQDAio_1ayupTyAPga0FFhXJwGMHog==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "机器人应用对就业转移的影响",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wbURUaFBSSmucEU5mJMKSID-gTNGxKTlPiw28aDe1wcsRrz72vB5ytTadcjWmwYhAfIwilYMEat8L0qf9GiAOOfSTwqKg7GiriLTnOKalN6Vt2_TihKfE6VPh7uDeFD3lFzoSQHVUG8HEV11sfhUtuY279JNJReY2sRGpfnweLXg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "人工智能技术能提高企业ESG表现吗？——基于动态博弈的成本收入分析",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wmuMtKIYOwJVPJo-ZnGGuZlxvno8N1qbfuGJVip4OMz_ZjM6cITJ9LDhO4_LMXhJbTSqIjnOtopGwcKyuf97eGChofzl84mXWA0tAoqhhU0mNxhf0kP-8-drsBEqPo7rA385elNfvcOLB3Z9muBxGVeL-gqPbl6nxWB5ODpGztUg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "稳金融是否能稳就业？——来自资管新规的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wYtgV8TT4pcm0iZT-jq2hxf9qQ1R7LeEcZzCoUwcv2Mz2P4Ix4NHm_rKCrH5GWmSMJpcb1AC-VosTXcxGKThjjTbRHlhHWJ0Sj9jr8FpDelOCbN2_zqUFxNqg-WYaasL4Vpu6wtpE-WO4naimYs4KBG3EMH5Hwi-5qmj9d1koq5A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "供应链稳定性能否实现稳就业？",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wYtgV8TT4pcm0iZT-jq2hxf9qQ1R7LeEcZzCoUwcv2Mz2P4Ix4NHm_Az7FWHaU1Q886aZ2mD-HMIu5xNVjMONkVl3anckip7JWbkYjjowr1BEa1LIx_xSGE7280-UB8-YhpqSxw1nacJ7t8x3lIi-to-bdDTOrtd7CWwIUxmQz0A==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "出资人责任追究的创新驱动效应——基于国有企业创新效率的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xv7aMQMkdJ4WsTvZ4wBURfyWgmFqbptjosLVLe54-VpxI_E-9nJQhu9j__5AAowi-uaw3fSpvBjxtstvMZo6zoERjbPAjXlfuYD1jZ2s5eXMQZnXjrhnisD4u8ueAnHrHa_X-ZI74xxOaUzYsSgMQHiykWtC0B95MzNk_J_p0TaQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "国有资产监管如何改善国有企业投融资期限错配？——基于经营投资问责制度的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3w064YRzrTSTyBJ5yARHnMb50hyXuw-6Dvqj-aYoN5bizZeUkrQYJC2tB0WW-fQl0x1LxtdZnbD7eoQYOlfdfgeVO74H7wtp0LMPOkseypfH6i17iL11bZdxhDYrtRjdfDYH3ycIKsx85txMASMVesKEBgoiHzlZeN6IeSRGCRwKg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            }
+          ]
+        },
+        "01": {
+          "last_crawled": "2026-05-10T20:24:13.566576",
+          "papers": [
+            {
+              "title": "产业转型升级示范区的绿色转型效应——基于“数产融合”视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yKURVPRrQE8Z5kjtByQTAVHd6Rv9nlxPM96WN_JT81dU_SfjofgUpmPspvuwQf9rnFy1jUIzOEroAcqDtz_L5HKGBf4wZne_giCk7y4nBT7tjDFkhxY5HugZSsp6jn68l4RaHtJr7nFwVKfxL3v5k7-VLsnSkohVjRY1SFVmbNrA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "制度型开放的市场整合效应——基于市场准入负面清单试点的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yLupCJI4J-0ZIqk8ZQInaiK9kIp-OoI0JMGpU41pvV9s-CkiK7175I8eSl_-O5EWtUofUsRq6a-IqK35HHL9robVH9xd37xnLIvPwKPeJJs5lv_SD7RPhifWgMuxo2V8fY8deNxUlrqnl7Z9aqR6VYBCGDRY-rkqB0Zsk2M97jjg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "市场统一如何促进企业吸纳就业？——基于长三角一体化的准自然实验",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x7f0XWSY7NM8WPRvT_M7p_LiE7TYUPTiD1mU9SGU-cv2vvFdUuSQs63HRznuJhVn29A0cVctIriAZfvdoeyIRA4xMKevi1S5TjbXgrN6S2Qx-bFBJieTZ3jw9_wv2vosJHS7GzxBpO8NA1tx-KDiT0RjtZXnazdaYg2O5L5-kSNQ==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "省际结对帮扶与乡村振兴",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3zF_Zk5UEvNSqsdfmccOW25gMP7WamUKe-LElWELRkNLW_SOFrm7c-GatwmiLQbnxhBlOzaCdvKS28v4cJBP9soPQMM0VWfTDPIesTypL--Bq6c6sZoreW84k_p5qvrfp2XkjbbX5hZRPYU67HDU-Ocab1aUku-iAoudgOCZSINrg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "人工智能应用如何赋能企业供应链嵌入？——基于共享商业关联的网络结构视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3xmHN9ixjFca_3HMPJZA7okDgEBd8ngJfmpF6zDd2N2LTxnKX_GyuutRGYG2v7BPjJ41hE0YxRQqvNbVHScZdaeiYyBqqCcIZvxnOQLWfVJ-AK_pyhahN6oF3PXImGWcfhOsDKWCqPdVhQ4HvrI--fMNizQXe5zDI5l1kGeZxYYYA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "供应链优势企业数字化转型的双边溢出效应研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z7S1VBOXRUJ9PakLFGdRmg0Y9Ej9ROYj6UqlE-COlSSa6rxqRWog_emyNrSPlJTlzSfyRqMMI2dibZZH7uq2oKUOYQiR3uHDXXFJ8AzhIb6H1ze8NziHxYPq4ZaSxqvT4EItficdQnUfeyaVXrcUUbpJa4HJi9izCn8GpBb_lWZg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "数字化采购、供应商合作与企业市场绩效",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3yQRvwZoAzxKj0iQpjrdVOgLklhNEMjgN8U9HzAypnW5qpzHElc--2HVeLUN6BclZgR1xitkZOZSZRmzLrqGpzluO9kKuohCSbTYzjVxlbQLXKa5dQ5NdydOIPzZLfkYVtRo78BfOQ1gcBz0fHL4cevbMH7lR836ONiwriAVcJKiA==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "出口退税对内销的削减效应——基于产出调整能力与客户粘性的视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wt9hLB0M4U15e2W43IAC4QjRUScX3lKr7iFCFz1rXs4lMXJckkiNhZzfxMo8eE1k-s8x2JlogzLEb9K6_Up3ynhxQN_uCe_yKzNBv0m9J3Eu14QzEcN108f8GHUMW4kcCB0v1K99bDTzJWjUrCsOv1H1__-CmPpxLlboI92TSa3g==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "进口贴息政策的创新效应研究",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3z8tSfSwAtndJjNWzfjGRDiSFTAYK874fg9lv89rtx4ImW0w0qLxLnq_xeQLtwvKdGxZuXuR_xLW1Oj--KsLZA2tDdnOnYi-On5Jpp2U9cvBLkojMvIIy329WToYr_TkhqjOLamWglgLk9RcVU_PtGAvG_OeP-kr3VQWbfGeSs2Wg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "投资审批制度改革与企业投融资期限匹配——来自投资项目在线审批监管平台的证据",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3x6kLlVPSsBCJi3xMI3XMhDzad0EgB0d_mlTn-orxhpdsBZS_b1IQv8q4e6Q_4BtyVrkd5e8KQ0zhbY3VQ0SRxHvtIUWbCn65ioCXEJaCP7swO9VvXW3s-SC0axoWsrgH6RbAjjX69IHn5lyktMc7xGqwIQ7UXyx83RjKk0DW2Gzg==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "银行金融科技能延长企业信贷期限吗？——基于银行信贷配给视角",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3wFsRf6Lpj9hpF1fkwe99eLN5Zso3D4lMby4bG-CMe7LXqFdLL-kKvIJ-Jlr3r7PVm1ja9Bu17J1rjM88HKDZavaInh649D-SRlGKyYhh0OMETWq9QSb_6huePdBRc9Fmuhy_ri5NyiKKE0a2yZIGzMa2dRnj45dTQsoWlPeita6Q==&uniplatform=NZKPT&language=CHS",
+              "status": 0
+            },
+            {
+              "title": "《财经研究》简介",
+              "url": "https://kns.cnki.net/kcms2/article/abstract?v=8kKd7LBMH3ynV6yK-2KGxVI-AqVQ0U5qQsA6TUV-X9C9tr-1qs4jaes-qT60KrkIhVmWtdULmHbH2fGBrcO5TTktr-bQAGClkwYqvZ9Ys9hQsrCp6wB5fEDz1zx_sLIMTRaeNu8lPRQ1yTq5hIi0k--jLliYvVFARh8c86a8RZgAz1LF3V3u7A==&uniplatform=NZKPT&language=CHS",
               "status": 0
             }
           ]
