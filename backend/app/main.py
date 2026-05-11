@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 async def _cleanup_zombie_reports():
-    """清理超过10分钟仍在running状态的僵尸分析报告"""
+    """清理超过10分钟仍在running状态的僵尸分析报告（直接删除）"""
     from sqlalchemy import text as sa_text
     from app.database import AsyncSessionLocal
     
@@ -54,15 +54,14 @@ async def _cleanup_zombie_reports():
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 sa_text("""
-                    UPDATE ai_analysis_reports 
-                    SET status = 'failed', error_message = 'Task timed out (server restart cleanup)'
+                    DELETE FROM ai_analysis_reports 
                     WHERE status = 'running' 
                     AND created_at < datetime('now', '-10 minutes')
                 """)
             )
             if result.rowcount > 0:
                 await db.commit()
-                logger.info(f"Cleaned up {result.rowcount} zombie analysis reports")
+                logger.info(f"Deleted {result.rowcount} zombie analysis reports")
     except Exception as e:
         logger.warning(f"Failed to cleanup zombie reports: {e}")
 

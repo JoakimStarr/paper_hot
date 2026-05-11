@@ -33,6 +33,7 @@ export default function TrendsPage() {
   const [radarLoading, setRadarLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
   const [historyReports, setHistoryReports] = useState<Array<{ id: number; summary: string; model: string; created_at: string; status: string }>>([]);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -170,6 +171,23 @@ export default function TrendsPage() {
       setHistoryReports(result.reports || []);
     } catch (error) {
       console.error('Error fetching history:', error);
+    }
+  };
+
+  const restoreReport = async (reportId: number) => {
+    if (isRunning) return;
+    setRestoringId(reportId);
+    try {
+      const fullReport = await papersApi.getAIAnalysisReportById(reportId);
+      if (fullReport) {
+        setReport(fullReport);
+        setHasHistory(true);
+        setShowHistory(false);
+      }
+    } catch (error) {
+      console.error('Error restoring report:', error);
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -568,17 +586,32 @@ export default function TrendsPage() {
                     <p className="text-sm text-gray-400 py-2">暂无历史报告</p>
                   ) : (
                     historyReports.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                      <div
+                        key={r.id}
+                        onClick={() => restoreReport(r.id)}
+                        className={`flex items-center justify-between p-3 rounded-lg transition-colors cursor-pointer ${
+                          restoringId === r.id
+                            ? 'bg-purple-100 ring-2 ring-purple-300'
+                            : r.id === report?.id
+                            ? 'bg-purple-50 ring-1 ring-purple-200'
+                            : 'bg-gray-50 hover:bg-gray-100'
+                        }`}
+                      >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-gray-700 truncate">{r.summary || '(无摘要)'}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-gray-400">{r.model}</span>
                             <span className="text-xs text-gray-400">{formatTimeAgo(r.created_at)}</span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${r.status === 'success' ? 'bg-green-100 text-green-600' : r.status === 'partial' ? 'bg-yellow-100 text-yellow-600' : 'bg-red-100 text-red-600'}`}>
-                              {r.status === 'success' ? '成功' : r.status === 'partial' ? '部分' : '失败'}
-                            </span>
+                            {r.id === report?.id && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">当前</span>
+                            )}
                           </div>
                         </div>
+                        {restoringId === r.id ? (
+                          <Loader2 className="w-4 h-4 text-purple-500 animate-spin ml-2 flex-shrink-0" />
+                        ) : (
+                          <span className="text-xs text-purple-500 ml-2 flex-shrink-0 hover:text-purple-700">查看</span>
+                        )}
                       </div>
                     ))
                   )}

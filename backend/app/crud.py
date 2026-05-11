@@ -945,6 +945,7 @@ class AIAnalysisReportCRUD:
         from sqlalchemy import select
         result = await db.execute(
             select(AIAnalysisReport)
+            .where(AIAnalysisReport.status == "success")
             .order_by(desc(AIAnalysisReport.created_at))
             .limit(limit)
         )
@@ -969,6 +970,15 @@ class AIAnalysisReportCRUD:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def delete_report(db: AsyncSession, report_id: int) -> bool:
+        from app.models import AIAnalysisReport
+        from sqlalchemy import delete
+        result = await db.execute(
+            delete(AIAnalysisReport).where(AIAnalysisReport.id == report_id)
+        )
+        return result.rowcount > 0
 
 
 class PaperSimilarityCRUD:

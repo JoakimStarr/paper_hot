@@ -736,14 +736,9 @@ async def _run_analysis_background(report_id: int):
             )
         except asyncio.TimeoutError:
             async with AsyncSessionLocal() as db:
-                report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
-                if report:
-                    report.status = "failed"
-                    report.error_message = "AI analysis timed out after 120 seconds"
-                    elapsed_ms = int((time.time() - start_time) * 1000)
-                    report.processing_time_ms = elapsed_ms
-                    await db.commit()
-            logger.error(f"Background analysis {report_id} timed out after 120s")
+                await AIAnalysisReportCRUD.delete_report(db, report_id)
+                await db.commit()
+            logger.error(f"Background analysis {report_id} timed out after 120s, record deleted")
             return
 
         async with AsyncSessionLocal() as db:
@@ -752,10 +747,9 @@ async def _run_analysis_background(report_id: int):
                 return
 
             if not analysis_result:
-                report.status = "failed"
-                report.error_message = "AI analysis returned no result after retries"
+                await AIAnalysisReportCRUD.delete_report(db, report_id)
                 await db.commit()
-                logger.error(f"Background analysis {report_id} failed: no result")
+                logger.error(f"Background analysis {report_id} failed: no result, record deleted")
                 return
 
             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -780,15 +774,10 @@ async def _run_analysis_background(report_id: int):
         logger.error(f"Background analysis {report_id} failed with exception: {e}")
         try:
             async with AsyncSessionLocal() as db:
-                report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
-                if report:
-                    report.status = "failed"
-                    report.error_message = str(e)[:500]
-                    elapsed_ms = int((time.time() - start_time) * 1000)
-                    report.processing_time_ms = elapsed_ms
-                    await db.commit()
+                await AIAnalysisReportCRUD.delete_report(db, report_id)
+                await db.commit()
         except Exception as db_e:
-            logger.error(f"Failed to update failed report {report_id}: {db_e}")
+            logger.error(f"Failed to delete failed report {report_id}: {db_e}")
 
 
 @router.get("/ai-analysis/reports", response_model=AIAnalysisReportListResponse)
