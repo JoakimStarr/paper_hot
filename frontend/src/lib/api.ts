@@ -109,6 +109,15 @@ export const papersApi = {
     return response.data;
   },
 
+  getTrendChats: async (reportId: number): Promise<Array<{ role: string; content: string }>> => {
+    const response = await apiClient.get(`/ai-analysis/reports/${reportId}/chats`);
+    return response.data;
+  },
+
+  saveTrendChats: async (reportId: number, messages: Array<{ role: string; content: string }>): Promise<void> => {
+    await apiClient.post(`/ai-analysis/reports/${reportId}/chats`, { messages });
+  },
+
   getFilterStatistics: async (): Promise<FilterStatistics> => {
     const response = await apiClient.get<FilterStatistics>('/filter-statistics');
     return response.data;

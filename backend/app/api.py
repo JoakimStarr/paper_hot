@@ -16,7 +16,7 @@ from app.schemas import (PaperResponse, PaperListResponse,
                          PaperDetailResponse, SimilarPaper,
                          CrawlLogResponse, CrawlLogListResponse,
                          AIAnalysisReportResponse, AIAnalysisReportListResponse)
-from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD, PaperSimilarityCRUD, PaperChatCRUD
+from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD, PaperSimilarityCRUD, PaperChatCRUD, TrendChatCRUD
 from app.ai_processor import TrendAnalyzer
 from app.fetchers import VenueDataFetcher
 
@@ -713,7 +713,7 @@ async def get_ai_analysis_legacy(
         if not ai_trend_service.is_available():
             raise HTTPException(
                 status_code=503,
-                detail="AI analysis service is not available. Please check Zhipu API key configuration."
+                detail="AI analysis service is not available. Please configure Zhipu or SiliconFlow API key."
             )
 
         analysis_data = await _collect_analysis_data(db)
@@ -814,7 +814,7 @@ async def start_ai_analysis(
                 )
             raise HTTPException(
                 status_code=503,
-                detail="AI analysis service is not available. Please check Zhipu API key configuration."
+                detail="AI analysis service is not available. Please configure Zhipu or SiliconFlow API key."
             )
 
         report = await AIAnalysisReportCRUD.create_report(
@@ -945,6 +945,158 @@ async def get_ai_analysis_report(
     return AIAnalysisReportResponse.model_validate(report)
 
 
+class TrendChatRequest(BaseModel):
+    messages: List[dict]
+
+
+class TrendChatSaveRequest(BaseModel):
+    messages: List[dict]
+
+
+@router.post("/ai-analysis/reports/{report_id}/chat")
+async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSession = Depends(get_db)):
+    report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    analysis_context = ""
+    if report.summary:
+        analysis_context += f"分析摘要：{report.summary}\n\n"
+    if report.hot_topics:
+        topics_text = "\n".join([
+            f"- {t.get('topic', '')}: {t.get('description', '')}"
+            for t in report.hot_topics if t.get('topic')
+        ])
+        if topics_text:
+            analysis_context += f"研究热点：\n{topics_text}\n\n"
+    if report.development_trends:
+        trends_text = "\n".join([
+            f"- {t.get('trend', '')} ({t.get('direction', '')}): {t.get('description', '')}"
+            for t in report.development_trends if t.get('trend')
+        ])
+        if trends_text:
+            analysis_context += f"发展趋势：\n{trends_text}\n\n"
+    if report.keyword_insights:
+        kw_text = "\n".join([
+            f"- {t.get('cluster', '')}: {t.get('insight', '')}"
+            for t in report.keyword_insights if t.get('cluster')
+        ])
+        if kw_text:
+            analysis_context += f"关键词聚类：\n{kw_text}\n\n"
+    if report.journal_insights:
+        journal_text = "\n".join([
+            f"- {t.get('journal', '')}: {t.get('focus', '')}"
+            for t in report.journal_insights if t.get('journal')
+        ])
+        if journal_text:
+            analysis_context += f"期刊分析：\n{journal_text}\n\n"
+    if report.recommendations:
+        rec_text = "\n".join([
+            f"- {t.get('area', '')} ({t.get('opportunity_level', '')}): {t.get('description', '')}"
+            for t in report.recommendations if t.get('area')
+        ])
+        if rec_text:
+            analysis_context += f"研究建议：\n{rec_text}\n\n"
+    if report.raw_analysis:
+        analysis_context += f"完整原始分析报告：\n{report.raw_analysis}\n"
+
+    system_prompt = f"""你是一位专业的论文选题分析师。你的职责是基于AI趋势分析结果，帮助用户深入理解研究热点、发现选题机会、评估研究方向可行性。
+
+以下是当前AI趋势分析的结果：
+
+{analysis_context}
+
+请基于以上分析结果回答用户的问题。你可以：
+1. 深入解读某个研究热点的具体含义和潜在方向
+2. 帮助用户评估某个选题的可行性和创新性
+3. 提供具体的研究建议和切入点
+4. 分析不同研究方向之间的关联和差异
+5. 结合分析数据给出选题的优劣势分析
+
+如果问题超出分析数据范围，请诚实说明，但可以基于你的专业知识给出合理建议。用中文回答，回答要有深度和针对性。"""
+
+    messages = [{"role": "system", "content": system_prompt}] + body.messages
+
+    try:
+        client, provider = _get_ai_client()
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def run_stream():
+            try:
+                if provider == "siliconflow":
+                    response = client.chat.completions.create(
+                        model="Qwen/Qwen3-8B",
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            reasoning = getattr(delta, "reasoning_content", None)
+                            if reasoning:
+                                loop.call_soon_threadsafe(queue.put_nowait, reasoning)
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, content)
+                else:
+                    response = client.chat.completions.create(
+                        model="glm-4.5-air",
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, content)
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}")
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(run_stream)
+            while True:
+                item = await queue.get()
+                if item is None:
+                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    break
+                yield f"data: {json.dumps({'content': item})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/ai-analysis/reports/{report_id}/chats")
+async def get_trend_chat_history(report_id: int, db: AsyncSession = Depends(get_db)):
+    messages = await TrendChatCRUD.get_chats(db, report_id)
+    return [
+        {"role": m.role, "content": m.content, "created_at": _isoformat_utc(m.created_at)}
+        for m in messages
+    ]
+
+
+@router.post("/ai-analysis/reports/{report_id}/chats")
+async def save_trend_chat_messages(report_id: int, body: TrendChatSaveRequest, db: AsyncSession = Depends(get_db)):
+    report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    messages = body.messages
+    if not messages:
+        raise HTTPException(status_code=400, detail="messages is required")
+    for msg in messages:
+        await TrendChatCRUD.save_message(db, report_id, msg["role"], msg["content"])
+    await db.commit()
+    return {"status": "saved", "count": len(messages)}
+
+
 @router.post("/crawl/start", response_model=CrawlStartResponse)
 async def start_crawl(
     request: CrawlStartRequest = Body(default=CrawlStartRequest()),
@@ -999,12 +1151,25 @@ async def update_trend_scores(db: AsyncSession = Depends(get_db), token: bool = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _get_glm_client():
-    from zai import ZhipuAiClient
-    api_key = settings.zhipu_api_key
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Zhipu API key not configured")
-    return ZhipuAiClient(api_key=api_key)
+def _get_ai_client():
+    """获取AI客户端，优先使用智谱AI，其次使用硅基流动，返回 (client, provider)"""
+    if settings.zhipu_api_key:
+        try:
+            from zai import ZhipuAiClient
+            return ZhipuAiClient(api_key=settings.zhipu_api_key), "zhipu"
+        except ImportError:
+            pass
+    if settings.siliconflow_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=settings.siliconflow_api_key,
+                base_url="https://api.siliconflow.cn/v1"
+            )
+            return client, "siliconflow"
+        except ImportError:
+            pass
+    raise HTTPException(status_code=503, detail="No AI API key configured. Please configure Zhipu or SiliconFlow API key.")
 
 
 @router.post("/papers/{paper_id}/analyze")
@@ -1041,13 +1206,21 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     try:
-        client = _get_glm_client()
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="glm-4.5-air",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096,
-        )
+        client, provider = _get_ai_client()
+        if provider == "siliconflow":
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model="Qwen/Qwen3-8B",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096,
+            )
+        else:
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model="glm-4.5-air",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096,
+            )
         analysis_text = response.choices[0].message.content
         await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
         await db.commit()
@@ -1108,9 +1281,9 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     messages = [{"role": "system", "content": system_prompt}] + body.messages
 
     try:
-        client = _get_glm_client()
+        client, provider = _get_ai_client()
     except HTTPException:
-        raise HTTPException(status_code=503, detail="Zhipu API key not configured")
+        raise HTTPException(status_code=503, detail="AI API key not configured")
 
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue()
@@ -1118,18 +1291,35 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 
         def run_stream():
             try:
-                response = client.chat.completions.create(
-                    model="glm-4.5-air",
-                    messages=messages,
-                    stream=True,
-                    max_tokens=4096,
-                )
-                for chunk in response:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        content = getattr(delta, "content", None)
-                        if content:
-                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                if provider == "siliconflow":
+                    response = client.chat.completions.create(
+                        model="Qwen/Qwen3-8B",
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            reasoning = getattr(delta, "reasoning_content", None)
+                            if reasoning:
+                                loop.call_soon_threadsafe(queue.put_nowait, reasoning)
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, content)
+                else:
+                    response = client.chat.completions.create(
+                        model="glm-4.5-air",
+                        messages=messages,
+                        stream=True,
+                        max_tokens=4096,
+                    )
+                    for chunk in response:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta
+                            content = getattr(delta, "content", None)
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, content)
                 loop.call_soon_threadsafe(queue.put_nowait, None)
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}")

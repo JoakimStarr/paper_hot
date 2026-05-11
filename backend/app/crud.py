@@ -1102,3 +1102,34 @@ class PaperSimilarityCRUD:
         result = await db.execute(select(PaperSimilarity))
         for row in result.scalars().all():
             await db.delete(row)
+
+
+class TrendChatCRUD:
+    @staticmethod
+    async def get_chats(db: AsyncSession, report_id: int) -> list:
+        from app.models import TrendChat
+        result = await db.execute(
+            select(TrendChat)
+            .where(TrendChat.report_id == report_id)
+            .order_by(TrendChat.created_at)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def save_message(db: AsyncSession, report_id: int, role: str, content: str):
+        from app.models import TrendChat
+        msg = TrendChat(report_id=report_id, role=role, content=content)
+        db.add(msg)
+        await db.flush()
+        await db.refresh(msg)
+        return msg
+
+    @staticmethod
+    async def clear_chats(db: AsyncSession, report_id: int):
+        from app.models import TrendChat
+        result = await db.execute(
+            select(TrendChat).where(TrendChat.report_id == report_id)
+        )
+        for row in result.scalars().all():
+            await db.delete(row)
+        await db.flush()

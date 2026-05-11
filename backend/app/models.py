@@ -143,6 +143,16 @@ class CrawlLog(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class TrendChat(Base):
+    __tablename__ = "trend_chats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_id = Column(Integer, ForeignKey("ai_analysis_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class AIAnalysisReport(Base):
     __tablename__ = "ai_analysis_reports"
     

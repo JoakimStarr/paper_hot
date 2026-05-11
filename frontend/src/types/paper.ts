@@ -219,6 +219,7 @@ export interface SettingsInfo {
     name: string;
     available: boolean;
     priority: number;
+    provider?: string;
   }[];
   scheduler: {
     running: boolean;

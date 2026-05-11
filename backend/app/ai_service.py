@@ -2,6 +2,7 @@
 统一AI趋势分析服务
 提供重试/降级、结构化输出、监控功能
 数据策略：全量聚合 + 精选样本
+支持智谱AI和硅基流动双通道
 """
 
 import logging
@@ -19,7 +20,10 @@ class AITrendService:
     def __init__(self):
         self.glm_initialized = False
         self.glm_client = None
+        self.sf_initialized = False
+        self.sf_client = None
         self._init_glm()
+        self._init_siliconflow()
 
     def _init_glm(self):
         if not settings.zhipu_api_key:
@@ -35,31 +39,70 @@ class AITrendService:
         except Exception as e:
             logger.error(f"Failed to initialize GLM client: {e}")
 
+    def _init_siliconflow(self):
+        if not settings.siliconflow_api_key:
+            logger.warning("SiliconFlow API key not set. SiliconFlow channel will be unavailable.")
+            return
+        try:
+            from openai import OpenAI
+            self.sf_client = OpenAI(
+                api_key=settings.siliconflow_api_key,
+                base_url="https://api.siliconflow.cn/v1"
+            )
+            self.sf_initialized = True
+            logger.info("SiliconFlow client initialized successfully")
+        except ImportError:
+            logger.error("openai package not installed. Please run: pip install openai")
+        except Exception as e:
+            logger.error(f"Failed to initialize SiliconFlow client: {e}")
+
     def is_available(self) -> bool:
-        return self.glm_initialized
+        return self.glm_initialized or self.sf_initialized
 
     def reload(self):
         self.glm_initialized = False
         self.glm_client = None
+        self.sf_initialized = False
+        self.sf_client = None
         self._init_glm()
+        self._init_siliconflow()
 
     def get_model_status(self) -> List[Dict]:
         result = []
         for idx, model in enumerate(self.GLM_MODELS):
             result.append({
-                "name": model,
+                "name": f"zhipu/{model}",
                 "priority": idx + 1,
                 "available": self.glm_initialized,
+                "provider": "zhipu",
+            })
+        for idx, model in enumerate(self.SF_MODELS):
+            result.append({
+                "name": f"siliconflow/{model}",
+                "priority": len(self.GLM_MODELS) + idx + 1,
+                "available": self.sf_initialized,
+                "provider": "siliconflow",
             })
         return result
 
     def update_models(self, model_list: List[str]):
-        self.GLM_MODELS = list(model_list)
+        glm_models = [m for m in model_list if not m.startswith("siliconflow/")]
+        sf_models = [m.replace("siliconflow/", "") for m in model_list if m.startswith("siliconflow/")]
+        if glm_models:
+            self.GLM_MODELS = glm_models
+        if sf_models:
+            self.SF_MODELS = sf_models
 
     GLM_MODELS = [
         "glm-4.7",
         "glm-4.5-air",
         "glm-4.7-flash",
+    ]
+
+    SF_MODELS = [
+        "Qwen/Qwen3.5-4B",
+        "Qwen/Qwen3-8B",
+        "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
     ]
 
     async def analyze_trends(
@@ -74,6 +117,8 @@ class AITrendService:
         last_error = None
 
         for model in self.GLM_MODELS:
+            if not self.glm_initialized:
+                continue
             for attempt in range(2):
                 try:
                     result = await self._call_glm_with_model(
@@ -84,13 +129,36 @@ class AITrendService:
                         elapsed_ms = int((time.time() - start_time) * 1000)
                         result["processing_time_ms"] = elapsed_ms
                         result["model"] = model
-                        logger.info(f"AI analysis completed with model={model}, "
+                        logger.info(f"AI analysis completed with zhipu model={model}, "
                                    f"tokens={result.get('tokens_used', 0)}, "
                                    f"time={elapsed_ms}ms")
                         return result
                 except Exception as e:
                     last_error = e
-                    logger.warning(f"Attempt {attempt + 1} with model {model} failed: {e}")
+                    logger.warning(f"Attempt {attempt + 1} with zhipu model {model} failed: {e}")
+                    await asyncio.sleep(1 * (attempt + 1))
+                    continue
+
+        for model in self.SF_MODELS:
+            if not self.sf_initialized:
+                continue
+            for attempt in range(2):
+                try:
+                    result = await self._call_siliconflow_with_model(
+                        model=model,
+                        analysis_data=analysis_data,
+                    )
+                    if result:
+                        elapsed_ms = int((time.time() - start_time) * 1000)
+                        result["processing_time_ms"] = elapsed_ms
+                        result["model"] = f"siliconflow/{model}"
+                        logger.info(f"AI analysis completed with siliconflow model={model}, "
+                                   f"tokens={result.get('tokens_used', 0)}, "
+                                   f"time={elapsed_ms}ms")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Attempt {attempt + 1} with siliconflow model {model} failed: {e}")
                     await asyncio.sleep(1 * (attempt + 1))
                     continue
 
@@ -133,6 +201,42 @@ class AITrendService:
             tokens_used = getattr(response.usage, 'total_tokens', 0)
 
         parsed = self._parse_structured_result(analysis_text, model, tokens_used)
+        return parsed
+
+    async def _call_siliconflow_with_model(
+        self,
+        model: str,
+        analysis_data: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not self.sf_client:
+            return None
+
+        prompt = self._build_structured_prompt(analysis_data)
+
+        response = await asyncio.to_thread(
+            self.sf_client.chat.completions.create,
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一个专业的经济学研究趋势分析专家。请基于提供的全量统计数据进行分析，并严格按照JSON格式输出结果。所有统计数据均来自数据库全量聚合，覆盖100%论文数据。"
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=8192,
+            temperature=0.7
+        )
+
+        analysis_text = response.choices[0].message.content
+
+        tokens_used = 0
+        if hasattr(response, 'usage') and response.usage:
+            tokens_used = getattr(response.usage, 'total_tokens', 0)
+
+        parsed = self._parse_structured_result(analysis_text, f"siliconflow/{model}", tokens_used)
         return parsed
 
     def _build_structured_prompt(self, data: Dict[str, Any]) -> str:
@@ -297,7 +401,7 @@ class AITrendService:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse JSON from GLM response, falling back to text")
+            logger.warning("Failed to parse JSON from AI response, falling back to text")
             return {
                 "summary": text[:200] if text else "分析生成失败",
                 "raw_analysis": text,

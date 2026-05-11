@@ -799,6 +799,15 @@ export default function SystemPage() {
                   {index + 1}
                 </span>
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{model.name}</span>
+                {model.provider && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    model.provider === 'siliconflow'
+                      ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400'
+                  }`}>
+                    {model.provider === 'siliconflow' ? '硅基流动' : '智谱'}
+                  </span>
+                )}
                 {model.available ? (
                   <span className="flex items-center gap-1 text-xs text-green-600">
                     <CheckCircle className="w-3.5 h-3.5" />

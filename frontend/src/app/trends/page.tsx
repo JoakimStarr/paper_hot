@@ -4,8 +4,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from '@/components/Layout';
 import TrendChart from '@/components/TrendChart';
 import { papersApi } from '@/lib/api';
+import { API_BASE_URL } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
-import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain } from 'lucide-react';
+import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import ReactMarkdown from 'react-markdown';
@@ -37,6 +38,12 @@ export default function TrendsPage() {
   const [historyReports, setHistoryReports] = useState<AIAnalysisReport[]>([]);
   const [restoringId, setRestoringId] = useState<number | null>(null);
 
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatStreaming, setChatStreaming] = useState(false);
+  const [streamContent, setStreamContent] = useState('');
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isRunningRef = useRef(false);
@@ -58,6 +65,7 @@ export default function TrendsPage() {
           if (status.report) {
             setReport(status.report);
             setHasHistory(true);
+            loadTrendChats(status.report.id);
           } else {
             setAiError('分析未返回有效结果');
           }
@@ -149,6 +157,9 @@ export default function TrendsPage() {
       } else {
         setReport(status.report);
         setHasHistory(status.has_history);
+        if (status.report) {
+          loadTrendChats(status.report.id);
+        }
       }
     } catch (error) {
       console.error('Error checking analysis status:', error);
@@ -185,6 +196,7 @@ export default function TrendsPage() {
         setReport(fullReport);
         setHasHistory(true);
         setShowHistory(false);
+        loadTrendChats(reportId);
       }
     } catch (error) {
       console.error('Error restoring report:', error);
@@ -220,6 +232,84 @@ export default function TrendsPage() {
       setAiError(errMsg);
     }
   }, [cooldown, startPolling]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [streamContent, chatMessages]);
+
+  const loadTrendChats = async (reportId: number) => {
+    try {
+      const chats = await papersApi.getTrendChats(reportId);
+      if (chats.length > 0) {
+        setChatMessages(chats.map(c => ({ role: c.role, content: c.content })));
+      } else {
+        setChatMessages([]);
+      }
+    } catch {}
+  };
+
+  const handleTrendChatSubmit = async () => {
+    if (!chatInput.trim() || !report) return;
+
+    const userMsg = { role: 'user', content: chatInput.trim() };
+    const allMessages = [...chatMessages, userMsg];
+    setChatMessages(allMessages);
+    setChatInput('');
+    setChatStreaming(true);
+    setStreamContent('');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/ai-analysis/reports/${report.id}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: allMessages }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Request failed' }));
+        setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${err.detail}` }]);
+        setChatStreaming(false);
+        return;
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullContent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.done) {
+                setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
+                setStreamContent('');
+                papersApi.saveTrendChats(report.id, [
+                  userMsg,
+                  { role: 'assistant', content: fullContent }
+                ]);
+              } else if (data.content) {
+                fullContent += data.content;
+                setStreamContent(fullContent);
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (e: any) {
+      setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${e.message}` }]);
+    } finally {
+      setChatStreaming(false);
+    }
+  };
 
   const getDirectionColor = (direction?: string) => {
     switch (direction) {
@@ -562,6 +652,96 @@ export default function TrendsPage() {
                       </ReactMarkdown>
                     </div>
                   )}
+                </div>
+
+                <div className="border-t border-gray-100 dark:border-gray-700 mt-6 pt-6">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-purple-600" />
+                    选题分析对话
+                  </h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">基于以上AI分析结果，向论文选题分析师提问，获取深入的选题建议</p>
+
+                  <div className="space-y-4 mb-4 max-h-[500px] overflow-y-auto">
+                    {chatMessages.length === 0 && !chatStreaming && (
+                      <div className="text-center py-6">
+                        <div className="flex flex-wrap gap-2 justify-center">
+                          {[
+                            '哪些研究热点最值得深入？',
+                            '帮我分析一个创新选题方向',
+                            '当前趋势下有什么研究空白？',
+                            '哪个子领域适合新手入门？',
+                          ].map((suggestion, i) => (
+                            <button
+                              key={i}
+                              onClick={() => {
+                                setChatInput(suggestion);
+                              }}
+                              className="px-3 py-1.5 text-sm bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {chatMessages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+                          msg.role === 'user'
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+                        }`}>
+                          {msg.role === 'user' ? msg.content : (
+                            <div className="prose prose-sm max-w-none dark:prose-invert">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {chatStreaming && streamContent && (
+                      <div className="flex justify-start">
+                        <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+                          <div className="prose prose-sm max-w-none dark:prose-invert">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamContent}</ReactMarkdown>
+                          </div>
+                          <span className="inline-block w-1.5 h-4 bg-purple-600 ml-0.5 animate-pulse align-middle" />
+                        </div>
+                      </div>
+                    )}
+                    {chatStreaming && !streamContent && (
+                      <div className="flex justify-start">
+                        <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
+                          <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                        </div>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey && !chatStreaming) {
+                          e.preventDefault();
+                          handleTrendChatSubmit();
+                        }
+                      }}
+                      placeholder="向选题分析师提问..."
+                      disabled={chatStreaming}
+                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
+                    />
+                    <button
+                      onClick={handleTrendChatSubmit}
+                      disabled={chatStreaming || !chatInput.trim()}
+                      className="bg-purple-600 text-white rounded-lg px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
