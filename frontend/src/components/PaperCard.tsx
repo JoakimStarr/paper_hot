@@ -100,7 +100,7 @@ function PaperCardInner({ paper }: PaperCardProps) {
       )}
 
       <div className="flex flex-wrap gap-2 mb-3">
-        {paper.topic && (
+        {paper.topic && paper.topic !== 'Other' && (
           <span className={`text-xs font-medium px-2 py-1 rounded ${topicColors[paper.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
             {paper.topic}
           </span>

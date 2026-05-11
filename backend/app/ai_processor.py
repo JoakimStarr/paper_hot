@@ -160,7 +160,7 @@ Return only the keywords as a comma-separated list:"""
         if topic_scores:
             return max(topic_scores.items(), key=lambda x: x[1])[0]
         
-        return "Other"
+        return None
     
     async def classify_economics_topic(self, abstract: str, title: str) -> Optional[str]:
         combined_text = f"{title} {abstract}".lower()
