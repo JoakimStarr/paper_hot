@@ -769,7 +769,7 @@ export default function TrendsPage() {
                   )}
                 </div>
 
-                <div className={`border-t border-gray-100 dark:border-gray-700 mt-6 pt-6 ${isChatFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900 p-4 sm:p-6 overflow-hidden' : ''}`}>
+                <div className={`border-t border-gray-100 dark:border-gray-700 mt-6 pt-6 ${isChatFullscreen ? 'fixed inset-y-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 sm:p-6 overflow-hidden w-full md:w-[600px] lg:w-[800px] shadow-2xl' : ''}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4">
                     <div>
                       <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
