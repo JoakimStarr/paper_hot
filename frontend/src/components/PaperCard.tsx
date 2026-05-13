@@ -33,54 +33,72 @@ function PaperCardInner({ paper }: PaperCardProps) {
   const [bookmarked, setBookmarked] = useState(checkBookmarked(paper.id));
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-6 border border-gray-200 dark:border-gray-700">
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex-1">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-4 sm:p-6 border border-gray-200 dark:border-gray-700">
+      <div className="flex justify-between items-start gap-2 mb-2 sm:mb-3">
+        <div className="flex-1 min-w-0">
           <Link href={`/paper/${paper.id}`}>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer line-clamp-2">
+            <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer line-clamp-2">
               {paper.title}
             </h3>
           </Link>
         </div>
-        <div className="flex items-center gap-2 ml-4">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             onClick={(e) => {
               e.preventDefault();
               const added = toggleBookmark(paper.id);
               setBookmarked(added);
             }}
-            className="text-gray-400 dark:text-gray-500 hover:text-yellow-500 transition-colors"
+            className="text-gray-400 dark:text-gray-500 hover:text-yellow-500 transition-colors p-1"
             title={bookmarked ? '取消收藏' : '收藏'}
           >
             <Bookmark
-              className={`w-4 h-4 ${bookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`}
+              className={`w-4 h-4 sm:w-5 sm:h-5 ${bookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`}
             />
           </button>
-          {isHighScore && (
-            <span className="flex items-center gap-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-2 py-1 rounded">
-              <Award className="w-3 h-3" />
-              {t('paper.top')}
-            </span>
-          )}
-          {isTrending && (
-            <span className="flex items-center gap-1 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 text-xs font-medium px-2 py-1 rounded">
-              <TrendingUp className="w-3 h-3" />
-              {t('paper.trending')}
-            </span>
-          )}
+          <div className="hidden sm:flex items-center gap-1">
+            {isHighScore && (
+              <span className="flex items-center gap-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-2 py-1 rounded">
+                <Award className="w-3 h-3" />
+                {t('paper.top')}
+              </span>
+            )}
+            {isTrending && (
+              <span className="flex items-center gap-1 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 text-xs font-medium px-2 py-1 rounded">
+                <TrendingUp className="w-3 h-3" />
+                {t('paper.trending')}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Mobile badges */}
+      <div className="flex sm:hidden items-center gap-1.5 mb-2">
+        {isHighScore && (
+          <span className="flex items-center gap-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-1.5 py-0.5 rounded">
+            <Award className="w-3 h-3" />
+            {t('paper.top')}
+          </span>
+        )}
+        {isTrending && (
+          <span className="flex items-center gap-0.5 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 text-xs font-medium px-1.5 py-0.5 rounded">
+            <TrendingUp className="w-3 h-3" />
+            {t('paper.trending')}
+          </span>
+        )}
+      </div>
+
       {paper.abstract && (
-        <p className="text-gray-600 dark:text-gray-400 text-sm mb-3 line-clamp-2">
+        <p className="text-gray-600 dark:text-gray-400 text-sm mb-2 sm:mb-3 line-clamp-2">
           {paper.abstract}
         </p>
       )}
 
       {paper.authors && paper.authors.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 mb-3">
+        <div className="flex flex-wrap items-center gap-1 mb-2 sm:mb-3">
           <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">作者:</span>
-          {paper.authors.slice(0, 5).map((author, index) => (
+          {paper.authors.slice(0, 3).map((author, index) => (
             <button
               key={index}
               onClick={(e) => {
@@ -93,78 +111,78 @@ function PaperCardInner({ paper }: PaperCardProps) {
               {author.trim()}
             </button>
           ))}
-          {paper.authors.length > 5 && (
+          {paper.authors.length > 3 && (
             <span className="text-xs text-gray-400 dark:text-gray-500">等{paper.authors.length}人</span>
           )}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-2 sm:mb-3">
         {paper.topic && paper.topic !== 'Other' && (
-          <span className={`text-xs font-medium px-2 py-1 rounded ${topicColors[paper.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+          <span className={`text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${topicColors[paper.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
             {paper.topic}
           </span>
         )}
         {paper.economics_subfield && (
-          <span className={`text-xs font-medium px-2 py-1 rounded ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+          <span className={`text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
             {paper.economics_subfield}
           </span>
         )}
-        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).slice(0, 3).map((subject, idx) => (
-          <span key={idx} className="text-xs font-medium px-2 py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
+        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).slice(0, 2).map((subject, idx) => (
+          <span key={idx} className="text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
             {subject.trim()}
           </span>
         ))}
-        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).length > 3 && (
-          <span className="text-xs text-gray-400 dark:text-gray-500">+{paper.cnki_subject.split(';').filter(Boolean).length - 3}</span>
+        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).length > 2 && (
+          <span className="text-xs text-gray-400 dark:text-gray-500">+{paper.cnki_subject.split(';').filter(Boolean).length - 2}</span>
         )}
-        {paper.keywords_cn?.slice(0, 3).map((keyword, index) => (
+        {paper.keywords_cn?.slice(0, 2).map((keyword, index) => (
           <button
             key={index}
             onClick={(e) => {
               e.preventDefault();
               router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`);
             }}
-            className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs px-2 py-1 rounded hover:bg-primary-100 dark:hover:bg-primary-900/50 hover:text-primary-700 dark:hover:text-primary-400 transition-colors cursor-pointer"
+            className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs px-1.5 sm:px-2 py-0.5 sm:py-1 rounded hover:bg-primary-100 dark:hover:bg-primary-900/50 hover:text-primary-700 dark:hover:text-primary-400 transition-colors cursor-pointer"
           >
             {keyword}
           </button>
         ))}
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
-        <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+        <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
           <span className="flex items-center gap-1">
-            <Calendar className="w-4 h-4" />
+            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
-          <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-xs">
+          <span className="bg-gray-100 dark:bg-gray-700 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs">
             {paper.source}
           </span>
           {paper.venue && (
-            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 px-2 py-1 rounded text-xs">
+            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs hidden sm:inline">
               {paper.venue}
             </span>
           )}
           {paper.journal_name && (
             <button
               onClick={() => router.push(`/search?journal=${encodeURIComponent(paper.journal_name!)}`)}
-              className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-2 py-1 rounded text-xs hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors cursor-pointer"
+              className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors cursor-pointer truncate max-w-[120px] sm:max-w-none"
             >
               {paper.journal_name}
             </button>
           )}
           {paper.journal_issue && (
-            <span className="bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1 rounded text-xs">
+            <span className="bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs">
               {paper.journal_issue}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
           <div className="flex items-center gap-1">
-            <div className="w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+            <div className="w-12 sm:w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-1.5 sm:h-2">
               <div
-                className="bg-primary-600 h-2 rounded-full"
+                className="bg-primary-600 h-1.5 sm:h-2 rounded-full"
                 style={{ width: `${score * 100}%` }}
               />
             </div>
@@ -176,9 +194,9 @@ function PaperCardInner({ paper }: PaperCardProps) {
             href={paper.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+            className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 p-1"
           >
-            <ExternalLink className="w-4 h-4" />
+            <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
           </a>
         </div>
       </div>

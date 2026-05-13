@@ -139,19 +139,19 @@ export default function AuthorPage() {
 
   return (
     <Layout>
-      <div className="mb-6">
-        <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors mb-6">
+      <div className="mb-4 sm:mb-6">
+        <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors mb-4 sm:mb-6">
           <ArrowLeft className="w-5 h-5" />
-          <span>返回首页</span>
+          <span className="text-sm sm:text-base">返回首页</span>
         </Link>
 
-        <div className="flex items-start gap-4 mb-2">
-          <div className="w-14 h-14 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-            <User className="w-7 h-7 text-primary-600" />
+        <div className="flex items-start gap-3 sm:gap-4 mb-2">
+          <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
+            <User className="w-5 h-5 sm:w-7 sm:h-7 text-primary-600" />
           </div>
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{authorName}</h1>
-            <p className="text-gray-500 dark:text-gray-400 mt-1">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-3xl font-bold text-gray-900 dark:text-white truncate">{authorName}</h1>
+            <p className="text-sm sm:text-base text-gray-500 dark:text-gray-400 mt-1">
               共发表 {total} 篇论文
               {authorStats?.first_author_count && authorStats.first_author_count > 0
                 ? `，其中 ${authorStats.first_author_count} 篇为第一作者`
@@ -161,31 +161,31 @@ export default function AuthorPage() {
         </div>
 
         {authorStats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mt-4 sm:mt-6">
             {authorStats.recent_year && (
-              <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-3">
+              <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-2 sm:p-3">
                 <div className="text-xs text-blue-500 mb-0.5">最新发表</div>
-                <div className="font-semibold text-blue-700">{authorStats.recent_year} 年</div>
+                <div className="font-semibold text-blue-700 text-sm sm:text-base">{authorStats.recent_year} 年</div>
               </div>
             )}
             {authorStats.top_journal && (
-              <div className="bg-green-50 dark:bg-green-900/30 rounded-lg p-3">
+              <div className="bg-green-50 dark:bg-green-900/30 rounded-lg p-2 sm:p-3">
                 <div className="text-xs text-green-500 mb-0.5">高频期刊</div>
-                <div className="font-semibold text-green-700 text-sm truncate" title={authorStats.top_journal}>
+                <div className="font-semibold text-green-700 text-xs sm:text-sm truncate" title={authorStats.top_journal}>
                   {authorStats.top_journal}
                 </div>
               </div>
             )}
             {authorStats.top_subfield && (
-              <div className="bg-purple-50 dark:bg-purple-900/30 rounded-lg p-3">
+              <div className="bg-purple-50 dark:bg-purple-900/30 rounded-lg p-2 sm:p-3">
                 <div className="text-xs text-purple-500 mb-0.5">研究方向</div>
-                <div className="font-semibold text-purple-700 text-sm">{authorStats.top_subfield}</div>
+                <div className="font-semibold text-purple-700 text-xs sm:text-sm">{authorStats.top_subfield}</div>
               </div>
             )}
             {authorStats.top_keywords.length > 0 && (
-              <div className="bg-orange-50 dark:bg-orange-900/30 rounded-lg p-3">
+              <div className="bg-orange-50 dark:bg-orange-900/30 rounded-lg p-2 sm:p-3">
                 <div className="text-xs text-orange-500 mb-0.5">研究关键词</div>
-                <div className="font-semibold text-orange-700 text-sm truncate" title={authorStats.top_keywords.join(', ')}>
+                <div className="font-semibold text-orange-700 text-xs sm:text-sm truncate" title={authorStats.top_keywords.join(', ')}>
                   {authorStats.top_keywords.slice(0, 3).join(', ')}
                 </div>
               </div>
@@ -215,39 +215,41 @@ export default function AuthorPage() {
         )}
       </div>
 
-      <div className="mb-4">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">论文列表</h2>
+      <div className="mb-4 sm:mb-6">
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">发表论文</h2>
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 gap-4 sm:gap-6">
           {Array.from({ length: 4 }).map((_, i) => (
             <SkeletonCard key={i} />
           ))}
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-6">
-            {papers.map((paper) => (
-              <PaperCard key={paper.id} paper={paper} />
-            ))}
-          </div>
-
-          {papers.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-gray-500 dark:text-gray-400">未找到该作者的论文</p>
+          {papers.length === 0 ? (
+            <div className="text-center py-8 sm:py-12">
+              <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base">暂无论文数据</p>
             </div>
-          )}
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:gap-6">
+                {papers.map((paper) => (
+                  <PaperCard key={paper.id} paper={paper} />
+                ))}
+              </div>
 
-          {total > 0 && (
-            <Pagination
-              currentPage={page}
-              totalPages={totalPages}
-              totalItems={total}
-              pageSize={pageSize}
-              onPageChange={handlePageChange}
-              onPageSizeChange={handlePageSizeChange}
-            />
+              {totalPages > 1 && (
+                <Pagination
+                  currentPage={page}
+                  totalPages={totalPages}
+                  totalItems={total}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                  onPageSizeChange={setPageSize}
+                />
+              )}
+            </>
           )}
         </>
       )}

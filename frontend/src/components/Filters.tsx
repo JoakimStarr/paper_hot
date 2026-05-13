@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { papersApi, FilterStatistics } from '@/lib/api';
-import { ArrowUpDown } from 'lucide-react';
+import { ArrowUpDown, Filter, X, ChevronDown } from 'lucide-react';
 
 interface FiltersProps {
   minScore: number | null;
@@ -115,6 +115,7 @@ export default function Filters({
 }: FiltersProps) {
   const { t } = useLanguage();
   const [stats, setStats] = useState<FilterStatistics | null>(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -153,10 +154,80 @@ export default function Filters({
     : [];
 
   const hasActiveFilters = minScore || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0;
+  const activeFilterCount = selectedSubfield.length + selectedCnkiSubject.length + selectedJournal.length + (minScore ? 1 : 0);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-6 transition-colors">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-3 sm:p-4 mb-6 transition-colors">
+      {/* Mobile Filter Toggle */}
+      <div className="md:hidden mb-3">
+        <button
+          onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
+          className="flex items-center justify-between w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-300"
+        >
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4" />
+            <span>筛选条件</span>
+            {activeFilterCount > 0 && (
+              <span className="px-1.5 py-0.5 bg-primary-600 text-white text-xs rounded-full">
+                {activeFilterCount}
+              </span>
+            )}
+          </div>
+          <ChevronDown className={`w-4 h-4 transition-transform ${mobileFiltersOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Mobile Selected Filters Chips */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {selectedSubfield.map((sub) => (
+              <span key={sub} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs rounded">
+                {sub}
+                <button onClick={() => onSubfieldChange(selectedSubfield.filter(s => s !== sub))}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {selectedCnkiSubject.map((sub) => (
+              <span key={sub} className="inline-flex items-center gap-1 px-2 py-1 bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 text-xs rounded">
+                {sub}
+                <button onClick={() => onCnkiSubjectChange(selectedCnkiSubject.filter(s => s !== sub))}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {selectedJournal.map((j) => (
+              <span key={j} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-xs rounded">
+                {j}
+                <button onClick={() => onJournalChange(selectedJournal.filter(s => s !== j))}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {minScore && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 text-xs rounded">
+                ≥ {(minScore * 100).toFixed(0)}%
+                <button onClick={() => onMinScoreChange(null)}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            <button
+              onClick={() => {
+                onMinScoreChange(null);
+                onSubfieldChange([]);
+                onCnkiSubjectChange([]);
+                onJournalChange([]);
+              }}
+              className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+            >
+              清除全部
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Desktop Filters */}
+      <div className="hidden md:flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <MultiSelect
             options={subfields}
@@ -239,6 +310,117 @@ export default function Filters({
           )}
         </div>
       </div>
+
+      {/* Mobile Filters Panel */}
+      {mobileFiltersOpen && (
+        <div className="md:hidden space-y-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">子领域</label>
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onSubfieldChange([...selectedSubfield, e.target.value]);
+                    e.target.value = '';
+                  }
+                }}
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              >
+                <option value="">选择子领域...</option>
+                {subfields.filter(s => !selectedSubfield.includes(s)).map((sub) => (
+                  <option key={sub} value={sub}>{sub} ({stats?.subfield_counts?.[sub] || 0})</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">专题</label>
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onCnkiSubjectChange([...selectedCnkiSubject, e.target.value]);
+                    e.target.value = '';
+                  }
+                }}
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              >
+                <option value="">选择专题...</option>
+                {cnkiSubjects.filter(s => !selectedCnkiSubject.includes(s)).map((sub) => (
+                  <option key={sub} value={sub}>{sub} ({stats?.cnki_subject_counts?.[sub] || 0})</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">期刊</label>
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onJournalChange([...selectedJournal, e.target.value]);
+                    e.target.value = '';
+                  }
+                }}
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              >
+                <option value="">选择期刊...</option>
+                {journals.filter(j => !selectedJournal.includes(j)).map((j) => (
+                  <option key={j} value={j}>{j} ({stats?.journal_counts?.[j] || 0})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">最低评分</label>
+                <select
+                  value={minScore || ''}
+                  onChange={(e) => onMinScoreChange(e.target.value ? parseFloat(e.target.value) : null)}
+                  className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                >
+                  <option value="">不限</option>
+                  {scoreThresholds.map((score) => (
+                    <option key={score} value={score}>≥ {(score * 100).toFixed(0)}%</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">排序</label>
+                <div className="flex gap-1">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => onSortByChange(e.target.value)}
+                    className="flex-1 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  >
+                    {SORT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={onSortOrderToggle}
+                    className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-500 dark:text-gray-300"
+                  >
+                    {sortOrder === 'desc' ? '↓' : '↑'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={showBookmarksOnly}
+                onChange={(e) => onBookmarksChange(e.target.checked)}
+                className="rounded"
+              />
+              仅看收藏
+            </label>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

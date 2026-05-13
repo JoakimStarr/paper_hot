@@ -128,22 +128,22 @@ export default function NetworkPage() {
 
   return (
     <Layout>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
           研究关系网络
         </h1>
-        <p className="text-gray-600 dark:text-gray-400">
+        <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
           可视化展示作者合作网络和关键词共现关系
         </p>
       </div>
 
-      <div className="flex gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4 sm:mb-6">
         <button
           onClick={() => setActiveTab('authors')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
             activeTab === 'authors'
               ? 'bg-primary-600 text-white'
-              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
           }`}
         >
           <Users className="w-4 h-4" />
@@ -151,10 +151,10 @@ export default function NetworkPage() {
         </button>
         <button
           onClick={() => setActiveTab('keywords')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
             activeTab === 'keywords'
               ? 'bg-primary-600 text-white'
-              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
           }`}
         >
           <Hash className="w-4 h-4" />
@@ -163,35 +163,37 @@ export default function NetworkPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center items-center py-12">
+        <div className="flex justify-center items-center py-8 sm:py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
         </div>
       ) : (
         <>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4 mb-4">
-            <div className="flex items-center gap-2">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-3 sm:p-4 mb-4">
+            <div className="flex items-center gap-2 flex-wrap">
               {highlightedNodeId && (
                 <button
                   onClick={handleClearHighlight}
-                  className="ml-2 px-3 py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 rounded-md transition-colors text-gray-600 dark:text-gray-400"
+                  className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 rounded-md transition-colors text-gray-600 dark:text-gray-400"
                 >
                   清除高亮
                 </button>
               )}
-              <span className="ml-4 text-sm text-gray-500 dark:text-gray-400">
+              <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
                 {data?.nodes.length || 0} 个节点, {data?.links.length || 0} 条关系 — 鼠标滚轮缩放，拖拽移动
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <NetworkGraph
-              data={data}
-              highlightedNodeId={highlightedNodeId}
-              onNodeClick={handleNodeClick}
-            />
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+            <div className="lg:col-span-3">
+              <NetworkGraph
+                data={data}
+                highlightedNodeId={highlightedNodeId}
+                onNodeClick={handleNodeClick}
+              />
+            </div>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-3 sm:p-4">
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">节点详情</h3>
               {infoNode ? (
                 <div className="space-y-3 text-sm">
@@ -209,13 +211,13 @@ export default function NetworkPage() {
                   {infoNode.papers !== undefined && (
                     <div>
                       <span className="text-gray-400 block text-xs">论文数</span>
-                      <span className="text-gray-900 dark:text-white font-semibold text-lg">{infoNode.papers}</span>
+                      <span className="text-gray-900 dark:text-white font-semibold text-base sm:text-lg">{infoNode.papers}</span>
                     </div>
                   )}
                   {infoNode.count !== undefined && infoNode.group === 'keyword' && (
                     <div>
                       <span className="text-gray-400 block text-xs">出现次数</span>
-                      <span className="text-gray-900 dark:text-white font-semibold text-lg">{infoNode.count}</span>
+                      <span className="text-gray-900 dark:text-white font-semibold text-base sm:text-lg">{infoNode.count}</span>
                     </div>
                   )}
 
@@ -224,7 +226,7 @@ export default function NetworkPage() {
                       <span className="text-gray-400 block text-xs mb-2">
                         关联{infoNode.group === 'author' ? '作者' : '关键词'} ({connectedNodes.length})
                       </span>
-                      <div className="space-y-1 max-h-64 overflow-y-auto">
+                      <div className="space-y-1 max-h-48 sm:max-h-64 overflow-y-auto">
                         {connectedNodes.map(node => (
                           <div
                             key={node.id}
@@ -241,7 +243,7 @@ export default function NetworkPage() {
                             </button>
                             <button
                               onClick={() => handleNavigateToNode(node)}
-                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 dark:bg-gray-700 rounded transition-colors"
+                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
                               title="查看相关论文"
                             >
                               <ExternalLink className="w-3 h-3 text-gray-400 hover:text-primary-600" />
@@ -258,13 +260,13 @@ export default function NetworkPage() {
                   <div className="pt-2 border-t border-gray-100 dark:border-gray-700 mt-2">
                     <span className="text-gray-400 block text-xs">提示</span>
                     <span className="text-gray-500 dark:text-gray-400 text-xs">
-                      点击关联节点可切换查看。点击 <ExternalLink className="w-2.5 h-2.5 inline-block text-gray-400" /> 可跳转搜索相关论文。点击空白处或"清除高亮"恢复全局视图。
+                      点击关联节点可切换查看。点击 <ExternalLink className="w-2.5 h-2.5 inline-block text-gray-400" /> 可跳转搜索相关论文。
                     </span>
                   </div>
                 </div>
               ) : (
-                <div className="text-center py-8 text-gray-400 text-sm">
-                  <svg className="w-12 h-12 mx-auto mb-2 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="text-center py-6 sm:py-8 text-gray-400 text-sm">
+                  <svg className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                   </svg>
                   {activeTab === 'authors'

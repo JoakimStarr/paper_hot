@@ -458,11 +458,11 @@ export default function TrendsPage() {
 
   return (
     <Layout>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
           {t('trends.title')}
         </h1>
-        <p className="text-gray-600 dark:text-gray-400">
+        <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
           {t('trends.subtitle')}
         </p>
       </div>
@@ -473,12 +473,12 @@ export default function TrendsPage() {
         </div>
       ) : (
         <>
-          <div className="flex gap-2 mb-4">
+          <div className="flex flex-wrap gap-2 mb-4">
             {(['1m', '3m', '6m'] as const).map(range => (
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-colors ${
                   timeRange === range
                     ? 'bg-primary-600 text-white'
                     : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:bg-gray-700/50'
@@ -492,23 +492,23 @@ export default function TrendsPage() {
           <TrendChart topics={topics} />
 
           {!radarLoading && radarData.length > 0 && (
-            <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <div className="mt-6 sm:mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
-                <span className="text-xl">🎯</span>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">研究热点雷达图</h2>
-                <span className="text-xs text-gray-400">各子领域论文分布</span>
+                <span className="text-lg sm:text-xl">🎯</span>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">研究热点雷达图</h2>
+                <span className="text-xs text-gray-400 hidden sm:inline">各子领域论文分布</span>
               </div>
-              <ResponsiveContainer width="100%" height={350}>
-                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
+              <ResponsiveContainer width="100%" height={280}>
+                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
                   <PolarGrid stroke={isDark ? '#4b5563' : '#e5e7eb'} />
                   <PolarAngleAxis
                     dataKey="subfield"
-                    tick={{ fontSize: 12, fill: isDark ? '#d1d5db' : '#4b5563' }}
+                    tick={{ fontSize: 10, fill: isDark ? '#d1d5db' : '#4b5563' }}
                   />
                   <PolarRadiusAxis
                     angle={30}
                     domain={[0, 'auto']}
-                    tick={{ fontSize: 10, fill: '#9ca3af' }}
+                    tick={{ fontSize: 9, fill: '#9ca3af' }}
                   />
                   <Tooltip
                     formatter={(value: number) => [`${value} 篇`, '论文数']}
@@ -527,11 +527,11 @@ export default function TrendsPage() {
             </div>
           )}
 
-          <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <div className="flex items-center justify-between mb-6">
+          <div className="mt-6 sm:mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4 sm:mb-6">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-6 h-6 text-purple-600" />
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">AI 趋势分析</h2>
+                <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">AI 趋势分析</h2>
                 {hasHistory && report && !isRunning && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded-full">
                     <Clock className="w-3 h-3" />
@@ -548,12 +548,13 @@ export default function TrendsPage() {
               <button
                 onClick={startAnalysis}
                 disabled={isRunning || cooldown > 0}
-                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base w-full sm:w-auto"
               >
                 {isRunning ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    分析中...
+                    <span className="hidden sm:inline">分析中...</span>
+                    <span className="sm:hidden">分析中</span>
                   </>
                 ) : cooldown > 0 ? (
                   <>
@@ -583,12 +584,12 @@ export default function TrendsPage() {
             ) : report ? (
               <div className="space-y-6">
                 {report.summary && (
-                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-6">
-                    <p className="text-gray-700 dark:text-gray-300 text-lg leading-relaxed">{report.summary}</p>
+                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-4 sm:p-6">
+                    <p className="text-gray-700 dark:text-gray-300 text-sm sm:text-lg leading-relaxed">{report.summary}</p>
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                   <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-purple-600">{report.total_papers}</div>
                     <div className="text-sm text-gray-500 dark:text-gray-400">分析论文数</div>
@@ -710,13 +711,13 @@ export default function TrendsPage() {
                 </div>
 
                 <div className="border-t border-gray-100 dark:border-gray-700 mt-6 pt-6">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4">
                     <div>
-                      <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                      <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                         <Bot className="w-4 h-4 text-purple-600" />
                         选题分析对话
                       </h3>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">基于以上AI分析结果，向论文选题分析师提问，获取深入的选题建议</p>
+                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">基于以上AI分析结果，向论文选题分析师提问</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="relative">
@@ -855,12 +856,12 @@ export default function TrendsPage() {
                           }}
                           placeholder="向选题分析师提问..."
                           disabled={chatStreaming}
-                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
+                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
                         />
                         <button
                           onClick={() => handleTrendChatSubmit()}
                           disabled={chatStreaming || !chatInput.trim()}
-                          className="bg-purple-600 text-white rounded-lg px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          className="bg-purple-600 text-white rounded-lg px-3 sm:px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
                         >
                           <Send className="w-4 h-4" />
                         </button>
@@ -932,18 +933,18 @@ export default function TrendsPage() {
               )}
             </div>
 
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-2">🔥 热点预测</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">基于历史数据预测未来研究热点</p>
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔥 热点预测</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">基于历史数据预测未来研究热点</p>
               </a>
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-2">🔍 关键词关联</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">分析关键词之间的关联关系</p>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔍 关键词关联</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">分析关键词之间的关联关系</p>
               </a>
-              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-purple-200 hover:bg-purple-50 dark:bg-purple-900/30/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-2">📈 发展趋势</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">生成详细的研究趋势报告</p>
+              <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">📈 发展趋势</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">生成详细的研究趋势报告</p>
               </a>
             </div>
           </div>

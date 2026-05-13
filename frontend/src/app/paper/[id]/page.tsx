@@ -238,31 +238,31 @@ export default function PaperDetailPage() {
 
   return (
     <Layout>
-      <div className="mb-6">
+      <div className="mb-4 sm:mb-6">
         <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors">
           <ArrowLeft className="w-5 h-5" />
-          <span>{t('home.previous')}</span>
+          <span className="text-sm sm:text-base">{t('home.previous')}</span>
         </Link>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
-        <div className="flex justify-between items-start mb-4">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex-1">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-8 mb-4 sm:mb-6">
+        <div className="flex justify-between items-start gap-2 mb-3 sm:mb-4">
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white flex-1">
             {paper.title}
           </h1>
           <a
             href={paper.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-4 text-primary-600 hover:text-primary-700"
+            className="text-primary-600 hover:text-primary-700 shrink-0"
           >
-            <ExternalLink className="w-6 h-6" />
+            <ExternalLink className="w-5 h-5 sm:w-6 sm:h-6" />
           </a>
         </div>
 
-        <div className="flex flex-wrap gap-2 mb-4">
+        <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3 sm:mb-4">
           {paper.features?.topic && paper.features.topic !== 'Other' && (
-            <span className={`text-sm font-medium px-3 py-1 rounded ${topicColors[paper.features.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+            <span className={`text-xs sm:text-sm font-medium px-2 sm:px-3 py-0.5 sm:py-1 rounded ${topicColors[paper.features.topic] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
               {paper.features.topic}
             </span>
           )}
@@ -270,46 +270,46 @@ export default function PaperDetailPage() {
             <button
               key={index}
               onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-              className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm px-3 py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+              className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
             >
               {keyword}
             </button>
           ))}
         </div>
 
-        <div className="flex items-center gap-6 text-sm text-gray-600 dark:text-gray-400 mb-6">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-6 text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4 sm:mb-6">
           <span className="flex items-center gap-1">
-            <Calendar className="w-4 h-4" />
+            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             {getIssuePeriod(paper.doi, paper.published_at, paper.journal_issue) || 'Unknown'}
           </span>
           {paper.discipline && (
-            <span className="bg-purple-50 dark:bg-purple-900/30 text-purple-700 px-3 py-1 rounded">
+            <span className="bg-purple-50 dark:bg-purple-900/30 text-purple-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded">
               {paper.discipline}
             </span>
           )}
-          <span className="bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded">
+          <span className="bg-gray-100 dark:bg-gray-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded">
             {paper.source}
           </span>
           {paper.venue && (
-            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 px-3 py-1 rounded">
+            <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded hidden sm:inline">
               {paper.venue}
             </span>
           )}
           {paper.journal_name && (
-            <span className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 px-3 py-1 rounded">
+            <span className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded truncate max-w-[120px] sm:max-w-none">
               {paper.journal_name}
             </span>
           )}
         </div>
 
         {paper.doi && (
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">DOI</h2>
+          <div className="mb-4 sm:mb-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">DOI</h2>
             <a
               href={paper.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary-600 hover:underline text-sm break-all"
+              className="text-primary-600 hover:underline text-xs sm:text-sm break-all"
             >
               {paper.doi} &rarr;
             </a>
@@ -317,11 +317,11 @@ export default function PaperDetailPage() {
         )}
 
         {paper.authors && paper.authors.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('paper.authors')}</h2>
-            <div className="flex flex-wrap gap-2">
+          <div className="mb-4 sm:mb-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('paper.authors')}</h2>
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {paper.authors.map((author, index) => (
-                <span key={index} className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm px-3 py-1 rounded">
+                <span key={index} className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded">
                   {author}
                 </span>
               ))}
@@ -330,14 +330,14 @@ export default function PaperDetailPage() {
         )}
 
         {paper.keywords_cn && paper.keywords_cn.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('paper.keywords')}</h2>
-            <div className="flex flex-wrap gap-2">
+          <div className="mb-4 sm:mb-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('paper.keywords')}</h2>
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {paper.keywords_cn.map((keyword, index) => (
                 <button
                   key={index}
                   onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-                  className="bg-primary-100 text-primary-800 text-sm px-3 py-1 rounded-full hover:bg-primary-200 transition-colors cursor-pointer"
+                  className="bg-primary-100 text-primary-800 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded-full hover:bg-primary-200 transition-colors cursor-pointer"
                 >
                   {keyword}
                 </button>
@@ -346,44 +346,44 @@ export default function PaperDetailPage() {
           </div>
         )}
 
-        <div className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">{t('home.subtitle')}</h2>
-          <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
+        <div className="mb-4 sm:mb-6">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('home.subtitle')}</h2>
+          <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-sm sm:text-base">
             {paper.features?.summary || paper.abstract}
           </p>
         </div>
 
-        <div className="border-t pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-green-50 dark:bg-green-900/30 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Recency Score</div>
-              <div className="text-lg font-bold text-gray-900 dark:text-white">
+        <div className="border-t pt-4 sm:pt-6">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4">
+            <div className="bg-green-50 dark:bg-green-900/30 p-2 sm:p-4 rounded-lg">
+              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-0.5 sm:mb-1">Recency</div>
+              <div className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.recency_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
-            <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Venue Score</div>
-              <div className="text-lg font-bold text-gray-900 dark:text-white">
+            <div className="bg-blue-50 dark:bg-blue-900/30 p-2 sm:p-4 rounded-lg">
+              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-0.5 sm:mb-1">Venue</div>
+              <div className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.venue_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
-            <div className="bg-purple-50 dark:bg-purple-900/30 p-4 rounded-lg">
-              <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Trend Score</div>
-              <div className="text-lg font-bold text-gray-900 dark:text-white">
+            <div className="bg-purple-50 dark:bg-purple-900/30 p-2 sm:p-4 rounded-lg">
+              <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-0.5 sm:mb-1">Trend</div>
+              <div className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
                 {((paper.scores?.trend_score || 0) * 100).toFixed(0)}%
               </div>
             </div>
           </div>
 
           {paper.should_read_score && (
-            <div className="mt-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 p-4 rounded-lg">
+            <div className="mt-3 sm:mt-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 p-3 sm:p-4 rounded-lg">
               <div className="flex items-center gap-2">
-                <Award className="w-5 h-5 text-yellow-700" />
-                <span className="font-semibold text-yellow-900">
+                <Award className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-700" />
+                <span className="font-semibold text-yellow-900 text-sm sm:text-base">
                   {t('paper.shouldReadScore')}: {(shouldReadScore * 100).toFixed(0)}%
                 </span>
               </div>
-              <p className="text-sm text-yellow-800 mt-1">
+              <p className="text-xs sm:text-sm text-yellow-800 mt-1">
                 {shouldReadScore >= 0.7
                   ? t('paper.highlyRecommended')
                   : shouldReadScore >= 0.5
