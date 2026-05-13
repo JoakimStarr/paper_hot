@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: Builder - 安装所有依赖
 # ============================================
-FROM python:3.11-slim AS builder
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -13,16 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY backend/requirements.txt .
 
-RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # ============================================
 # Stage 2: Production - 更小的运行时镜像
 # ============================================
-FROM python:3.11-slim AS production
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/python:3.11-slim AS production
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libxml2 \
     libxslt1.1 \
     && rm -rf /var/lib/apt/lists/*
