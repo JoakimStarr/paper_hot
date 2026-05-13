@@ -6,7 +6,7 @@ import TrendChart from '@/components/TrendChart';
 import { papersApi } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
-import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2 } from 'lucide-react';
+import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import ReactMarkdown from 'react-markdown';
@@ -25,6 +25,9 @@ const CHAT_MODELS = [
   { id: 'Qwen/Qwen3.5-4B', label: 'Qwen3.5-4B' },
   { id: 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B', label: 'DeepSeek-R1' },
 ];
+
+const COLLAPSE_STORAGE_KEY = 'trends_collapse_state';
+const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
 
 export default function TrendsPage() {
   const { t } = useLanguage();
@@ -56,7 +59,52 @@ export default function TrendsPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
   const [showModelSelect, setShowModelSelect] = useState(false);
+  const [isAIAnalysisCollapsed, setIsAIAnalysisCollapsed] = useState(false);
+  const [isTrendingTopicsCollapsed, setIsTrendingTopicsCollapsed] = useState(false);
+  const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Load collapse state from localStorage
+  useEffect(() => {
+    const savedState = localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (savedState) {
+      try {
+        const state = JSON.parse(savedState);
+        setIsAIAnalysisCollapsed(state.aiAnalysis ?? false);
+        setIsTrendingTopicsCollapsed(state.trendingTopics ?? false);
+      } catch {}
+    }
+    const savedFullscreen = localStorage.getItem(CHAT_FULLSCREEN_STORAGE_KEY);
+    if (savedFullscreen) {
+      setIsChatFullscreen(savedFullscreen === 'true');
+    }
+  }, []);
+
+  // Save collapse state to localStorage
+  const saveCollapseState = (aiAnalysis: boolean, trendingTopics: boolean) => {
+    localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify({
+      aiAnalysis,
+      trendingTopics,
+    }));
+  };
+
+  const toggleAIAnalysis = () => {
+    const newState = !isAIAnalysisCollapsed;
+    setIsAIAnalysisCollapsed(newState);
+    saveCollapseState(newState, isTrendingTopicsCollapsed);
+  };
+
+  const toggleTrendingTopics = () => {
+    const newState = !isTrendingTopicsCollapsed;
+    setIsTrendingTopicsCollapsed(newState);
+    saveCollapseState(isAIAnalysisCollapsed, newState);
+  };
+
+  const toggleChatFullscreen = () => {
+    const newState = !isChatFullscreen;
+    setIsChatFullscreen(newState);
+    localStorage.setItem(CHAT_FULLSCREEN_STORAGE_KEY, String(newState));
+  };
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -545,30 +593,41 @@ export default function TrendsPage() {
                   </span>
                 )}
               </div>
-              <button
-                onClick={startAnalysis}
-                disabled={isRunning || cooldown > 0}
-                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base w-full sm:w-auto"
-              >
-                {isRunning ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="hidden sm:inline">分析中...</span>
-                    <span className="sm:hidden">分析中</span>
-                  </>
-                ) : cooldown > 0 ? (
-                  <>
-                    <RefreshCw className="w-4 h-4" />
-                    {cooldown}秒后重试
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    {hasHistory ? '重新分析' : '开始分析'}
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleAIAnalysis}
+                  className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  title={isAIAnalysisCollapsed ? '展开' : '收起'}
+                >
+                  {isAIAnalysisCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                  {isAIAnalysisCollapsed ? '展开' : '收起'}
+                </button>
+                <button
+                  onClick={startAnalysis}
+                  disabled={isRunning || cooldown > 0}
+                  className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base"
+                >
+                  {isRunning ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="hidden sm:inline">分析中...</span>
+                      <span className="sm:hidden">分析中</span>
+                    </>
+                  ) : cooldown > 0 ? (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      {cooldown}秒后重试
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      {hasHistory ? '重新分析' : '开始分析'}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
+            {!isAIAnalysisCollapsed && (<>
 
             {isRunning ? (
               renderRunningState()
@@ -710,7 +769,7 @@ export default function TrendsPage() {
                   )}
                 </div>
 
-                <div className="border-t border-gray-100 dark:border-gray-700 mt-6 pt-6">
+                <div className={`border-t border-gray-100 dark:border-gray-700 mt-6 pt-6 ${isChatFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900 p-4 sm:p-6 overflow-hidden' : ''}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4">
                     <div>
                       <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
@@ -720,6 +779,14 @@ export default function TrendsPage() {
                       <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">基于以上AI分析结果，向论文选题分析师提问</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={toggleChatFullscreen}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                        title={isChatFullscreen ? '退出全屏' : '全屏'}
+                      >
+                        {isChatFullscreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                        {isChatFullscreen ? '退出全屏' : '全屏'}
+                      </button>
                       <div className="relative">
                         <button
                           onClick={() => setShowModelSelect(!showModelSelect)}
@@ -773,7 +840,7 @@ export default function TrendsPage() {
                     </div>
                   ) : (
                     <>
-                      <div className="space-y-4 mb-4 max-h-[500px] overflow-y-auto">
+                      <div className={`space-y-4 mb-4 overflow-y-auto ${isChatFullscreen ? 'max-h-[calc(100vh-200px)]' : 'max-h-[500px]'}`}>
                         {chatMessages.length === 0 && !chatStreaming && (
                           <div className="text-center py-6">
                             <div className="flex flex-wrap gap-2 justify-center">
@@ -884,6 +951,8 @@ export default function TrendsPage() {
                 </div>
               </div>
             )}
+
+            </>)}
 
             <div className="mt-6 border-t border-gray-100 dark:border-gray-700 pt-4">
               <button

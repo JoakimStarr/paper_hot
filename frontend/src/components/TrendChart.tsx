@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LineChart,
   Line,
@@ -12,18 +12,34 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { TrendingTopic } from '@/types/paper';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, ChevronUp, ChevronDown } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 interface TrendChartProps {
   topics: TrendingTopic[];
 }
 
+const COLLAPSE_STORAGE_KEY = 'trendchart_collapse_state';
+
 export default function TrendChart({ topics }: TrendChartProps) {
   const { isDark } = useTheme();
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const axisColor = isDark ? '#9ca3af' : '#6b7280';
   const gridColor = isDark ? '#374151' : '#e5e7eb';
   const tooltipStyle = isDark ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined;
+
+  useEffect(() => {
+    const savedState = localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (savedState) {
+      setIsCollapsed(savedState === 'true');
+    }
+  }, []);
+
+  const toggleCollapse = () => {
+    const newState = !isCollapsed;
+    setIsCollapsed(newState);
+    localStorage.setItem(COLLAPSE_STORAGE_KEY, String(newState));
+  };
 
   const chartData = topics.map((topic) => ({
     name: topic.topic,
@@ -33,7 +49,18 @@ export default function TrendChart({ topics }: TrendChartProps) {
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700 transition-colors duration-300">
-      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Trending Topics</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Trending Topics</h2>
+        <button
+          onClick={toggleCollapse}
+          className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          title={isCollapsed ? '展开' : '收起'}
+        >
+          {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          {isCollapsed ? '展开' : '收起'}
+        </button>
+      </div>
+      {!isCollapsed && (<>
       
       <div className="mb-6">
         <ResponsiveContainer width="100%" height={300}>
@@ -90,6 +117,7 @@ export default function TrendChart({ topics }: TrendChartProps) {
           </div>
         ))}
       </div>
+      </>)}
     </div>
   );
 }
