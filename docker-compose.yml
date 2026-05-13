@@ -1,0 +1,88 @@
+services:
+  # ============================================
+  # Backend Service
+  # ============================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
+    container_name: paper_hot_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # 使用绑定挂载，确保权限正确
+      - ./backend/data:/app/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/paperpulse.db
+      - SCHEDULER_ENABLED=true
+      - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - paper_hot_network
+
+  # ============================================
+  # Frontend Service
+  # ============================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: production
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+    container_name: paper_hot_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - API_URL=http://backend:8000/api
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - paper_hot_network
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  paper_hot_network:
+    driver: bridge
