@@ -1,14 +1,11 @@
 # ============================================
 # Stage 1: Builder - 构建 Next.js 应用
 # ============================================
-FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:20-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 配置 npm 使用国内镜像
-RUN npm config set registry https://registry.npmmirror.com
-
-# 复制依赖文件并安装
+# 复制依赖文件并安装（利用 Docker 层缓存）
 COPY frontend/package*.json ./
 RUN npm ci --prefer-offline --no-audit
 
@@ -19,15 +16,14 @@ RUN npm run build
 # ============================================
 # Stage 2: Production - 运行时镜像
 # ============================================
-FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:20-alpine AS production
+FROM node:20-alpine AS production
 
 WORKDIR /app
 
 # 安装 curl（用于健康检查）
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apk/repositories \
-    && apk add --no-cache curl
+RUN apk add --no-cache curl
 
-# 创建非 root 用户
+# 创建非 root 用户（安全最佳实践）
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
@@ -51,5 +47,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:3000/ || exit 1
 
-# 启动命令
+# 启动命令（使用 standalone 模式）
 CMD ["node", "server.js"]
