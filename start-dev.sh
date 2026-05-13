@@ -2,49 +2,36 @@
 
 set -e
 
-echo "🚀 Starting ApplePaper (Production Mode)..."
+echo "🚀 Starting ApplePaper (Development Mode)..."
+echo "⚠️  DEV MODE: Hot reload enabled, not for production use"
+echo ""
 
 PROJECT_DIR="/home/joakim/Project/paper_hot"
 
 # 启动后端服务
-echo ""
-echo "📦 Starting backend server..."
+echo "📦 Starting backend server (dev)..."
 cd "$PROJECT_DIR/backend"
 source venv/bin/activate
-nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload > backend.log 2>&1 &
 BACKEND_PID=$!
-echo "   Backend started (PID: $BACKEND_PID)"
+echo "   Backend started (PID: $BACKEND_PID) with hot reload"
 
-# 等待后端启动
 sleep 2
 
-# 构建前端（生产模式）
+# 启动前端（开发模式）
 echo ""
-echo "🔨 Building frontend (production)..."
+echo "📱 Starting frontend server (dev with HMR)..."
 cd "$PROJECT_DIR/frontend"
-
-if [ ! -d ".next" ]; then
-    echo "   First build, this may take 30-60 seconds..."
-    npm run build
-else
-    echo "   Rebuilding..."
-    npm run build
-fi
-
-# 启动前端（生产模式）
-echo ""
-echo "📱 Starting frontend server (production)..."
-nohup npm run start > frontend.log 2>&1 &
+nohup npm run dev > frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo "   Frontend started (PID: $FRONTEND_PID)"
+echo "   Hot Module Replacement enabled"
 
-# 等待前端启动
 sleep 3
 
-# 检查服务状态
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ ApplePaper is running!"
+echo "✅ ApplePaper DEV is running!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "📱 Frontend:  http://localhost:3000"
@@ -52,11 +39,9 @@ echo "🔧 Backend:   http://localhost:8000"
 echo "📚 API Docs:  http://localhost:8000/docs"
 echo ""
 echo "To stop:  ./stop.sh"
-echo "Dev mode: ./start-dev.sh"
+echo "Prod:     ./start.sh"
 echo ""
 
-# 检查是否正常运行
-sleep 1
 if curl -s http://localhost:8000/health > /dev/null 2>&1; then
     echo "✅ Backend health check passed"
 else

@@ -17,7 +17,6 @@ from app.schemas import (PaperResponse, PaperListResponse,
                          CrawlLogResponse, CrawlLogListResponse,
                          AIAnalysisReportResponse, AIAnalysisReportListResponse)
 from app.crud import PaperCRUD, CrawlLogCRUD, AIAnalysisReportCRUD, PaperAnalysisCRUD, PaperSimilarityCRUD, PaperChatCRUD, TrendChatCRUD
-from app.ai_processor import TrendAnalyzer
 from app.fetchers import VenueDataFetcher
 
 

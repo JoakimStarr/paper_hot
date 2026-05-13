@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
 import json
-import numpy as np
+import math
 
 _filter_stats_cache: dict = {}
 _filter_stats_cache_time: float = 0
@@ -222,24 +222,6 @@ class PaperCRUD:
         db.add(score)
         await db.flush()
         return score
-    
-    @staticmethod
-    async def get_papers_with_embeddings(db: AsyncSession) -> Tuple[List[str], np.ndarray]:
-        result = await db.execute(
-            select(Paper.id, PaperFeatures.embedding)
-            .join(PaperFeatures)
-            .where(PaperFeatures.embedding.isnot(None))
-        )
-        
-        paper_ids = []
-        embeddings = []
-        
-        for row in result:
-            paper_ids.append(str(row[0]))
-            embedding_list = json.loads(row[1].strip('[]'))
-            embeddings.append(embedding_list)
-        
-        return paper_ids, np.array(embeddings) if embeddings else np.array([])
     
     @staticmethod
     async def get_keyword_frequencies(db: AsyncSession, days_back: int = 7) -> dict:
@@ -734,7 +716,7 @@ class PaperCRUD:
         for paper_id, topic, score_id in papers:
             if topic in topic_growth_rates:
                 growth_rate = topic_growth_rates[topic]
-                trend_score = 0.5 + 0.5 * np.tanh(growth_rate)
+                trend_score = 0.5 + 0.5 * math.tanh(growth_rate)
                 
                 # 获取 PaperScore 记录并更新
                 score_result = await db.execute(

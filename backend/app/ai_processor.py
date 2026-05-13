@@ -1,23 +1,13 @@
 from typing import List, Optional, Tuple
-import openai
-from app.config import settings
 import logging
-import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.metrics.pairwise import cosine_similarity
 import asyncio
+import math
 
 logger = logging.getLogger(__name__)
 
 
 class AIProcessor:
     def __init__(self):
-        if settings.openai_api_key:
-            self.client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
-        else:
-            self.client = None
-            logger.warning("OpenAI API key not set. AI features will be limited.")
-        
         self.topic_keywords = {
             "LLM": ["language model", "gpt", "bert", "transformer", "llm", "large language", "generation", "prompt"],
             "Agent": ["agent", "autonomous", "planning", "tool use", "reasoning", "multi-agent"],
@@ -27,7 +17,7 @@ class AIProcessor:
             "NLP": ["natural language", "text", "sentiment", "translation", "parsing", "question answering"],
             "Generative": ["generative", "gan", "diffusion", "vae", "synthesis", "generation"]
         }
-        
+
         self.economics_keywords = {
             "Macroeconomics": [
                 "economic growth", "monetary policy", "fiscal policy", "gdp", "gross domestic product",
@@ -78,170 +68,69 @@ class AIProcessor:
                 "comparative advantage", "heckscher-ohlin", "gravity model", "currency crisis"
             ]
         }
-    
-    async def generate_summary(self, abstract: str, title: str) -> Optional[str]:
-        if not self.client:
-            return self._extract_first_sentences(abstract, 2)
-        
-        try:
-            prompt = f"""Summarize this AI research paper in 1-2 plain English sentences:
 
-Title: {title}
-Abstract: {abstract}
+        self._all_keywords = set()
+        for kws in self.topic_keywords.values():
+            self._all_keywords.update(kws)
+        for kws in self.economics_keywords.values():
+            self._all_keywords.update(kws)
 
-Summary:"""
-            
-            response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=100,
-                temperature=0.7
-            )
-            
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            logger.error(f"Error generating summary: {e}")
-            return self._extract_first_sentences(abstract, 2)
-    
-    async def extract_keywords(self, abstract: str, title: str) -> List[str]:
-        if not self.client:
-            return self._extract_keywords_simple(abstract)
-        
-        try:
-            prompt = f"""Extract 3-5 key technical keywords from this AI research paper:
+    def generate_summary(self, abstract: str, title: str) -> str:
+        return self._extract_first_sentences(abstract, 2)
 
-Title: {title}
-Abstract: {abstract}
-
-Return only the keywords as a comma-separated list:"""
-            
-            response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0.5
-            )
-            
-            keywords_text = response.choices[0].message.content.strip()
-            keywords = [kw.strip() for kw in keywords_text.split(",")]
-            return keywords[:5]
-            
-        except Exception as e:
-            logger.error(f"Error extracting keywords: {e}")
-            return self._extract_keywords_simple(abstract)
-    
-    async def compute_embedding(self, text: str) -> Optional[str]:
-        if not self.client:
-            return None
-        
-        try:
-            response = await self.client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=text[:8000]
-            )
-            
-            embedding = response.data[0].embedding
-            return str(embedding)
-            
-        except Exception as e:
-            logger.error(f"Error computing embedding: {e}")
-            return None
-    
-    async def classify_topic(self, abstract: str, title: str) -> Optional[str]:
+    def extract_keywords(self, abstract: str, title: str) -> List[str]:
         combined_text = f"{title} {abstract}".lower()
-        
+
+        keyword_scores = {}
+        for kw in self._all_keywords:
+            count = combined_text.count(kw)
+            if count > 0:
+                keyword_scores[kw] = count
+
+        sorted_keywords = sorted(keyword_scores.items(), key=lambda x: x[1], reverse=True)
+
+        result = [kw for kw, _ in sorted_keywords[:5]]
+        return result
+
+    def compute_embedding(self, text: str) -> Optional[str]:
+        return None
+
+    def classify_topic(self, abstract: str, title: str) -> Optional[str]:
+        combined_text = f"{title} {abstract}".lower()
+
         topic_scores = {}
         for topic, keywords in self.topic_keywords.items():
             score = sum(1 for keyword in keywords if keyword in combined_text)
             if score > 0:
                 topic_scores[topic] = score
-        
+
         if topic_scores:
             return max(topic_scores.items(), key=lambda x: x[1])[0]
-        
+
         return None
-    
-    async def classify_economics_topic(self, abstract: str, title: str) -> Optional[str]:
+
+    def classify_economics_topic(self, abstract: str, title: str) -> Optional[str]:
         combined_text = f"{title} {abstract}".lower()
-        
+
         topic_scores = {}
         for topic, keywords in self.economics_keywords.items():
             score = sum(1 for keyword in keywords if keyword in combined_text)
             if score > 0:
                 topic_scores[topic] = score
-        
+
         if topic_scores:
             return max(topic_scores.items(), key=lambda x: x[1])[0]
-        
+
         return "General Economics"
-    
-    async def process_paper(self, abstract: str, title: str) -> Tuple[Optional[str], List[str], Optional[str], Optional[str]]:
-        tasks = [
-            self.generate_summary(abstract, title),
-            self.extract_keywords(abstract, title),
-            self.compute_embedding(f"{title} {abstract}"),
-            self.classify_topic(abstract, title)
-        ]
-        
-        results = await asyncio.gather(*tasks)
-        return results
-    
+
+    async def process_paper(self, abstract: str, title: str) -> Tuple[str, List[str], Optional[str], Optional[str]]:
+        summary = self.generate_summary(abstract, title)
+        keywords = self.extract_keywords(abstract, title)
+        embedding = None
+        topic = self.classify_topic(abstract, title)
+
+        return summary, keywords, embedding, topic
+
     def _extract_first_sentences(self, text: str, num_sentences: int = 2) -> str:
         sentences = text.split('. ')[:num_sentences]
         return '. '.join(sentences) + ('.' if not sentences[-1].endswith('.') else '')
-    
-    def _extract_keywords_simple(self, text: str) -> List[str]:
-        words = text.lower().split()
-        keywords = []
-        
-        ai_keywords = [
-            "neural", "deep", "learning", "transformer", "attention", 
-            "optimization", "training", "model", "network", "architecture",
-            "embedding", "representation", "feature", "layer"
-        ]
-        
-        for word in words:
-            clean_word = ''.join(e for e in word if e.isalnum())
-            if clean_word in ai_keywords and clean_word not in keywords:
-                keywords.append(clean_word)
-                if len(keywords) >= 5:
-                    break
-        
-        return keywords
-
-
-class TrendAnalyzer:
-    def __init__(self):
-        self.n_clusters = 10
-    
-    def cluster_papers(self, embeddings: np.ndarray) -> np.ndarray:
-        if len(embeddings) < self.n_clusters:
-            return np.zeros(len(embeddings), dtype=int)
-        
-        kmeans = KMeans(n_clusters=min(self.n_clusters, len(embeddings)), random_state=42)
-        return kmeans.fit_predict(embeddings)
-    
-    def compute_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        return cosine_similarity([embedding1], [embedding2])[0][0]
-    
-    def find_similar_papers(
-        self,
-        target_embedding: np.ndarray,
-        all_embeddings: np.ndarray,
-        paper_ids: List[str],
-        top_k: int = 5
-    ) -> List[Tuple[str, float]]:
-        if len(all_embeddings) == 0:
-            return []
-        
-        similarities = cosine_similarity([target_embedding], all_embeddings)[0]
-        
-        top_indices = np.argsort(similarities)[::-1][:top_k + 1]
-        
-        results = []
-        for idx in top_indices:
-            if similarities[idx] < 0.99:
-                results.append((paper_ids[idx], float(similarities[idx])))
-        
-        return results[:top_k]
