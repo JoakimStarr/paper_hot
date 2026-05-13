@@ -7,7 +7,7 @@ import { papersApi, API_BASE_URL } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot } from 'lucide-react';
 import Link from 'next/link';
-import ReactMarkdown from 'react-markdown';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
@@ -487,8 +487,8 @@ export default function PaperDetailPage() {
         )}
 
         {aiAnalysis && !aiAnalyzing && (
-          <div className="prose prose-gray max-w-none text-sm">
-            <ReactMarkdown>{aiAnalysis}</ReactMarkdown>
+          <div className="text-sm">
+            <MarkdownRenderer content={aiAnalysis} />
           </div>
         )}
 
@@ -513,7 +513,7 @@ export default function PaperDetailPage() {
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-800'
                       }`}
                     >
-                      {msg.role === 'user' ? msg.content : <ReactMarkdown>{msg.content}</ReactMarkdown>}
+                      {msg.role === 'user' ? msg.content : <MarkdownRenderer content={msg.content} />}
                     </div>
                   </div>
                 ))}
@@ -521,7 +521,7 @@ export default function PaperDetailPage() {
                 {chatStreaming && streamContent && (
                   <div className="flex justify-start">
                     <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800">
-                      <ReactMarkdown>{streamContent}</ReactMarkdown>
+                      <MarkdownRenderer content={streamContent} />
                       <span className="inline-block w-1.5 h-4 bg-primary-600 ml-0.5 animate-pulse align-middle" />
                     </div>
                   </div>

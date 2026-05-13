@@ -9,8 +9,7 @@ import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
 
 const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
@@ -761,10 +760,8 @@ export default function TrendsPage() {
                     {showRawAnalysis ? '收起原始分析报告' : '查看原始分析报告'}
                   </button>
                   {showRawAnalysis && report.raw_analysis && (
-                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 prose prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {report.raw_analysis}
-                      </ReactMarkdown>
+                    <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                      <MarkdownRenderer content={report.raw_analysis} />
                     </div>
                   )}
                 </div>
@@ -869,9 +866,7 @@ export default function TrendsPage() {
                                 : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
                             }`}>
                               {msg.role === 'user' ? msg.content : (
-                                <div className="prose prose-sm max-w-none dark:prose-invert">
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                                </div>
+                                <MarkdownRenderer content={msg.content} />
                               )}
                             </div>
                           </div>
@@ -893,9 +888,7 @@ export default function TrendsPage() {
                                   <div className="mt-1 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
                                 </details>
                               )}
-                              <div className="prose prose-sm max-w-none dark:prose-invert">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamContent}</ReactMarkdown>
-                              </div>
+                              <MarkdownRenderer content={streamContent} />
                               <span className="inline-block w-1.5 h-4 bg-purple-600 ml-0.5 animate-pulse align-middle" />
                             </div>
                           </div>
