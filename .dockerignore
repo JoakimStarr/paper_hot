@@ -29,7 +29,6 @@ pip-delete-this-directory.txt
 venv/
 ENV/
 env/
-.env
 
 # IDE
 .idea/
@@ -39,11 +38,9 @@ env/
 *~
 .DS_Store
 
-# Logs and data
+# Logs
 *.log
 logs/
-*.sqlite
-*.sqlite3
 __pycache__/
 .pytest_cache/
 .coverage
@@ -60,27 +57,28 @@ README*
 docs/
 LICENSE
 
-# Frontend
+# Frontend build artifacts (不需要，因为会重新构建)
 frontend/node_modules/
 frontend/.next/
-frontend/.git/
 
-# Backend
+# Backend Python cache
 backend/__pycache__/
 backend/venv/
-backend/.env
-backend/paperpulse.db
-backend/papers.db
-backend/*.log
 
 # CI/CD
 .github/
 .gitlab-ci.yml
 Jenkinsfile
-.dockerignore
-docker-compose*.yml
 
 # Temp files
 tmp/
 temp/
 *.tmp
+
+# Local env files (但保留示例)
+.env
+!.env.example
+
+# 注意：不忽略数据库文件，以便打包初始数据
+# backend/*.db
+# backend/data/

@@ -3,10 +3,7 @@ services:
   # Backend Service
   # ============================================
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: production
+    image: crpi-3fswqinlrhpn1djk.cn-beijing.personal.cr.aliyuncs.com/docker-miskies/paper_hot:backend-latest
     container_name: paper_hot_backend
     restart: unless-stopped
     ports:
@@ -16,7 +13,7 @@ services:
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/paperpulse.db
       - SCHEDULER_ENABLED=false
-      - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://39.96.51.83:3000"]
+      - CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000","http://39.96.51.83:3000","*"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 60s
@@ -41,12 +38,7 @@ services:
   # Frontend Service
   # ============================================
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      target: production
-      args:
-        - NEXT_PUBLIC_API_URL=http://39.96.51.83:8000/api
+    image: crpi-3fswqinlrhpn1djk.cn-beijing.personal.cr.aliyuncs.com/docker-miskies/paper_hot:frontend-latest
     container_name: paper_hot_frontend
     restart: unless-stopped
     ports:
@@ -54,8 +46,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - NEXT_PUBLIC_API_URL=http://39.96.51.83:8000/api
-      - API_URL=http://backend:8000/api
     depends_on:
       backend:
         condition: service_healthy

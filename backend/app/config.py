@@ -1,16 +1,15 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Optional, Union
 from pathlib import Path
+import json
 
-# 获取 backend 目录的绝对路径
 BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
     app_name: str = "ApplePaper"
     app_version: str = "2.12.0"
     
-    # 使用绝对路径
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
     
     openai_api_key: Optional[str] = None
@@ -27,11 +26,19 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     frontend_port: int = 3000
     
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
+    cors_origins: Union[list[str], str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
     
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    def get_cors_origins(self) -> list[str]:
+        if isinstance(self.cors_origins, str):
+            try:
+                return json.loads(self.cors_origins)
+            except:
+                return [origin.strip() for origin in self.cors_origins.split(",")]
+        return self.cors_origins
 
     @staticmethod
     def update_setting(key: str, value: str):
