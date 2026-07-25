@@ -872,9 +872,10 @@ class JournalCrawler:
     async def init_browser(self):
         """初始化浏览器"""
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=[
+        # 优先使用系统已安装的 Chrome，避免 Playwright 自带浏览器不兼容问题
+        launch_kwargs = {
+            'headless': self.headless,
+            'args': [
                 '--no-sandbox',
                 '--disable-gpu',
                 '--disable-dev-shm-usage',
@@ -882,7 +883,12 @@ class JournalCrawler:
                 '--disable-web-security',
                 '--disable-features=IsolateOrigins,site-per-process',
             ]
-        )
+        }
+        # 检测系统是否安装了 Google Chrome
+        import shutil
+        if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
+            launch_kwargs['channel'] = 'chrome'
+        self.browser = await self.playwright.chromium.launch(**launch_kwargs)
 
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1646,15 +1652,20 @@ class MultiThreadedCrawler:
         browser = None
         try:
             playwright = await async_playwright().start()
-            browser = await playwright.chromium.launch(
-                headless=True,
-                args=[
+            # 优先使用系统已安装的 Chrome
+            launch_kwargs = {
+                'headless': True,
+                'args': [
                     '--no-sandbox',
                     '--disable-gpu',
                     '--disable-dev-shm-usage',
                     '--disable-blink-features=AutomationControlled',
                 ]
-            )
+            }
+            import shutil
+            if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
+                launch_kwargs['channel'] = 'chrome'
+            browser = await playwright.chromium.launch(**launch_kwargs)
             context = await browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 viewport={'width': 1366, 'height': 768}
