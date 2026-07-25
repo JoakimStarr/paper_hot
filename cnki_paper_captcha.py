@@ -1642,9 +1642,23 @@ class MultiThreadedCrawler:
 
         from playwright.async_api import async_playwright
 
-        async with async_playwright().start() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
-            context = await browser.new_context()
+        playwright = None
+        browser = None
+        try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                ]
+            )
+            context = await browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1366, 'height': 768}
+            )
             page = await context.new_page()
 
             print("访问期刊导航页...")
@@ -1666,7 +1680,6 @@ class MultiThreadedCrawler:
             result_div = soup.find('div', class_='result')
             if not result_div:
                 print("未找到div.result")
-                await browser.close()
                 return {}
 
             journals = {}
@@ -1703,9 +1716,25 @@ class MultiThreadedCrawler:
             print(f"获取到 {len(journals)} 个期刊")
             HistoryManager.save_journals_history(journals)
 
-            await browser.close()
+            return journals
 
-        return journals
+        except Exception as e:
+            print(f"爬取期刊列表失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+        finally:
+            # 确保资源被正确释放
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass
 
     def run_thread(self, journal_name: str, journal_info: dict, headless: bool, thread_id: int):
         """运行单个线程"""
