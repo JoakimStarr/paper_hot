@@ -1,7 +1,8 @@
 # Debug Session: playwright-start-error
 
-**Status:** [OPEN]
+**Status:** [RESOLVED]
 **Created:** 2026-07-06
+**Resolved:** 2026-07-06
 **Bug:** `TypeError: 'coroutine' object does not support the asynchronous context manager protocol`
 **File:** cnki_paper_captcha.py:1645
 
