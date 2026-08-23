@@ -2,7 +2,8 @@
 
 set -e
 
-PROJECT_DIR="/home/joakim/Project/paper_hot"
+# 根据脚本自身所在目录解析项目根目录（支持从任意位置调用）
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
