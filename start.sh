@@ -5,6 +5,24 @@ set -e
 # 根据脚本自身所在目录解析项目根目录（支持从任意位置调用）
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 自动定位虚拟环境（兼容 backend/venv 与项目根目录 venv）
+find_venv() {
+    for dir in "$PROJECT_DIR/backend/venv" "$PROJECT_DIR/venv"; do
+        if [ -f "$dir/bin/activate" ]; then
+            VENV_DIR="$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+require_venv() {
+    if ! find_venv; then
+        echo -e "${RED}Error: 未找到虚拟环境（backend/venv 或 venv）${NC}" >&2
+        exit 1
+    fi
+}
+
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
@@ -90,7 +108,8 @@ start_production() {
     # 启动后端服务
     echo "📦 Starting backend server..."
     cd "$PROJECT_DIR/backend"
-    source venv/bin/activate
+    require_venv
+    source "$VENV_DIR/bin/activate"
     nohup uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" > backend.log 2>&1 &
     BACKEND_PID=$!
     echo "   Backend started (PID: $BACKEND_PID)"
@@ -131,7 +150,8 @@ start_dev() {
     # 启动后端服务
     echo "📦 Starting backend server (dev)..."
     cd "$PROJECT_DIR/backend"
-    source venv/bin/activate
+    require_venv
+    source "$VENV_DIR/bin/activate"
     nohup uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload > backend.log 2>&1 &
     BACKEND_PID=$!
     echo "   Backend started (PID: $BACKEND_PID) with hot reload"
