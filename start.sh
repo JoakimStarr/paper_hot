@@ -117,9 +117,9 @@ start_production() {
     # 等待后端启动
     sleep 2
 
-    # 构建前端（生产模式）：已存在构建产物时跳过，可用 FORCE_BUILD=1 强制重建
+    # 构建前端（生产模式）：已存在生产构建产物时跳过，可用 FORCE_BUILD=1 强制重建
     cd "$PROJECT_DIR/frontend"
-    if [ -f .next/BUILD_ID ] && [ -z "${FORCE_BUILD:-}" ]; then
+    if [ -d .next/standalone ] && [ -f .next/BUILD_ID ] && [ -z "${FORCE_BUILD:-}" ]; then
         echo "   Skip build (existing .next found, set FORCE_BUILD=1 to rebuild)"
     else
         echo "🔨 Building frontend (production)..."
@@ -165,6 +165,8 @@ start_dev() {
     echo ""
     echo "📱 Starting frontend server (dev with HMR)..."
     cd "$PROJECT_DIR/frontend"
+    # dev 与生产共用 .next，先清空避免与 next build 产物冲突
+    rm -rf .next
     nohup npm run dev -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
     FRONTEND_PID=$!
     echo "   Frontend started (PID: $FRONTEND_PID)"
