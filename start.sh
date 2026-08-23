@@ -117,12 +117,15 @@ start_production() {
     # 等待后端启动
     sleep 2
 
-    # 构建前端（生产模式）
-    echo ""
-    echo "🔨 Building frontend (production)..."
+    # 构建前端（生产模式）：已存在构建产物时跳过，可用 FORCE_BUILD=1 强制重建
     cd "$PROJECT_DIR/frontend"
-    # NEXT_PUBLIC_API_URL 需在构建期注入（生产包会内联该值）
-    NEXT_PUBLIC_API_URL="http://localhost:${BACKEND_PORT}/api" npm run build
+    if [ -f .next/BUILD_ID ] && [ -z "${FORCE_BUILD:-}" ]; then
+        echo "   Skip build (existing .next found, set FORCE_BUILD=1 to rebuild)"
+    else
+        echo "🔨 Building frontend (production)..."
+        # NEXT_PUBLIC_API_URL 需在构建期注入（生产包会内联该值）
+        NEXT_PUBLIC_API_URL="http://localhost:${BACKEND_PORT}/api" npm run build
+    fi
 
     # 启动前端（生产模式）
     echo ""
