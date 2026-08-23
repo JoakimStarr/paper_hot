@@ -130,7 +130,7 @@ start_production() {
     # 启动前端（生产模式）
     echo ""
     echo "📱 Starting frontend server (production)..."
-    nohup npm run start -- -p "$FRONTEND_PORT" > frontend.log 2>&1 &
+    nohup npm run start -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
     FRONTEND_PID=$!
     echo "   Frontend started (PID: $FRONTEND_PID)"
 
@@ -165,7 +165,7 @@ start_dev() {
     echo ""
     echo "📱 Starting frontend server (dev with HMR)..."
     cd "$PROJECT_DIR/frontend"
-    nohup npm run dev -- -p "$FRONTEND_PORT" > frontend.log 2>&1 &
+    nohup npm run dev -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
     FRONTEND_PID=$!
     echo "   Frontend started (PID: $FRONTEND_PID)"
     echo "   Hot Module Replacement enabled"
