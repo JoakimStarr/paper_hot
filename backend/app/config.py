@@ -1,6 +1,6 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings
-from typing import Optional, Union
+from typing import Optional, Union, List, Dict, Any
 from pathlib import Path
 import json
 
@@ -8,29 +8,67 @@ BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
     app_name: str = "ApplePaper"
-    app_version: str = "2.12.0"
-    
+    app_version: str = "2.16.0"
+
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
-    
+
     openai_api_key: Optional[str] = None
     zhipu_api_key: Optional[str] = None
     siliconflow_api_key: Optional[str] = None
-    
+    custom_providers: Optional[str] = None  # JSON string: [{"name":"...", "base_url":"...", "api_key":"...", "models":["..."]}]
+
+    # 内置 provider 的 OpenAI 兼容端点覆盖（留空用默认地址）
+    zhipu_base_url: Optional[str] = None
+    siliconflow_base_url: Optional[str] = None
+    openai_base_url: Optional[str] = None
+
+    # 各内置 provider 的模型优先级（JSON 数组字符串，由设置页排序后持久化）
+    zhipu_models: Optional[str] = None
+    siliconflow_models: Optional[str] = None
+    openai_models: Optional[str] = None
+
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
-    
+
     scheduler_enabled: bool = True
     fetch_interval_hours: int = 24
-    
+
     api_token: str = Field(default="", description="API token for protected endpoints")
-    
+
+    # CNKI 爬虫是否无头模式运行（False 会弹出浏览器窗口，便于人工处理验证码）
+    cnki_headless: bool = False
+
     backend_port: int = 8000
     frontend_port: int = 3000
-    
+
     cors_origins: Union[list[str], str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    def get_custom_providers(self) -> List[Dict[str, Any]]:
+        if not self.custom_providers:
+            return []
+        try:
+            return json.loads(self.custom_providers)
+        except:
+            return []
+
+    @staticmethod
+    def get_json_list(value: Optional[str]) -> List[str]:
+        """解析 JSON 数组字符串为列表；空值或格式错误返回空列表。"""
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed if str(v).strip()]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return []
+
+    def set_custom_providers(self, providers: List[Dict[str, Any]]):
+        self.custom_providers = json.dumps(providers, ensure_ascii=False)
 
     def get_cors_origins(self) -> list[str]:
         if isinstance(self.cors_origins, str):

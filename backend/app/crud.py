@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import List, Optional, Tuple
-from sqlalchemy import select, and_, desc, func, String, or_, text
+from sqlalchemy import select, and_, desc, func, or_, text, update, bindparam, insert, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
@@ -113,8 +113,10 @@ class PaperCRUD:
         if source:
             query = query.where(Paper.source == source)
         
+        score_joined = False
         if min_score is not None:
             query = query.join(PaperScore).where(PaperScore.final_score >= min_score)
+            score_joined = True
         
         if days_back:
             cutoff_date = datetime.now() - timedelta(days=days_back)
@@ -163,19 +165,20 @@ class PaperCRUD:
         total = total_result.scalar()
         
         if sort_by == "score":
-            query = query.join(PaperScore)
+            # min_score 过滤已 JOIN 过 PaperScore，不能重复 JOIN（否则 ambiguous column 报错）
+            if not score_joined:
+                query = query.join(PaperScore)
             order_col = PaperScore.final_score
-        elif sort_by == "date":
-            order_col = Paper.journal_issue
         elif sort_by == "title":
             order_col = Paper.title
         else:
-            order_col = Paper.journal_issue
-        
+            # 默认按发表时间排序；journal_issue 是字符串字典序（"12期" < "2期"）不可靠
+            order_col = Paper.published_at
+
         if sort_order == "asc":
-            query = query.order_by(order_col.asc(), Paper.doi.asc())
+            query = query.order_by(order_col.asc(), Paper.id.asc())
         else:
-            query = query.order_by(desc(order_col), desc(Paper.doi))
+            query = query.order_by(desc(order_col), desc(Paper.id))
         
         query = query.offset((page - 1) * page_size).limit(page_size)
         result = await db.execute(query)
@@ -494,6 +497,14 @@ class PaperCRUD:
                 logger.warning(f"Skipping paper (no keywords): {paper_data['title'][:50]}...")
                 return None
             
+            # CNKI 的 URL 带动态 token 无法靠唯一约束去重，按标题判重
+            dup_check = await db.execute(
+                select(Paper.id).where(Paper.title == paper_data['title']).limit(1)
+            )
+            if dup_check.first() is not None:
+                logger.info(f"Skipping duplicate paper: {paper_data['title'][:50]}")
+                return None
+
             year = paper_data.get('year', datetime.now().year)
             journal_issue = paper_data.get('journal_issue')
             journal_name = paper_data.get('journal_name', '')
@@ -544,13 +555,15 @@ class PaperCRUD:
             )
             db.add(features)
             
-            # 创建默认的scores
+            # 按发表时间与期刊分级计算评分（趋势分由后台任务按关键词热度更新）
+            recency = PaperCRUD._recency_score(published_at)
+            venue = PaperCRUD._venue_score(journal_name)
             scores = PaperScore(
                 paper_id=db_paper.id,
-                recency_score=0.5,
-                venue_score=0.7,
+                recency_score=recency,
+                venue_score=venue,
                 trend_score=0.5,
-                final_score=0.55
+                final_score=PaperCRUD._final_score(recency, venue, 0.5)
             )
             db.add(scores)
             
@@ -629,121 +642,178 @@ class PaperCRUD:
         返回更新的记录数
         """
         monthly_counts = await PaperCRUD.get_keyword_monthly_counts(db, months_back)
-        updated_count = 0
-        
+
+        trend_rows = []
         for keyword, month_data in monthly_counts.items():
-            # 按月排序
             sorted_months = sorted(month_data.keys())
-            
             for i, month_start in enumerate(sorted_months):
                 current_count = month_data[month_start]
-                
-                # 计算增长率
-                if i == 0 or sorted_months[i-1] not in month_data:
-                    # 第一个月或前一个月没有数据，增长率为 0
+                if i == 0 or sorted_months[i - 1] not in month_data:
                     growth_rate = 0.0
                 else:
-                    previous_count = month_data[sorted_months[i-1]]
+                    previous_count = month_data[sorted_months[i - 1]]
                     if previous_count == 0:
                         growth_rate = 1.0 if current_count > 0 else 0.0
                     else:
                         growth_rate = (current_count - previous_count) / previous_count
-                
-                # 删除该月旧数据
-                delete_result = await db.execute(
-                    select(TopicTrend).where(
-                        and_(
-                            TopicTrend.topic == keyword,
-                            TopicTrend.week_start == month_start
-                        )
-                    )
-                )
-                existing = delete_result.scalar_one_or_none()
-                if existing:
-                    await db.delete(existing)
-                
-                # 创建新记录
-                trend = TopicTrend(
-                    topic=keyword,
-                    week_start=month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01", "%Y-%m-%d"),
-                    paper_count=current_count,
-                    growth_rate=growth_rate
-                )
-                db.add(trend)
-                updated_count += 1
-        
+                trend_rows.append({
+                    "topic": keyword,
+                    "week_start": month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01", "%Y-%m-%d"),
+                    "paper_count": current_count,
+                    "growth_rate": growth_rate,
+                })
+
+        if not trend_rows:
+            return 0
+
+        # 涉及的关键词整体重写：一次批量 DELETE + 一次批量 INSERT
+        keywords = list(monthly_counts.keys())
+        for i in range(0, len(keywords), 500):
+            await db.execute(
+                delete(TopicTrend).where(TopicTrend.topic.in_(keywords[i:i + 500]))
+            )
+        await db.execute(insert(TopicTrend), trend_rows)
         await db.flush()
-        return updated_count
+        return len(trend_rows)
+
+    # ---------- 评分计算 ----------
+
+    # 三项分数权重：新近性 / 期刊分级 / 关键词热度
+    SCORE_WEIGHTS = {"recency": 0.35, "venue": 0.35, "trend": 0.30}
+    # 新近性半衰期（天）：半年热度减半，经济学期刊按月更新，不宜衰减过快
+    RECENCY_HALF_LIFE_DAYS = 180.0
+
+    @staticmethod
+    def _recency_score(published_at: Optional[datetime]) -> float:
+        if not published_at:
+            return 0.3
+        days_old = max((datetime.now() - published_at.replace(tzinfo=None)).days, 0)
+        rate = math.log(2) / PaperCRUD.RECENCY_HALF_LIFE_DAYS
+        return min(max(math.exp(-rate * days_old), 0.0), 1.0)
+
+    @staticmethod
+    def _venue_score(journal_name: Optional[str]) -> float:
+        from app.fetchers import VenueDataFetcher
+        return VenueDataFetcher.get_venue_score(journal_name)
+
+    @staticmethod
+    def _trend_score(growth_rate: float) -> float:
+        return min(max(0.5 + 0.5 * math.tanh(growth_rate), 0.0), 1.0)
+
+    @staticmethod
+    def _final_score(recency: float, venue: float, trend: float) -> float:
+        w = PaperCRUD.SCORE_WEIGHTS
+        return round(w["recency"] * recency + w["venue"] * venue + w["trend"] * trend, 4)
+
+    @staticmethod
+    async def _latest_growth_map(db: AsyncSession) -> dict:
+        """每个 topic/keyword 的最新增长率（TopicTrend 表按关键词记录月度趋势）。"""
+        rows = await db.execute(text("""
+            SELECT t.topic, t.growth_rate FROM topic_trends t
+            JOIN (SELECT topic, MAX(week_start) AS ws FROM topic_trends GROUP BY topic) m
+              ON t.topic = m.topic AND t.week_start = m.ws
+        """))
+        return {row[0]: row[1] for row in rows.fetchall()}
 
     @staticmethod
     async def bulk_update_paper_trend_scores(db: AsyncSession) -> int:
         """
-        批量更新论文趋势分数
-        1. 查询所有 topic 非空的论文及其 PaperScore
-        2. 从 TopicTrend 表获取每个主题的最新增长率
-        3. 使用公式 trend_score = 0.5 + 0.5 * tanh(growth_rate) 更新
-        返回更新的记录数
+        批量更新论文趋势分并重算综合分。
+        优先用 topic 增长率；topic 为空（CNKI 论文）时取论文关键词中最高的增长率。
+        单条批量 UPDATE 完成，避免逐篇 SELECT/UPDATE。
         """
-        # 查询所有 topic 非空的论文及其 PaperScore
-        result = await db.execute(
-            select(Paper.id, PaperFeatures.topic, PaperScore.id.label('score_id'))
-            .join(PaperFeatures)
-            .join(PaperScore)
-            .where(PaperFeatures.topic.isnot(None))
-        )
-        
-        papers = result.fetchall()
-        if not papers:
+        growth_map = await PaperCRUD._latest_growth_map(db)
+        if not growth_map:
             return 0
-        
-        # 获取每个主题的最新增长率
-        topic_growth_rates = {}
-        topics = set(paper[1] for paper in papers)
-        
-        for topic in topics:
-            trend_result = await db.execute(
-                select(TopicTrend.growth_rate)
-                .where(TopicTrend.topic == topic)
-                .order_by(desc(TopicTrend.week_start))
-                .limit(1)
-            )
-            latest_growth = trend_result.scalar_one_or_none()
-            if latest_growth is not None:
-                topic_growth_rates[topic] = latest_growth
-        
-        # 更新论文趋势分数
-        updated_count = 0
-        for paper_id, topic, score_id in papers:
-            if topic in topic_growth_rates:
-                growth_rate = topic_growth_rates[topic]
-                trend_score = 0.5 + 0.5 * math.tanh(growth_rate)
-                
-                # 获取 PaperScore 记录并更新
-                score_result = await db.execute(
-                    select(PaperScore).where(PaperScore.id == score_id)
-                )
-                score = score_result.scalar_one_or_none()
-                if score:
-                    score.trend_score = trend_score
-                    updated_count += 1
-        
+
+        result = await db.execute(
+            select(Paper.id, PaperFeatures.topic, PaperFeatures.keywords)
+            .outerjoin(PaperFeatures, PaperFeatures.paper_id == Paper.id)
+        )
+        rows = result.fetchall()
+
+        updates = []
+        for paper_id, topic, keywords in rows:
+            rates = []
+            if topic and topic in growth_map:
+                rates.append(growth_map[topic])
+            for k in (keywords or []):
+                if k in growth_map:
+                    rates.append(growth_map[k])
+            if not rates:
+                continue
+            updates.append({"pid": paper_id, "trend": PaperCRUD._trend_score(max(rates))})
+
+        if not updates:
+            return 0
+        w = PaperCRUD.SCORE_WEIGHTS
+        score_tbl = PaperScore.__table__
+        await db.execute(
+            update(score_tbl)
+            .where(score_tbl.c.paper_id == bindparam("pid"))
+            .values(
+                trend_score=bindparam("trend"),
+                final_score=(
+                    w["recency"] * score_tbl.c.recency_score
+                    + w["venue"] * score_tbl.c.venue_score
+                    + w["trend"] * bindparam("trend")
+                ),
+            ),
+            updates,
+        )
         await db.flush()
-        return updated_count
+        return len(updates)
+
+    @staticmethod
+    async def recompute_all_scores(db: AsyncSession) -> int:
+        """全量重算所有论文分数：recency（发表时间衰减）+ venue（期刊分级）+ trend（关键词热度）。"""
+        growth_map = await PaperCRUD._latest_growth_map(db)
+
+        result = await db.execute(
+            select(Paper.id, Paper.published_at, Paper.journal_name, PaperFeatures.keywords)
+            .outerjoin(PaperFeatures, PaperFeatures.paper_id == Paper.id)
+        )
+        rows = result.fetchall()
+
+        updates = []
+        for paper_id, published_at, journal_name, keywords in rows:
+            recency = PaperCRUD._recency_score(published_at)
+            venue = PaperCRUD._venue_score(journal_name)
+            trend = 0.5
+            rates = [growth_map[k] for k in (keywords or []) if k in growth_map]
+            if rates:
+                trend = PaperCRUD._trend_score(max(rates))
+            updates.append({
+                "pid": paper_id,
+                "recency": recency,
+                "venue": venue,
+                "trend": trend,
+                "final": PaperCRUD._final_score(recency, venue, trend),
+            })
+
+        if not updates:
+            return 0
+        score_tbl = PaperScore.__table__
+        await db.execute(
+            update(score_tbl)
+            .where(score_tbl.c.paper_id == bindparam("pid"))
+            .values(
+                recency_score=bindparam("recency"),
+                venue_score=bindparam("venue"),
+                trend_score=bindparam("trend"),
+                final_score=bindparam("final"),
+            ),
+            updates,
+        )
+        await db.flush()
+        return len(updates)
 
 
 class PaperAnalysisCRUD:
     @staticmethod
-    async def save_analysis(db: AsyncSession, paper_id: str, analysis: str, model: str = "glm-4.5-air"):
+    async def create_pending(db: AsyncSession, paper_id: str, model: Optional[str] = None) -> int:
         from app.models import PaperAnalysis
-        record = PaperAnalysis(paper_id=paper_id, analysis=analysis, model=model, status="success")
-        db.add(record)
-        await db.flush()
-        return record
-
-    @staticmethod
-    async def create_pending(db: AsyncSession, paper_id: str) -> int:
-        from app.models import PaperAnalysis
-        record = PaperAnalysis(paper_id=paper_id, analysis=None, model="glm-4.5-air", status="pending")
+        record = PaperAnalysis(paper_id=paper_id, analysis=None, model=model, status="pending")
         db.add(record)
         await db.flush()
         await db.refresh(record)
@@ -818,11 +888,7 @@ class PaperChatCRUD:
     @staticmethod
     async def clear_chats(db: AsyncSession, paper_id: str):
         from app.models import PaperChat
-        result = await db.execute(
-            select(PaperChat).where(PaperChat.paper_id == paper_id)
-        )
-        for row in result.scalars().all():
-            await db.delete(row)
+        await db.execute(delete(PaperChat).where(PaperChat.paper_id == paper_id))
         await db.flush()
 
 
@@ -924,6 +990,36 @@ class CrawlLogCRUD:
         return result.scalar_one_or_none()
 
 
+    @staticmethod
+    async def mark_stale_running_failed(db: AsyncSession, stale_hours: int = 2) -> int:
+        """把超时仍处于 running 的爬虫日志标记为 failed（服务重启遗留的僵尸记录）。
+
+        crawl_start_time 以本地时间写入，不能与 SQL 的 datetime('now')（UTC）直接比较，
+        因此在 Python 侧做时间比较。
+        """
+        cutoff = datetime.now() - timedelta(hours=stale_hours)
+        result = await db.execute(
+            select(CrawlLog.id, CrawlLog.crawl_start_time).where(CrawlLog.status == "running")
+        )
+        stale_ids = []
+        for row_id, started_at in result.fetchall():
+            if started_at is None:
+                continue
+            started_naive = started_at.replace(tzinfo=None) if started_at.tzinfo else started_at
+            if started_naive < cutoff:
+                stale_ids.append(row_id)
+
+        if not stale_ids:
+            return 0
+        for i in range(0, len(stale_ids), 100):
+            await db.execute(
+                update(CrawlLog)
+                .where(CrawlLog.id.in_(stale_ids[i:i + 100]))
+                .values(status="failed", error_message="stale running log cleaned up")
+            )
+        return len(stale_ids)
+
+
 class AIAnalysisReportCRUD:
     @staticmethod
     async def create_report(
@@ -1016,6 +1112,23 @@ class AIAnalysisReportCRUD:
         )
         return result.rowcount > 0
 
+    @staticmethod
+    async def delete_stale_running_reports(db: AsyncSession, stale_minutes: int = 5) -> int:
+        """删除超时仍处于 running 状态的报告（服务重启导致的孤儿记录），返回删除数量。
+
+        后台分析任务自身有120秒超时，正常 running 记录存活不超过2分钟；
+        超过 stale_minutes 仍在 running 的一定是残留，会导致前端无限轮询且无法发起新分析。
+        """
+        from sqlalchemy import text
+        result = await db.execute(
+            text(
+                "DELETE FROM ai_analysis_reports "
+                "WHERE status = 'running' AND created_at < datetime('now', :window)"
+            ),
+            {"window": f"-{stale_minutes} minutes"},
+        )
+        return result.rowcount or 0
+
 
 class PaperSimilarityCRUD:
     @staticmethod
@@ -1068,22 +1181,18 @@ class PaperSimilarityCRUD:
     @staticmethod
     async def delete_by_paper(db: AsyncSession, paper_id: str):
         from app.models import PaperSimilarity
-        result = await db.execute(
-            select(PaperSimilarity).where(
+        await db.execute(
+            delete(PaperSimilarity).where(
                 (PaperSimilarity.paper_id_a == paper_id) |
                 (PaperSimilarity.paper_id_b == paper_id)
             )
         )
-        for row in result.scalars().all():
-            await db.delete(row)
         await db.flush()
 
     @staticmethod
     async def clear_all(db: AsyncSession):
         from app.models import PaperSimilarity
-        result = await db.execute(select(PaperSimilarity))
-        for row in result.scalars().all():
-            await db.delete(row)
+        await db.execute(delete(PaperSimilarity))
 
 
 class TrendChatCRUD:
@@ -1109,9 +1218,5 @@ class TrendChatCRUD:
     @staticmethod
     async def clear_chats(db: AsyncSession, report_id: int):
         from app.models import TrendChat
-        result = await db.execute(
-            select(TrendChat).where(TrendChat.report_id == report_id)
-        )
-        for row in result.scalars().all():
-            await db.delete(row)
+        await db.execute(delete(TrendChat).where(TrendChat.report_id == report_id))
         await db.flush()

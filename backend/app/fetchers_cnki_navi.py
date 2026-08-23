@@ -122,14 +122,19 @@ class CNKINaviFetcher:
         return False
     
     def _handle_captcha(self):
-        """处理验证码"""
+        """处理验证码
+
+        服务进程内不能等待 stdin（会永久挂起），改为限时轮询等待人工在
+        浏览器窗口中解决验证码；超时抛异常由上层标记失败。
+        """
         if self._check_captcha():
-            logger.warning("Captcha detected! Please solve it manually.")
-            print("\n" + "="*60)
-            print("⚠️  检测到验证码，请在浏览器窗口中手动解决")
-            print("="*60)
-            input("解决验证码后，请按回车键继续...")
-            time.sleep(2)
+            logger.warning("Captcha detected! Waiting up to 120s for manual solve in the browser window...")
+            waited = 0
+            while self._check_captcha() and waited < 120:
+                time.sleep(3)
+                waited += 3
+            if self._check_captcha():
+                raise RuntimeError("验证码等待超时（120秒），请在有界面上手动运行爬虫后重试")
     
     def get_journals_list(self) -> Dict[str, str]:
         """

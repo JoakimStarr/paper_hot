@@ -1,4 +1,5 @@
 import arxiv
+import json
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 import asyncio
@@ -36,7 +37,7 @@ class ArxivFetcher:
             papers = []
             cutoff_date = datetime.now() - timedelta(days=days_back)
             
-            for result in search.results():
+            for result in await asyncio.to_thread(lambda: list(search.results())):
                 if result.published.replace(tzinfo=None) < cutoff_date.replace(tzinfo=None):
                     continue
                     
@@ -75,6 +76,23 @@ class ArxivFetcher:
 
 class VenueDataFetcher:
     VENUE_SCORES = {
+        # 中文经济学期刊分级
+        "经济研究": 1.0,
+        "管理世界": 1.0,
+        "经济学(季刊)": 0.95,
+        "经济学（季刊）": 0.95,
+        "世界经济": 0.9,
+        "金融研究": 0.9,
+        "中国工业经济": 0.85,
+        "数量经济技术经济研究": 0.8,
+        "中国农村经济": 0.75,
+        "农业经济问题": 0.75,
+        "财贸经济": 0.75,
+        "财经研究": 0.7,
+        "国际经济评论": 0.7,
+        "经济科学": 0.7,
+        "世界经济文汇": 0.65,
+        # 国际会议/期刊
         "NeurIPS": 1.0,
         "ICML": 1.0,
         "ICLR": 1.0,
@@ -261,7 +279,8 @@ class JingjiYanjiuFetcher(EconomicsJournalFetcher):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
                 
-                response = requests.post(
+                response = await asyncio.to_thread(
+                    requests.post,
                     self.api_url,
                     json=payload,
                     headers=headers,
@@ -778,7 +797,7 @@ class ShijieJingjiFetcher(EconomicsJournalFetcher):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 }
                 
-                response = requests.get(url, headers=headers, timeout=10)
+                response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
                 response.encoding = 'utf-8'
                 
                 if response.status_code != 200:
@@ -900,7 +919,8 @@ class ZhongguoGongyeJingjiFetcher(EconomicsJournalFetcher):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
                 
-                response = requests.post(
+                response = await asyncio.to_thread(
+                    requests.post,
                     self.api_url,
                     json=payload,
                     headers=headers,

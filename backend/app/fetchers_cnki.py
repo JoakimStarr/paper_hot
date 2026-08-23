@@ -711,7 +711,8 @@ class CNKITop50BatchFetcher:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         max_results_per_journal: int = 20,
-        max_journals: Optional[int] = None
+        max_journals: Optional[int] = None,
+        journals: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         批量爬取多个期刊的论文
@@ -721,15 +722,17 @@ class CNKITop50BatchFetcher:
             end_date: 结束日期
             max_results_per_journal: 每个期刊最大爬取数量
             max_journals: 最大爬取期刊数量（None表示全部）
+            journals: 指定期典配置子集（None表示用全部已配置期刊）
             
         Returns:
             按期刊名分类的论文字典
         """
         results = {}
+        journal_config = journals if journals else self.journals
         
         # 按优先级排序期刊
         sorted_journals = sorted(
-            self.journals.items(),
+            journal_config.items(),
             key=lambda x: x[1].get("priority", 0),
             reverse=True
         )

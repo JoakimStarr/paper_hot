@@ -261,7 +261,7 @@ export default function Filters({
             >
               <option value="">{t('filters.anyScore')} ({stats?.total_papers || 0})</option>
               {scoreThresholds.map((score) => (
-                <option key={score} value={score}>≥ {(score * 100).toFixed(0)}% ({getCount('score_counts', score.toFixed(1))})</option>
+                <option key={score} value={score}>≥ {(score * 100).toFixed(0)}% ({getCount('score_counts', `≥ ${(score * 100).toFixed(0)}%`)})</option>
               ))}
             </select>
           </div>

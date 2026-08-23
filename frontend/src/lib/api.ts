@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -82,24 +82,24 @@ export const papersApi = {
     return response.data;
   },
 
-  getAIAnalysis: async (): Promise<AIAnalysisResponse> => {
-    const response = await apiClient.get<AIAnalysisResponse>('/ai-analysis');
-    return response.data;
-  },
-
   getAIAnalysisV2: async (): Promise<AIAnalysisResponseV2> => {
     const response = await apiClient.get<AIAnalysisResponseV2>('/ai-analysis/v2');
     return response.data;
   },
 
-  startAIAnalysis: async (): Promise<AIAnalysisResponseV2> => {
-    const response = await apiClient.post<AIAnalysisResponseV2>('/ai-analysis/v2/analyze');
+  startAIAnalysis: async (model?: string): Promise<AIAnalysisResponseV2> => {
+    const response = await apiClient.post<AIAnalysisResponseV2>('/ai-analysis/v2/analyze', { model });
     return response.data;
   },
 
-  getAIAnalysisReports: async (page: number = 1, limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
+  getAIAnalysisModels: async (): Promise<{ models: Array<{ name: string; available: boolean; priority: number; provider?: string }> }> => {
+    const response = await apiClient.get<{ models: Array<{ name: string; available: boolean; priority: number; provider?: string }> }>('/ai-analysis/models');
+    return response.data;
+  },
+
+  getAIAnalysisReports: async (limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
     const response = await apiClient.get<{ reports: AIAnalysisReport[]; total: number }>('/ai-analysis/reports', {
-      params: { page, limit },
+      params: { limit },
     });
     return response.data;
   },
@@ -147,8 +147,18 @@ export const papersApi = {
     return response.data;
   },
 
-  startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: number; status: string; message: string }> => {
+  startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: string; status: string; message: string }> => {
     const response = await apiClient.post('/crawl/start', { journal_names: journalNames || null });
+    return response.data;
+  },
+
+  startCNKITop50Crawl: async (opts?: { journal_names?: string[]; max_results_per_journal?: number; max_journals?: number }): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.post('/crawl/cnki/top50/start', opts || {});
+    return response.data;
+  },
+
+  startCNKNaviCrawl: async (): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.post('/crawl/cnki/navi/start', {});
     return response.data;
   },
 
@@ -159,11 +169,6 @@ export const papersApi = {
 
   getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> => {
     const response = await apiClient.get(`/papers/${paperId}/analyses/latest`);
-    return response.data;
-  },
-
-  getPaperAnalyses: async (paperId: string): Promise<Array<{ id: number; analysis: string; model: string; created_at: string }>> => {
-    const response = await apiClient.get(`/papers/${paperId}/analyses`);
     return response.data;
   },
 
@@ -200,7 +205,7 @@ export const papersApi = {
     return response.data;
   },
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string }): Promise<{ success: boolean }> => {
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> => {
     const response = await apiClient.put<{ success: boolean }>('/settings', data);
     return response.data;
   },

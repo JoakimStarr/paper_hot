@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Layout from '@/components/Layout';
+import { useLanguage } from '@/contexts/LanguageContext';
 import PaperCard from '@/components/PaperCard';
 import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
@@ -12,6 +13,7 @@ import { ArrowLeft, User, Users } from 'lucide-react';
 import { PaperCard as PaperCardType } from '@/types/paper';
 
 export default function AuthorPage() {
+  const { t } = useLanguage();
   const params = useParams();
   const authorName = decodeURIComponent((params.name as string) || '');
 
@@ -31,6 +33,17 @@ export default function AuthorPage() {
     top_subfield: string | null;
   } | null>(null);
 
+  // 统计数据只依赖作者，翻页/改每页条数时不重复拉取全量列表
+  const fetchStats = useCallback(async () => {
+    if (!authorName) return;
+    try {
+      const allPapers = await papersApi.getAuthorPapers(authorName, 1, 200);
+      computeStats(allPapers.papers);
+    } catch (error) {
+      console.error('Error fetching author stats:', error);
+    }
+  }, [authorName]);
+
   const fetchPapers = useCallback(async (p: number) => {
     if (!authorName) return;
     setLoading(true);
@@ -39,9 +52,6 @@ export default function AuthorPage() {
       setPapers(response.papers);
       setTotal(response.total);
       setTotalPages(Math.ceil(response.total / pageSize));
-
-      const allPapers = await papersApi.getAuthorPapers(authorName, 1, 200);
-      computeStats(allPapers.papers);
     } catch (error) {
       console.error('Error fetching author papers:', error);
     } finally {
@@ -49,18 +59,22 @@ export default function AuthorPage() {
     }
   }, [authorName, pageSize]);
 
+  const [queryKey, setQueryKey] = useState(0);
+
   useEffect(() => {
     if (authorName) {
       setPage(1);
-      fetchPapers(1);
+      setQueryKey(k => k + 1);
+      fetchStats();
     }
   }, [authorName]);
 
+  // 翻页与每页条数变化都触发拉取（原先第1页改条数不刷新）
   useEffect(() => {
-    if (authorName && page > 1) {
+    if (authorName) {
       fetchPapers(page);
     }
-  }, [page]);
+  }, [page, pageSize, queryKey]);
 
   const computeStats = (allPapers: PaperCardType[]) => {
     const coAuthorMap = new Map<string, number>();
@@ -131,7 +145,7 @@ export default function AuthorPage() {
     return (
       <Layout>
         <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400">无效的作者名称</p>
+          <p className="text-gray-500 dark:text-gray-400">{t('paper.notFound')}</p>
         </div>
       </Layout>
     );
@@ -152,7 +166,7 @@ export default function AuthorPage() {
           <div className="min-w-0">
             <h1 className="text-xl sm:text-3xl font-bold text-gray-900 dark:text-white truncate">{authorName}</h1>
             <p className="text-sm sm:text-base text-gray-500 dark:text-gray-400 mt-1">
-              共发表 {total} 篇论文
+              共 {total} {t('sys.papersUnit')}
               {authorStats?.first_author_count && authorStats.first_author_count > 0
                 ? `，其中 ${authorStats.first_author_count} 篇为第一作者`
                 : ''}
@@ -170,7 +184,7 @@ export default function AuthorPage() {
             )}
             {authorStats.top_journal && (
               <div className="bg-green-50 dark:bg-green-900/30 rounded-lg p-2 sm:p-3">
-                <div className="text-xs text-green-500 mb-0.5">高频期刊</div>
+                <div className="text-xs text-green-500 mb-0.5">{t('paper.journal')}</div>
                 <div className="font-semibold text-green-700 text-xs sm:text-sm truncate" title={authorStats.top_journal}>
                   {authorStats.top_journal}
                 </div>
@@ -184,7 +198,7 @@ export default function AuthorPage() {
             )}
             {authorStats.top_keywords.length > 0 && (
               <div className="bg-orange-50 dark:bg-orange-900/30 rounded-lg p-2 sm:p-3">
-                <div className="text-xs text-orange-500 mb-0.5">研究关键词</div>
+                <div className="text-xs text-orange-500 mb-0.5">{t('net.keywordsLabel')}</div>
                 <div className="font-semibold text-orange-700 text-xs sm:text-sm truncate" title={authorStats.top_keywords.join(', ')}>
                   {authorStats.top_keywords.slice(0, 3).join(', ')}
                 </div>
@@ -197,7 +211,7 @@ export default function AuthorPage() {
           <div className="mt-6 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Users className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              <h2 className="font-semibold text-gray-900 dark:text-white">合作学者</h2>
+              <h2 className="font-semibold text-gray-900 dark:text-white">{t('net.coauthors')}</h2>
             </div>
             <div className="flex flex-wrap gap-2">
               {coAuthors.map((ca) => (
@@ -216,7 +230,7 @@ export default function AuthorPage() {
       </div>
 
       <div className="mb-4 sm:mb-6">
-        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">发表论文</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">{t('net.papersLabel')}</h2>
       </div>
 
       {loading ? (
@@ -229,7 +243,7 @@ export default function AuthorPage() {
         <>
           {papers.length === 0 ? (
             <div className="text-center py-8 sm:py-12">
-              <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base">暂无论文数据</p>
+              <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base">{t('home.noPapers')}</p>
             </div>
           ) : (
             <>

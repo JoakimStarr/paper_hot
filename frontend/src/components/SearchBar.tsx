@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useLanguage } from '@/contexts/LanguageContext';
 import { Search, X } from 'lucide-react';
 import { papersApi, SearchSuggestion } from '@/lib/api';
 import { useRouter } from 'next/navigation';
@@ -11,14 +12,16 @@ interface SearchBarProps {
   onSearch: (query: string, field: string) => void;
 }
 
-const SEARCH_FIELDS = [
-  { value: 'keyword', label: '关键词' },
-  { value: 'title', label: '标题' },
-  { value: 'author', label: '作者' },
-  { value: 'all', label: '全部' },
-];
+const SEARCH_FIELD_VALUES = ['keyword', 'title', 'author', 'all'] as const;
 
 export default function SearchBar({ initialQuery = '', initialField = 'keyword', onSearch }: SearchBarProps) {
+  const { t } = useLanguage();
+  const searchFields = [
+    { value: 'keyword', label: t('common.keyword') },
+    { value: 'title', label: t('common.titleType') },
+    { value: 'author', label: t('common.author') },
+    { value: 'all', label: t('common.all') },
+  ];
   const [query, setQuery] = useState(initialQuery);
   const [field, setField] = useState(initialField);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -134,7 +137,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
           onFocus={() => {
             if (suggestions.length > 0) setShowSuggestions(true);
           }}
-          placeholder="搜索论文关键词、标题..."
+          placeholder={t('common.searchPapers')}
           className="flex-1 bg-transparent text-sm outline-none"
         />
         <select
@@ -142,7 +145,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
           onChange={(e) => setField(e.target.value)}
           className="text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-0.5 shrink-0 outline-none"
         >
-          {SEARCH_FIELDS.map((f) => (
+          {searchFields.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
         </select>
@@ -155,7 +158,7 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
           onClick={() => handleSubmit()}
           className="bg-primary-600 text-white rounded px-3 py-1 text-sm hover:bg-primary-700 shrink-0"
         >
-          搜索
+          {t('common.search')}
         </button>
       </div>
 

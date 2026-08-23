@@ -31,15 +31,32 @@ def compute_all_similarities(papers: List[Tuple[str, str]]) -> List[Tuple[str, s
 
     sim_matrix = cosine_similarity(tfidf_matrix)
 
-    results = []
+    # 阈值过低会产生近百万条记录；按篇保留 Top-N 更符合"相似推荐"用途
+    threshold = 0.1
+    top_n_per_paper = 20
     n = len(ids)
+    results = []
     for i in range(n):
-        for j in range(i + 1, n):
-            score = float(sim_matrix[i][j])
-            if score > 0.05:
-                results.append((ids[i], ids[j], score))
+        candidates = []
+        row = sim_matrix[i]
+        for j in range(n):
+            if j == i:
+                continue
+            score = float(row[j])
+            if score > threshold:
+                candidates.append((j, score))
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        for j, score in candidates[:top_n_per_paper]:
+            a, b = (i, j) if i < j else (j, i)
+            results.append((ids[a], ids[b], score))
 
-    return results
+    # 同一对可能从两端各保留一次，按 (a, b) 去重取高分
+    seen: dict = {}
+    for a, b, score in results:
+        key = (a, b)
+        if key not in seen or score > seen[key]:
+            seen[key] = score
+    return [(a, b, s) for (a, b), s in seen.items()]
 
 
 async def compute_and_store_for_paper(db, paper_id: str):

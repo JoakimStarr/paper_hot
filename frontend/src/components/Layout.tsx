@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -15,7 +15,18 @@ export default function Layout({ children }: LayoutProps) {
   const { t } = useLanguage();
   const { isDark, toggleDark } = useTheme();
   const router = useRouter();
+  const pathname = usePathname();
   const [backendOnline, setBackendOnline] = useState(true);
+
+  // 当前页导航高亮
+  const navLinkClass = (path: string) => {
+    const active = path === '/' ? pathname === '/' : pathname.startsWith(path);
+    return `flex items-center gap-1.5 transition-colors text-sm ${
+      active
+        ? 'text-primary-600 dark:text-primary-400 font-medium'
+        : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'
+    }`;
+  };
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
 
@@ -92,7 +103,7 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
-      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-300">
+      <header className="sticky top-0 z-40 bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <Link href="/" className="flex items-center gap-2 shrink-0">
@@ -102,10 +113,7 @@ export default function Layout({ children }: LayoutProps) {
             
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center gap-3">
-              <Link
-                href="/"
-                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
-              >
+              <Link href="/" className={navLinkClass('/')}>
                 <Home className="w-4 h-4" />
                 <span>{t('nav.home')}</span>
               </Link>
@@ -121,10 +129,10 @@ export default function Layout({ children }: LayoutProps) {
                       onChange={(e) => handleNavInputChange(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') handleNavSearch(); if (e.key === 'Escape') { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); } }}
                       onFocus={() => { if (navSuggestions.length > 0) setShowNavSuggestions(true); }}
-                      placeholder="搜索..."
+                      placeholder={t('common.search')}
                       className="bg-transparent text-sm outline-none w-28 sm:w-40 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                     />
-                    <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
+                    <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} aria-label={t('common.closeSearch')} className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
                       <X className="w-3 h-3 text-gray-400" />
                     </button>
                   </div>
@@ -148,7 +156,7 @@ export default function Layout({ children }: LayoutProps) {
                               : s.type === 'author' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
                               : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400'
                           }`}>
-                            {s.type === 'keyword' ? '关键词' : s.type === 'author' ? '作者' : '标题'}
+                            {s.type === 'keyword' ? t('common.keyword') : s.type === 'author' ? t('common.author') : t('common.titleType')}
                           </span>
                           <span className="truncate flex-1">{s.text}</span>
                         </button>
@@ -162,28 +170,19 @@ export default function Layout({ children }: LayoutProps) {
                   className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
                 >
                   <Search className="w-4 h-4" />
-                  <span>搜索</span>
+                  <span>{t('common.search')}</span>
                 </button>
               )}
 
-              <Link
-                href="/trends"
-                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
-              >
+              <Link href="/trends" className={navLinkClass('/trends')}>
                 <TrendingUp className="w-4 h-4" />
                 <span>{t('nav.trends')}</span>
               </Link>
-              <Link
-                href="/network"
-                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
-              >
+              <Link href="/network" className={navLinkClass('/network')}>
                 <Share2 className="w-4 h-4" />
-                <span>关系网络</span>
+                <span>{t('nav.network')}</span>
               </Link>
-              <Link
-                href="/system"
-                className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
-              >
+              <Link href="/system" className={navLinkClass('/system')}>
                 <Settings className="w-4 h-4" />
                 <span>{t('nav.system')}</span>
               </Link>
@@ -191,13 +190,13 @@ export default function Layout({ children }: LayoutProps) {
               <button
                 onClick={toggleDark}
                 className="p-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-300"
-                title={isDark ? '切换亮色模式' : '切换暗色模式'}
+                title={isDark ? t('common.toggleLight') : t('common.toggleDark')}
               >
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
               <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-colors duration-300 ${backendOnline ? 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/30' : 'text-red-500 bg-red-50 dark:text-red-400 dark:bg-red-900/30'}`}>
                 {backendOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                <span>{backendOnline ? '在线' : '离线'}</span>
+                <span>{backendOnline ? t('common.online') : t('common.offline')}</span>
               </div>
             </nav>
 
@@ -205,18 +204,22 @@ export default function Layout({ children }: LayoutProps) {
             <div className="flex md:hidden items-center gap-2">
               <button
                 onClick={() => setShowSearch(true)}
+                aria-label={t('common.search')}
                 className="p-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
               >
                 <Search className="w-5 h-5" />
               </button>
               <button
                 onClick={toggleDark}
+                aria-label={isDark ? t('common.toggleLight') : t('common.toggleDark')}
                 className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors duration-300"
               >
                 {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                aria-label={t('common.menu')}
+                aria-expanded={mobileMenuOpen}
                 className="p-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
               >
                 <Menu className="w-6 h-6" />
@@ -251,7 +254,7 @@ export default function Layout({ children }: LayoutProps) {
                 className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
               >
                 <Share2 className="w-5 h-5" />
-                <span>关系网络</span>
+                <span>{t('nav.network')}</span>
               </Link>
               <Link
                 href="/system"
@@ -266,7 +269,7 @@ export default function Layout({ children }: LayoutProps) {
                   <LanguageSwitcher />
                   <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${backendOnline ? 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/30' : 'text-red-500 bg-red-50 dark:text-red-400 dark:bg-red-900/30'}`}>
                     {backendOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                    <span>{backendOnline ? '在线' : '离线'}</span>
+                    <span>{backendOnline ? t('common.online') : t('common.offline')}</span>
                   </div>
                 </div>
               </div>
@@ -287,10 +290,10 @@ export default function Layout({ children }: LayoutProps) {
                   onChange={(e) => handleNavInputChange(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleNavSearch(); if (e.key === 'Escape') { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); } }}
                   onFocus={() => { if (navSuggestions.length > 0) setShowNavSuggestions(true); }}
-                  placeholder="搜索论文、作者、关键词..."
+                  placeholder={t('common.search')}
                   className="bg-transparent text-base outline-none flex-1 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                 />
-                <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
+                <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} aria-label={t('common.closeSearch')} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
                   <X className="w-5 h-5 text-gray-400" />
                 </button>
               </div>
@@ -313,7 +316,7 @@ export default function Layout({ children }: LayoutProps) {
                           : s.type === 'author' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
                           : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400'
                       }`}>
-                        {s.type === 'keyword' ? '关键词' : s.type === 'author' ? '作者' : '标题'}
+                        {s.type === 'keyword' ? t('common.keyword') : s.type === 'author' ? t('common.author') : t('common.titleType')}
                       </span>
                       <span className="truncate flex-1">{s.text}</span>
                     </button>

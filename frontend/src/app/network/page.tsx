@@ -130,10 +130,10 @@ export default function NetworkPage() {
     <Layout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
-          研究关系网络
+          t('net.title')
         </h1>
         <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-          可视化展示作者合作网络和关键词共现关系
+          t('net.subtitle')
         </p>
       </div>
 
@@ -147,7 +147,7 @@ export default function NetworkPage() {
           }`}
         >
           <Users className="w-4 h-4" />
-          作者合作网络
+          t('net.authors')
         </button>
         <button
           onClick={() => setActiveTab('keywords')}
@@ -158,7 +158,7 @@ export default function NetworkPage() {
           }`}
         >
           <Hash className="w-4 h-4" />
-          关键词共现网络
+          t('net.keywords')
         </button>
       </div>
 
@@ -179,7 +179,7 @@ export default function NetworkPage() {
                 </button>
               )}
               <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                {data?.nodes.length || 0} 个节点, {data?.links.length || 0} 条关系 — 鼠标滚轮缩放，拖拽移动
+                {data?.nodes.length || 0} · {data?.links.length || 0} — {t('net.zoomHint')}
               </span>
             </div>
           </div>
@@ -194,7 +194,7 @@ export default function NetworkPage() {
             </div>
 
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-3 sm:p-4">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">节点详情</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">t('net.nodeDetail')</h3>
               {infoNode ? (
                 <div className="space-y-3 text-sm">
                   <div>
@@ -205,12 +205,12 @@ export default function NetworkPage() {
                     <span className="text-gray-400 block text-xs">类型</span>
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">
                       {infoNode.group === 'author' ? <Users className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
-                      {infoNode.group === 'author' ? '作者' : '关键词'}
+                      {infoNode.group === 'author' ? t('common.author') : t('common.keyword')}
                     </span>
                   </div>
                   {infoNode.papers !== undefined && (
                     <div>
-                      <span className="text-gray-400 block text-xs">论文数</span>
+                      <span className="text-gray-400 block text-xs">{t('net.papersLabel')}</span>
                       <span className="text-gray-900 dark:text-white font-semibold text-base sm:text-lg">{infoNode.papers}</span>
                     </div>
                   )}
@@ -224,7 +224,7 @@ export default function NetworkPage() {
                   {connectedNodes.length > 0 && (
                     <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
                       <span className="text-gray-400 block text-xs mb-2">
-                        关联{infoNode.group === 'author' ? '作者' : '关键词'} ({connectedNodes.length})
+                        {infoNode.group === 'author' ? t('net.coauthors') : t('net.linkedKeywords')} ({connectedNodes.length})
                       </span>
                       <div className="space-y-1 max-h-48 sm:max-h-64 overflow-y-auto">
                         {connectedNodes.map(node => (
@@ -270,8 +270,8 @@ export default function NetworkPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                   </svg>
                   {activeTab === 'authors'
-                    ? '点击节点查看作者信息'
-                    : '点击节点查看关键词信息'}
+                    ? t('net.clickHint')
+                    : t('net.clickHint')}
                 </div>
               )}
             </div>

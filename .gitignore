@@ -44,7 +44,6 @@ Thumbs.db
 logs/
 
 # Database
-*.db
 *.tar.gz
 *.sqlite
 postgres_data/

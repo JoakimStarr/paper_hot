@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Language, getTranslation } from '@/lib/i18n';
 
 interface LanguageContextType {
@@ -12,7 +12,21 @@ interface LanguageContextType {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
+  // 从 localStorage 恢复语言选择，刷新后不丢失
   const [language, setLanguage] = useState<Language>('zh');
+
+  useEffect(() => {
+    const stored = localStorage.getItem('language');
+    if (stored === 'en' || stored === 'zh') {
+      setLanguage(stored);
+    }
+  }, []);
+
+  const changeLanguage = (lang: Language) => {
+    setLanguage(lang);
+    localStorage.setItem('language', lang);
+    document.documentElement.lang = lang;
+  };
 
   const t = (key: string, params?: Record<string, string | number>): string => {
     let translation = getTranslation(language, key);
@@ -28,7 +42,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <LanguageContext.Provider value={{ language, setLanguage, t }}>
+    <LanguageContext.Provider value={{ language, setLanguage: changeLanguage, t }}>
       {children}
     </LanguageContext.Provider>
   );

@@ -59,14 +59,15 @@ function HomePageInner() {
     e.preventDefault();
     const q = searchQuery.trim();
     if (q) {
-      router.push(`/search?q=${encodeURIComponent(q)}`);
+      // 搜索页读取的参数名是 search（q 会导致搜索框跳转后显示空闲状态）
+      router.push(`/search?search=${encodeURIComponent(q)}`);
     }
   };
 
   useEffect(() => {
     const journal = searchParams.get('journal');
     if (journal) setSelectedJournal([journal]);
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     setPage(1);

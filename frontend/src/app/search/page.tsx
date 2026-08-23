@@ -107,7 +107,7 @@ function SearchPageInner() {
 
     loadPage();
     return () => { cancelled = true; };
-  }, [page, queryKey]);
+  }, [page, queryKey, pageSize]);
 
   const handleSearch = (query: string, field: string) => {
     const params = new URLSearchParams();

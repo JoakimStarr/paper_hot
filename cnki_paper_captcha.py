@@ -1654,7 +1654,7 @@ class MultiThreadedCrawler:
             playwright = await async_playwright().start()
             # 优先使用系统已安装的 Chrome
             launch_kwargs = {
-                'headless': True,
+                'headless': self.headless,
                 'args': [
                     '--no-sandbox',
                     '--disable-gpu',
@@ -1678,10 +1678,36 @@ class MultiThreadedCrawler:
 
             print("点击'经济与管理科学'按钮...")
             try:
-                btn = await page.wait_for_selector('a[title="经济与管理科学"]', timeout=10000)
+                # 尝试多种选择器
+                selectors = [
+                    'a[title="经济与管理科学"]',
+                    'a:has-text("经济与管理科学")',
+                    'a:text("经济与管理科学")',
+                ]
+                btn = None
+                for selector in selectors:
+                    try:
+                        btn = await page.wait_for_selector(selector, timeout=5000)
+                        if btn:
+                            print(f"  使用选择器找到按钮: {selector}")
+                            break
+                    except:
+                        continue
+
                 if btn:
                     await btn.click()
                     await asyncio.sleep(5)
+                else:
+                    print("  未找到按钮，尝试通过文本查找...")
+                    # 通过页面文本查找
+                    elements = await page.query_selector_all('a')
+                    for elem in elements:
+                        text = await elem.text_content()
+                        if text and '经济与管理科学' in text:
+                            await elem.click()
+                            print("  通过文本内容找到并点击")
+                            await asyncio.sleep(5)
+                            break
             except Exception as e:
                 print(f"点击按钮失败: {e}")
 
@@ -1690,7 +1716,19 @@ class MultiThreadedCrawler:
 
             result_div = soup.find('div', class_='result')
             if not result_div:
-                print("未找到div.result")
+                # 尝试其他选择器
+                result_div = soup.find('div', class_='resultList')
+                if not result_div:
+                    result_div = soup.find('div', id='gridTable')
+            if not result_div:
+                print("未找到期刊列表容器")
+                print("页面标题:", await page.title())
+                print("当前URL:", page.url)
+                # 保存页面HTML用于调试
+                debug_file = BACKEND_DIR / 'data' / 'debug_journals.html'
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(html)
+                print(f"已保存页面HTML到: {debug_file}")
                 return {}
 
             journals = {}

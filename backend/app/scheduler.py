@@ -4,6 +4,8 @@ from apscheduler.triggers.cron import CronTrigger
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
+
+from app.config import settings
 import uuid
 import asyncio
 
@@ -48,9 +50,10 @@ class PaperScheduler:
         }
         
         # CNKI DrissionPage 爬虫（用于爬取知网期刊）
-        self.cnki_batch_fetcher = CNKITop50BatchFetcher(headless=False)
+        self.cnki_batch_fetcher = CNKITop50BatchFetcher(headless=settings.cnki_headless)
         
         self.active_crawl_tasks: Dict[str, Dict[str, Any]] = {}
+        self._background_tasks = set()  # 持有 create_task 引用，防止被 GC 中途回收
     
     def start(self):
         self.scheduler.add_job(
@@ -202,6 +205,8 @@ class PaperScheduler:
             }
         
         for journal_name, fetcher in fetchers_to_use.items():
+            crawl_log = None
+            task_id = None
             try:
                 async with AsyncSessionLocal() as db:
                     active_crawl = await CrawlLogCRUD.get_active_crawl(db, journal_name)
@@ -313,17 +318,20 @@ class PaperScheduler:
             except Exception as e:
                 logger.error(f"Error crawling {journal_name}: {e}")
                 
-                async with AsyncSessionLocal() as db:
-                    await CrawlLogCRUD.update_crawl_log(
-                        db,
-                        crawl_log.id,
-                        crawl_end_time=datetime.now(),
-                        status="failed",
-                        error_message=str(e)
-                    )
-                    await db.commit()
+                if crawl_log is not None:
+                    async with AsyncSessionLocal() as db:
+                        await CrawlLogCRUD.update_crawl_log(
+                            db,
+                            crawl_log.id,
+                            crawl_end_time=datetime.now(),
+                            status="failed",
+                            error_message=str(e)
+                        )
+                        await db.commit()
+                else:
+                    logger.error(f"No crawl log was created for {journal_name}; skipping log update")
                 
-                if task_id in self.active_crawl_tasks:
+                if task_id and task_id in self.active_crawl_tasks:
                     self.active_crawl_tasks[task_id]["status"] = "failed"
                     self.active_crawl_tasks[task_id]["error"] = str(e)
     
@@ -335,7 +343,9 @@ class PaperScheduler:
         async def run_crawl():
             await self.fetch_and_process_economics_journals(journal_names)
         
-        asyncio.create_task(run_crawl())
+        task = asyncio.create_task(run_crawl())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         
         return task_id
     
@@ -361,7 +371,7 @@ class PaperScheduler:
         try:
             from app.fetchers_cnki_navi import CNKINaviFetcher
             
-            fetcher = CNKINaviFetcher(headless=False)
+            fetcher = CNKINaviFetcher(headless=settings.cnki_headless)
             
             # 获取期刊列表
             journals = fetcher.get_journals_list()
@@ -484,7 +494,9 @@ class PaperScheduler:
         async def run_crawl():
             await self.fetch_and_process_cnki_navi_journals(max_journals=max_journals)
         
-        asyncio.create_task(run_crawl())
+        task = asyncio.create_task(run_crawl())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         
         return task_id
     
@@ -536,7 +548,8 @@ class PaperScheduler:
                 start_date=datetime(2025, 1, 1),
                 end_date=datetime.now(),
                 max_results_per_journal=max_results_per_journal,
-                max_journals=max_journals
+                max_journals=max_journals,
+                journals=journals_to_fetch
             )
             
             total_fetched = 0
@@ -667,6 +680,8 @@ class PaperScheduler:
                 max_journals=max_journals
             )
         
-        asyncio.create_task(run_crawl())
+        task = asyncio.create_task(run_crawl())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         
         return task_id

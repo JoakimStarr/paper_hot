@@ -14,6 +14,7 @@ import {
 import { TrendingTopic } from '@/types/paper';
 import { TrendingUp, TrendingDown, Minus, ChevronUp, ChevronDown } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface TrendChartProps {
   topics: TrendingTopic[];
@@ -23,6 +24,7 @@ const COLLAPSE_STORAGE_KEY = 'trendchart_collapse_state';
 
 export default function TrendChart({ topics }: TrendChartProps) {
   const { isDark } = useTheme();
+  const { t } = useLanguage();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const axisColor = isDark ? '#9ca3af' : '#6b7280';
   const gridColor = isDark ? '#374151' : '#e5e7eb';
@@ -50,7 +52,7 @@ export default function TrendChart({ topics }: TrendChartProps) {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700 transition-colors duration-300">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Trending Topics</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('trends.hotTopics')}</h2>
         <button
           onClick={toggleCollapse}
           className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
@@ -75,7 +77,7 @@ export default function TrendChart({ topics }: TrendChartProps) {
               dataKey="papers"
               stroke="#3b82f6"
               strokeWidth={2}
-              name="Paper Count"
+              name={t('trends.paperCount')}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -100,7 +102,7 @@ export default function TrendChart({ topics }: TrendChartProps) {
               )}
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Papers: {topic.paper_count}</span>
+              <span className="text-gray-600 dark:text-gray-400">{t('trends.paperCount')}: {topic.paper_count}</span>
               <span
                 className={`font-medium ${
                   topic.growth_rate > 0

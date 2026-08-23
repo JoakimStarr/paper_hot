@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 主题色切换过渡：只作用于容器级元素。
+   列表内高频元素（span/p/li/td）不参与，避免长列表滚动/更新的样式计算开销 */
 body,
 header,
 footer,
@@ -11,14 +13,10 @@ section,
 article,
 aside,
 div,
-span,
-p,
 h1, h2, h3, h4, h5, h6,
 a,
 button,
-label,
-td, th,
-ul, ol, li {
+label {
   transition-property: background-color, border-color, color, fill, stroke;
   transition-duration: 200ms;
   transition-timing-function: ease-in-out;

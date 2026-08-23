@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, Float, JSON, ForeignKey, Integer, Text
+from sqlalchemy import Column, String, DateTime, Float, JSON, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.types import TypeDecorator
@@ -53,7 +53,7 @@ class Paper(Base):
     cnki_subject = Column(String(500), nullable=True)
     doi = Column(String(200), nullable=True, unique=True)
     keywords_cn = Column(UnicodeJSON, default=list)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     features = relationship("PaperFeatures", back_populates="paper", uselist=False, cascade="all, delete-orphan")
     scores = relationship("PaperScore", back_populates="paper", uselist=False, cascade="all, delete-orphan")
@@ -82,6 +82,9 @@ class PaperChat(Base):
 
 class PaperSimilarity(Base):
     __tablename__ = "paper_similarities"
+    __table_args__ = (
+        UniqueConstraint("paper_id_a", "paper_id_b", name="uq_paper_similarities_pair"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     paper_id_a = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -134,7 +137,7 @@ class CrawlLog(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     journal_name = Column(String(200), nullable=False, index=True)
-    crawl_start_time = Column(DateTime, nullable=False)
+    crawl_start_time = Column(DateTime, nullable=False, index=True)
     crawl_end_time = Column(DateTime, nullable=True)
     papers_fetched = Column(Integer, default=0)
     papers_failed = Column(Integer, default=0)

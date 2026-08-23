@@ -13,17 +13,28 @@ import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
 
 const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
-const DEBOUNCE_SECONDS = 300;
+const ERROR_COOLDOWN_SECONDS = 30;
 const MAX_CONTEXT_MESSAGES = 20;
 
-const CHAT_MODELS = [
-  { id: '', label: '默认模型' },
-  { id: 'glm-4.7', label: 'GLM-4.7' },
-  { id: 'glm-4.5-air', label: 'GLM-4.5-Air' },
-  { id: 'Qwen/Qwen3-8B', label: 'Qwen3-8B' },
-  { id: 'Qwen/Qwen3.5-4B', label: 'Qwen3.5-4B' },
-  { id: 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B', label: 'DeepSeek-R1' },
-];
+type ModelOption = {
+  id: string;          // 'provider/model'
+  label: string;
+  provider?: string;
+  available: boolean;
+};
+
+const providerLabel = (provider?: string) => {
+  if (provider === 'zhipu') return '智谱';
+  if (provider === 'siliconflow') return '硅基流动';
+  if (provider === 'openai') return 'OpenAI';
+  return provider || '未知';
+};
+
+const bareModelName = (name: string) => {
+  // 去掉 'provider/' 前缀，保留真实模型名（模型名本身可能含 '/'）
+  const slashIndex = name.indexOf('/');
+  return slashIndex >= 0 ? name.slice(slashIndex + 1) : name;
+};
 
 const COLLAPSE_STORAGE_KEY = 'trends_collapse_state';
 const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
@@ -58,6 +69,9 @@ export default function TrendsPage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
   const [showModelSelect, setShowModelSelect] = useState(false);
+  const [analysisModel, setAnalysisModel] = useState('');
+  const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [isAIAnalysisCollapsed, setIsAIAnalysisCollapsed] = useState(false);
   const [isTrendingTopicsCollapsed, setIsTrendingTopicsCollapsed] = useState(false);
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
@@ -77,6 +91,20 @@ export default function TrendsPage() {
     if (savedFullscreen) {
       setIsChatFullscreen(savedFullscreen === 'true');
     }
+  }, []);
+
+  // Load available AI models for the selectors (from configured providers)
+  useEffect(() => {
+    papersApi.getAIAnalysisModels()
+      .then(res => {
+        setAvailableModels(res.models.map(m => ({
+          id: m.name,
+          label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
+          provider: m.provider,
+          available: m.available,
+        })));
+      })
+      .catch(() => setAvailableModels([]));
   }, []);
 
   // Save collapse state to localStorage
@@ -117,7 +145,11 @@ export default function TrendsPage() {
 
     const poll = async () => {
       try {
-        if (!isMountedRef.current) return;
+        if (!isMountedRef.current) {
+          // 组件已卸载：清掉 pollRef，避免残留的引用阻塞下一次 startPolling
+          pollRef.current = null;
+          return;
+        }
         const status = await papersApi.getAIAnalysisV2();
         if (!status.is_running) {
           isRunningRef.current = false;
@@ -128,7 +160,7 @@ export default function TrendsPage() {
             setHasHistory(true);
             loadTrendChats(status.report.id);
           } else {
-            setAiError('分析未返回有效结果');
+            setAiError(t('tr.analysisNoResult'));
           }
           setAnalysisStarted(false);
           pollRef.current = null;
@@ -158,7 +190,10 @@ export default function TrendsPage() {
   }, []);
 
   useEffect(() => {
-    fetchTrends();
+    // StrictMode 下 effect 会「挂载→卸载→重挂载」执行两次，重挂载时必须恢复 isMountedRef，
+    // 否则轮询首轮就静默退出，分析完成后界面不会自动刷新
+    isMountedRef.current = true;
+    // topics 由下方 [timeRange] effect 统一拉取（含首次），这里避免重复请求
     checkStatus();
     fetchRadarData();
     return () => {
@@ -192,6 +227,8 @@ export default function TrendsPage() {
       setTopics(response.topics);
     }).catch(error => {
       console.error('Error fetching trends:', error);
+    }).finally(() => {
+      setLoading(false);
     });
   }, [timeRange]);
 
@@ -241,7 +278,7 @@ export default function TrendsPage() {
 
   const fetchHistory = async () => {
     try {
-      const result = await papersApi.getAIAnalysisReports(1, 10);
+      const result = await papersApi.getAIAnalysisReports(10);
       setHistoryReports(result.reports || []);
     } catch (error) {
       console.error('Error fetching history:', error);
@@ -281,24 +318,36 @@ export default function TrendsPage() {
     setAnalysisStarted(true);
 
     try {
-      const response = await papersApi.startAIAnalysis();
+      const response = await papersApi.startAIAnalysis(analysisModel || undefined);
       if (response.is_running) {
         isRunningRef.current = true;
         setIsRunning(true);
         setRunningReportId(response.running_report_id);
         startPolling();
+      } else if (response.report) {
+        // 后端未启动新任务但返回了已有报告（如服务不可用时带出最近报告），直接展示
+        setReport(response.report);
+        setHasHistory(true);
+        loadTrendChats(response.report.id);
+        setAnalysisStarted(false);
+      } else {
+        setAnalysisStarted(false);
       }
     } catch (error: any) {
       setAnalysisStarted(false);
       console.error('Error starting AI analysis:', error);
       const errMsg = error.response?.data?.detail || 'AI分析服务暂时不可用';
       setAiError(errMsg);
+      setCooldown(ERROR_COOLDOWN_SECONDS);
     }
-  }, [cooldown, startPolling]);
+  }, [cooldown, startPolling, analysisModel]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamContent, streamReasoning, chatMessages]);
+    // 仅在流式回复进行中自动滚动，避免打开页面/加载历史对话就跳到底部
+    if (chatStreaming) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [streamContent, streamReasoning, chatStreaming]);
 
   const loadTrendChats = async (reportId: number) => {
     setChatLoading(true);
@@ -424,10 +473,10 @@ export default function TrendsPage() {
 
   const getDirectionLabel = (direction?: string) => {
     switch (direction) {
-      case 'up': return '上升';
-      case 'down': return '下降';
-      case 'stable': return '稳定';
-      default: return '未知';
+      case 'up': return t('trends.rising');
+      case 'down': return t('trends.declining');
+      case 'stable': return t('trends.stable');
+      default: return t('common.unknown');
     }
   };
 
@@ -491,14 +540,14 @@ export default function TrendsPage() {
           <Brain className="w-16 h-16 text-purple-400 animate-pulse" />
           <Loader2 className="w-6 h-6 absolute -bottom-1 -right-1 animate-spin text-purple-600" />
         </div>
-        <p className="text-gray-700 dark:text-gray-300 text-lg font-medium">AI正在分析论文数据...</p>
-        <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">正在分析 {topics.length} 个热点主题的相关论文</p>
+        <p className="text-gray-700 dark:text-gray-300 text-lg font-medium">{t('tr.analyzingTitle')}</p>
+        <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">{t('tr.analyzingSub', { n: topics.length })}</p>
         <div className="flex items-center gap-2 mt-4">
           <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
           <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
           <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
         </div>
-        <p className="text-gray-400 text-xs mt-4">刷新页面或切换页面后，分析状态将持续保留</p>
+        <p className="text-gray-400 text-xs mt-4">{t('tr.stateKeepHint')}</p>
       </div>
     </div>
   );
@@ -542,8 +591,8 @@ export default function TrendsPage() {
             <div className="mt-6 sm:mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-lg sm:text-xl">🎯</span>
-                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">研究热点雷达图</h2>
-                <span className="text-xs text-gray-400 hidden sm:inline">各子领域论文分布</span>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">{t('tr.radarTitle')}</h2>
+                <span className="text-xs text-gray-400 hidden sm:inline">{t('tr.radarSub')}</span>
               </div>
               <ResponsiveContainer width="100%" height={280}>
                 <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
@@ -558,12 +607,12 @@ export default function TrendsPage() {
                     tick={{ fontSize: 9, fill: '#9ca3af' }}
                   />
                   <Tooltip
-                    formatter={(value: number) => [`${value} 篇`, '论文数']}
-                    labelFormatter={(label: string) => `子领域: ${label}`}
+                    formatter={(value: number) => [`${value}`, t('tr.radarUnit')]}
+                    labelFormatter={(label: string) => `${t('tr.subfieldLabel')}: ${label}`}
                     contentStyle={isDark ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined}
                   />
                   <Radar
-                    name="论文数"
+                    name={t('tr.radarUnit')}
                     dataKey="count"
                     stroke="#7c3aed"
                     fill="#7c3aed"
@@ -578,7 +627,7 @@ export default function TrendsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4 sm:mb-6">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
-                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">AI 趋势分析</h2>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">{t('tr.aiTrend')}</h2>
                 {hasHistory && report && !isRunning && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded-full">
                     <Clock className="w-3 h-3" />
@@ -588,7 +637,7 @@ export default function TrendsPage() {
                 {isRunning && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full animate-pulse">
                     <Loader2 className="w-3 h-3 animate-spin" />
-                    分析中
+                    {t('tr.analyzingBadge')}
                   </span>
                 )}
               </div>
@@ -596,11 +645,41 @@ export default function TrendsPage() {
                 <button
                   onClick={toggleAIAnalysis}
                   className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                  title={isAIAnalysisCollapsed ? '展开' : '收起'}
+                  title={isAIAnalysisCollapsed ? t('tr.expand') : t('tr.collapse')}
                 >
                   {isAIAnalysisCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-                  {isAIAnalysisCollapsed ? '展开' : '收起'}
+                  {isAIAnalysisCollapsed ? t('tr.expand') : t('tr.collapse')}
                 </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowAnalysisModelSelect(!showAnalysisModelSelect)}
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    title={t('tr.selectModel')}
+                  >
+                    <Brain className="w-4 h-4" />
+                    {availableModels.find(m => m.id === analysisModel)?.label || t('tr.defaultModelAuto')}
+                  </button>
+                  {showAnalysisModelSelect && (
+                    <div className="absolute right-0 top-9 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
+                      <button
+                        onClick={() => { setAnalysisModel(''); setShowAnalysisModelSelect(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${analysisModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                      >
+                        {t('tr.defaultModelAutoSelect')}
+                      </button>
+                      {availableModels.map(model => (
+                        <button
+                          key={model.id}
+                          disabled={!model.available}
+                          onClick={() => { setAnalysisModel(model.id); setShowAnalysisModelSelect(false); }}
+                          className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${analysisModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={startAnalysis}
                   disabled={isRunning || cooldown > 0}
@@ -609,18 +688,18 @@ export default function TrendsPage() {
                   {isRunning ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="hidden sm:inline">分析中...</span>
-                      <span className="sm:hidden">分析中</span>
+                      <span className="hidden sm:inline">{t('tr.analyzingBadge')}...</span>
+                      <span className="sm:hidden">{t('tr.analyzingBadge')}</span>
                     </>
                   ) : cooldown > 0 ? (
                     <>
                       <RefreshCw className="w-4 h-4" />
-                      {cooldown}秒后重试
+                      {t('tr.retryIn', { n: cooldown })}
                     </>
                   ) : (
                     <>
                       <Sparkles className="w-4 h-4" />
-                      {hasHistory ? '重新分析' : '开始分析'}
+                      {hasHistory ? t('tr.reanalyze') : t('tr.startAnalysis')}
                     </>
                   )}
                 </button>
@@ -634,10 +713,10 @@ export default function TrendsPage() {
               <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 rounded-lg p-6">
                 <div className="flex items-center gap-2 text-red-600 mb-2">
                   <AlertCircle className="w-5 h-5" />
-                  <span className="font-medium">分析失败</span>
+                  <span className="font-medium">{t('tr.analysisFailed')}</span>
                 </div>
                 <p className="text-red-600">{aiError}</p>
-                <p className="text-red-500 text-sm mt-2">请检查Zhipu API Key配置或稍后重试</p>
+                <p className="text-red-500 text-sm mt-2">{t('tr.checkKeyHint')}</p>
               </div>
             ) : report ? (
               <div className="space-y-6">
@@ -650,23 +729,23 @@ export default function TrendsPage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                   <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-purple-600">{report.total_papers}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">分析论文数</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">{t('tr.analyzedPapers')}</div>
                   </div>
                   <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-blue-600">{report.model || '-'}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">使用模型</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">{t('tr.usedModel')}</div>
                   </div>
                   <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-green-600">{report.tokens_used}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">Token消耗</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">{t('tr.tokenCost')}</div>
                   </div>
                   <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-orange-600">{report.processing_time_ms > 1000 ? `${(report.processing_time_ms / 1000).toFixed(1)}s` : `${report.processing_time_ms}ms`}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400">处理时长</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">{t('tr.processTime')}</div>
                   </div>
                 </div>
 
-                {renderSection('研究热点', '🔥', report.hot_topics, (item, i) => (
+                {renderSection(t('tr.hotTopics'), '🔥', report.hot_topics, (item, i) => (
                   <div key={i} className="border border-purple-100 rounded-lg p-4 bg-white dark:bg-gray-800 hover:shadow-sm transition-shadow">
                     <div className="flex items-start gap-3">
                       <span className="w-7 h-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-sm font-bold shrink-0 mt-0.5">
@@ -675,6 +754,9 @@ export default function TrendsPage() {
                       <div className="flex-1">
                         <h4 className="font-semibold text-gray-900 dark:text-white text-base">{item.topic}</h4>
                         <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{item.description}</p>
+                        {item.evidence && (
+                          <p className="text-gray-400 text-xs mt-1">{t('tr.evidenceLabel')}: {item.evidence}</p>
+                        )}
                         {item.related_keywords && item.related_keywords.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {item.related_keywords.map((kw, ki) => (
@@ -692,7 +774,7 @@ export default function TrendsPage() {
                   </div>
                 ), 'section-hot-topics')}
 
-                {renderSection('发展趋势', '📈', report.development_trends, (item, i) => (
+                {renderSection(t('tr.devTrends'), '📈', report.development_trends, (item, i) => (
                   <div key={i} className="border border-blue-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <div className="flex items-center gap-3 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getDirectionColor(item.direction)}`}>
@@ -702,12 +784,12 @@ export default function TrendsPage() {
                     </div>
                     <p className="text-gray-600 dark:text-gray-400 text-sm">{item.description}</p>
                     {item.evidence && (
-                      <p className="text-gray-400 text-xs mt-1">依据: {item.evidence}</p>
+                      <p className="text-gray-400 text-xs mt-1">{t('tr.basisLabel')}: {item.evidence}</p>
                     )}
                   </div>
                 ), 'section-dev-trends')}
 
-                {renderSection('关键词聚类分析', '🔍', report.keyword_insights, (item, i) => (
+                {renderSection(t('tr.keywordInsights'), '🔍', report.keyword_insights, (item, i) => (
                   <div key={i} className="border border-green-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <h4 className="font-semibold text-gray-900 dark:text-white mb-2">{item.cluster}</h4>
                     {item.keywords && item.keywords.length > 0 && (
@@ -723,31 +805,40 @@ export default function TrendsPage() {
                   </div>
                 ), 'section-keyword-insights')}
 
-                {renderSection('期刊分析', '📰', report.journal_insights, (item, i) => (
+                {renderSection(t('tr.journalInsights'), '📰', report.journal_insights, (item, i) => (
                   <div key={i} className="border border-yellow-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <h4 className="font-semibold text-gray-900 dark:text-white">{item.journal}</h4>
                     <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                      <span className="font-medium text-gray-700 dark:text-gray-300">研究偏好: </span>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{t('tr.focusLabel')}: </span>
                       {item.focus}
                     </p>
                     {item.suggestion && (
                       <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-                        <span className="font-medium text-gray-600 dark:text-gray-400">建议: </span>
+                        <span className="font-medium text-gray-600 dark:text-gray-400">{t('tr.suggestionLabel')}: </span>
                         {item.suggestion}
                       </p>
                     )}
                   </div>
                 ))}
 
-                {renderSection('研究建议', '💡', report.recommendations, (item, i) => (
+                {renderSection(t('tr.recommendations'), '💡', report.recommendations, (item, i) => (
                   <div key={i} className="border border-orange-100 rounded-lg p-4 bg-white dark:bg-gray-800">
                     <div className="flex items-center gap-3 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getOpportunityColor(item.opportunity_level)}`}>
-                        {item.opportunity_level === 'high' ? '高机遇' : item.opportunity_level === 'medium' ? '中等' : '一般'}
+                        {item.opportunity_level === 'high' ? t('tr.highOpp') : item.opportunity_level === 'medium' ? t('tr.mediumOpp') : t('tr.lowOpp')}
                       </span>
                       <h4 className="font-semibold text-gray-900 dark:text-white">{item.area}</h4>
                     </div>
                     <p className="text-gray-600 dark:text-gray-400 text-sm">{item.description}</p>
+                    {item.related_keywords && item.related_keywords.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {item.related_keywords.map((kw, ki) => (
+                          <span key={ki} className="px-2 py-0.5 bg-orange-50 dark:bg-orange-900/30 text-orange-600 text-xs rounded-full border border-orange-100">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
 
@@ -757,7 +848,7 @@ export default function TrendsPage() {
                     className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 transition-colors"
                   >
                     {showRawAnalysis ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    {showRawAnalysis ? '收起原始分析报告' : '查看原始分析报告'}
+                    {showRawAnalysis ? t('tr.collapseRaw') : t('tr.viewRaw')}
                   </button>
                   {showRawAnalysis && report.raw_analysis && (
                     <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
@@ -771,37 +862,42 @@ export default function TrendsPage() {
                     <div>
                       <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                         <Bot className="w-4 h-4 text-purple-600" />
-                        选题分析对话
+                        {t('tr.chatTitle')}
                       </h3>
-                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">基于以上AI分析结果，向论文选题分析师提问</p>
+                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">{t('tr.chatSub')}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={toggleChatFullscreen}
                         className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                        title={isChatFullscreen ? '退出全屏' : '全屏'}
+                        title={isChatFullscreen ? t('tr.exitFullscreen') : t('tr.fullscreen')}
                       >
                         {isChatFullscreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
-                        {isChatFullscreen ? '退出全屏' : '全屏'}
+                        {isChatFullscreen ? t('tr.exitFullscreen') : t('tr.fullscreen')}
                       </button>
                       <div className="relative">
                         <button
                           onClick={() => setShowModelSelect(!showModelSelect)}
                           className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                          title="选择模型"
+                          title={t('tr.selectModelShort')}
                         >
                           <Settings2 className="w-3 h-3" />
-                          {CHAT_MODELS.find(m => m.id === selectedModel)?.label || '默认模型'}
+                          {availableModels.find(m => m.id === selectedModel)?.label || t('tr.defaultModel')}
                         </button>
                         {showModelSelect && (
-                          <div className="absolute right-0 top-8 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[160px]">
-                            {CHAT_MODELS.map(model => (
+                          <div className="absolute right-0 top-8 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[180px] max-h-64 overflow-y-auto">
+                            <button
+                              onClick={() => { setSelectedModel(''); setShowModelSelect(false); }}
+                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${selectedModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                            >
+                              {t('tr.defaultModel')}
+                            </button>
+                            {availableModels.map(model => (
                               <button
                                 key={model.id}
+                                disabled={!model.available}
                                 onClick={() => { setSelectedModel(model.id); setShowModelSelect(false); }}
-                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${
-                                  selectedModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'
-                                }`}
+                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${selectedModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
                               >
                                 {model.label}
                               </button>
@@ -813,19 +909,19 @@ export default function TrendsPage() {
                         onClick={handleExportChats}
                         disabled={chatMessages.length === 0}
                         className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title="导出对话"
+                        title={t('tr.exportChatTitle')}
                       >
                         <Download className="w-3 h-3" />
-                        导出
+                        {t('tr.exportChat')}
                       </button>
                       <button
                         onClick={handleClearChats}
                         disabled={chatMessages.length === 0 || chatStreaming}
                         className="flex items-center gap-1 px-2 py-1 text-xs text-red-500 bg-red-50 dark:bg-red-900/20 rounded hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title="清空对话"
+                        title={t('tr.clearChatTitle')}
                       >
                         <Trash2 className="w-3 h-3" />
-                        清空
+                        {t('tr.clearChat')}
                       </button>
                     </div>
                   </div>
@@ -833,7 +929,7 @@ export default function TrendsPage() {
                   {chatLoading ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
-                      <span className="ml-2 text-sm text-gray-400">加载对话记录...</span>
+                      <span className="ml-2 text-sm text-gray-400">{t('tr.loadChats')}</span>
                     </div>
                   ) : (
                     <>
@@ -842,10 +938,10 @@ export default function TrendsPage() {
                           <div className="text-center py-6">
                             <div className="flex flex-wrap gap-2 justify-center">
                               {[
-                                '哪些研究热点最值得深入？',
-                                '帮我分析一个创新选题方向',
-                                '当前趋势下有什么研究空白？',
-                                '哪个子领域适合新手入门？',
+                                t('tr.suggestion1'),
+                                t('tr.suggestion2'),
+                                t('tr.suggestion3'),
+                                t('tr.suggestion4'),
                               ].map((suggestion, i) => (
                                 <button
                                   key={i}
@@ -874,7 +970,7 @@ export default function TrendsPage() {
                         {chatStreaming && streamReasoning && !streamContent && (
                           <div className="flex justify-start">
                             <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
-                              <div className="text-xs text-blue-500 dark:text-blue-400 mb-1 font-medium">💭 思考中...</div>
+                              <div className="text-xs text-blue-500 dark:text-blue-400 mb-1 font-medium">💭 {t('tr.thinking')}</div>
                               <div className="text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
                             </div>
                           </div>
@@ -884,7 +980,7 @@ export default function TrendsPage() {
                             <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
                               {streamReasoning && (
                                 <details className="mb-2">
-                                  <summary className="text-xs text-blue-500 dark:text-blue-400 cursor-pointer hover:text-blue-600">💭 查看思考过程</summary>
+                                  <summary className="text-xs text-blue-500 dark:text-blue-400 cursor-pointer hover:text-blue-600">💭 {t('tr.viewThinking')}</summary>
                                   <div className="mt-1 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
                                 </details>
                               )}
@@ -914,7 +1010,7 @@ export default function TrendsPage() {
                               handleTrendChatSubmit();
                             }
                           }}
-                          placeholder="向选题分析师提问..."
+                          placeholder={t('tr.chatPlaceholder')}
                           disabled={chatStreaming}
                           className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
                         />
@@ -928,7 +1024,7 @@ export default function TrendsPage() {
                       </div>
                       {chatMessages.length > 0 && (
                         <div className="flex items-center justify-between mt-2">
-                          <span className="text-xs text-gray-400">对话轮次：{Math.floor(chatMessages.length / 2)} | 上下文保留最近{MAX_CONTEXT_MESSAGES}条消息</span>
+                          <span className="text-xs text-gray-400">{t('tr.chatRounds', { n: Math.floor(chatMessages.length / 2) })} | {t('tr.contextHint', { n: MAX_CONTEXT_MESSAGES })}</span>
                         </div>
                       )}
                     </>
@@ -939,8 +1035,8 @@ export default function TrendsPage() {
               <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 rounded-lg p-8">
                 <div className="flex flex-col items-center justify-center">
                   <History className="w-16 h-16 text-purple-300 mb-4" />
-                  <p className="text-gray-600 dark:text-gray-400 text-lg font-medium">暂无AI分析记录</p>
-                  <p className="text-gray-400 text-sm mt-1">点击上方「开始分析」按钮，AI将分析整个数据库的论文趋势</p>
+                  <p className="text-gray-600 dark:text-gray-400 text-lg font-medium">{t('tr.noAnalysis')}</p>
+                  <p className="text-gray-400 text-sm mt-1">{t('tr.noAnalysisHint')}</p>
                 </div>
               </div>
             )}
@@ -954,12 +1050,12 @@ export default function TrendsPage() {
               >
                 {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 <History className="w-4 h-4" />
-                {showHistory ? '收起历史报告' : '查看历史报告'}
+                {showHistory ? t('tr.collapseHistory') : t('tr.viewHistory')}
               </button>
               {showHistory && (
                 <div className="mt-3 space-y-2">
                   {historyReports.length === 0 ? (
-                    <p className="text-sm text-gray-400 py-2">暂无历史报告</p>
+                    <p className="text-sm text-gray-400 py-2">{t('tr.noHistory')}</p>
                   ) : (
                     historyReports.map((r) => (
                       <div
@@ -974,19 +1070,19 @@ export default function TrendsPage() {
                         }`}
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{r.summary || '(无摘要)'}</p>
+                          <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{r.summary || t('tr.noSummary')}</p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-gray-400">{r.model}</span>
                             <span className="text-xs text-gray-400">{formatTimeAgo(r.created_at)}</span>
                             {r.id === report?.id && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">当前</span>
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">{t('tr.current')}</span>
                             )}
                           </div>
                         </div>
                         {restoringId === r.id ? (
                           <Loader2 className="w-4 h-4 text-purple-500 animate-spin ml-2 flex-shrink-0" />
                         ) : (
-                          <span className="text-xs text-purple-500 ml-2 flex-shrink-0 hover:text-purple-700">查看</span>
+                          <span className="text-xs text-purple-500 ml-2 flex-shrink-0 hover:text-purple-700">{t('tr.view')}</span>
                         )}
                       </div>
                     ))
@@ -997,16 +1093,16 @@ export default function TrendsPage() {
 
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
               <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-hot-topics')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔥 热点预测</h3>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">基于历史数据预测未来研究热点</p>
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔥 {t('tr.quickHot')}</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{t('tr.quickHotDesc')}</p>
               </a>
               <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-keyword-insights')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔍 关键词关联</h3>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">分析关键词之间的关联关系</p>
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">🔍 {t('tr.quickKw')}</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{t('tr.quickKwDesc')}</p>
               </a>
               <a href="#" onClick={(e) => { e.preventDefault(); document.getElementById('section-dev-trends')?.scrollIntoView({ behavior: 'smooth' }); }} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 sm:p-4 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors cursor-pointer">
-                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">📈 发展趋势</h3>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">生成详细的研究趋势报告</p>
+                <h3 className="font-medium text-gray-900 dark:text-white mb-1 sm:mb-2 text-sm sm:text-base">📈 {t('tr.quickTrend')}</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">{t('tr.quickTrendDesc')}</p>
               </a>
             </div>
           </div>

@@ -8,7 +8,6 @@ import { PaperDetailResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot } from 'lucide-react';
 import Link from 'next/link';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
-import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
 
@@ -29,6 +28,13 @@ export default function PaperDetailPage() {
   const [chatStreaming, setChatStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (params.id) {
@@ -39,7 +45,12 @@ export default function PaperDetailPage() {
   useEffect(() => {
     if (!paper) return;
     const loadAnalysis = async () => {
-      const result = await papersApi.getLatestAnalysis(paper.id);
+      let result;
+      try {
+        result = await papersApi.getLatestAnalysis(paper.id);
+      } catch {
+        return false;
+      }
       if (result.status === "pending") {
         setAiAnalyzing(true);
         return true;
@@ -48,7 +59,7 @@ export default function PaperDetailPage() {
         setAiAnalyzing(false);
       } else if (result.status === "failed") {
         setAiAnalysis(result.analysis);
-        setAiError("上次分析失败，请重试");
+        setAiError(t('pd.lastFailed'));
         setAiAnalyzing(false);
       }
       return false;
@@ -80,8 +91,11 @@ export default function PaperDetailPage() {
   }, [paper]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [streamContent, chatMessages]);
+    // 仅在流式回复进行中自动滚动，避免打开页面就跳到底部
+    if (chatStreaming) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [streamContent, chatStreaming]);
 
   const fetchPaper = async () => {
     setLoading(true);
@@ -108,18 +122,32 @@ export default function PaperDetailPage() {
     try {
       const result = await papersApi.analyzePaper(params.id as string);
       if (result.status === "pending") {
-        const timer = setInterval(async () => {
-          const latest = await papersApi.getLatestAnalysis(params.id as string);
-          if (latest.status === "success" && latest.analysis) {
-            setAiAnalysis(latest.analysis);
+        if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+        let attempts = 0;
+        analysisTimerRef.current = setInterval(async () => {
+          attempts += 1;
+          if (attempts > 90) {  // 上限3分钟，防止无限轮询
+            clearInterval(analysisTimerRef.current!);
+            analysisTimerRef.current = null;
+            setAiError(t('pd.timeout'));
             setAiAnalyzing(false);
-            clearInterval(timer);
-          } else if (latest.status === "failed") {
-            setAiAnalysis(latest.analysis);
-            setAiError("分析失败，请重试");
-            setAiAnalyzing(false);
-            clearInterval(timer);
+            return;
           }
+          try {
+            const latest = await papersApi.getLatestAnalysis(params.id as string);
+            if (latest.status === "success" && latest.analysis) {
+              setAiAnalysis(latest.analysis);
+              setAiAnalyzing(false);
+              clearInterval(analysisTimerRef.current!);
+              analysisTimerRef.current = null;
+            } else if (latest.status === "failed") {
+              setAiAnalysis(latest.analysis);
+              setAiError(t('pd.failed'));
+              setAiAnalyzing(false);
+              clearInterval(analysisTimerRef.current!);
+              analysisTimerRef.current = null;
+            }
+          } catch {}
         }, 2000);
         return;
       }
@@ -179,7 +207,7 @@ export default function PaperDetailPage() {
                 papersApi.saveChats(paper.id, [
                   userMsg,
                   { role: 'assistant', content: fullContent }
-                ]);
+                ]).catch(() => {});
               } else if (data.content) {
                 fullContent += data.content;
                 setStreamContent(fullContent);
@@ -210,7 +238,7 @@ export default function PaperDetailPage() {
       <Layout>
         <div className="text-center py-12">
           <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-          <p className="text-red-600 font-medium mb-2">加载失败</p>
+          <p className="text-red-600 font-medium mb-2">{t('pd.loadFailed')}</p>
           <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">{error}</p>
           <Link href="/" className="text-primary-600 hover:underline mt-4 inline-block">
             {t('nav.home')}
@@ -224,7 +252,7 @@ export default function PaperDetailPage() {
     return (
       <Layout>
         <div className="text-center py-12">
-          <p className="text-gray-600 dark:text-gray-400">{t('home.noPapers')}</p>
+          <p className="text-gray-600 dark:text-gray-400">{t('paper.notFound')}</p>
           <Link href="/" className="text-primary-600 hover:underline mt-4 inline-block">
             {t('nav.home')}
           </Link>
@@ -241,7 +269,7 @@ export default function PaperDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors">
           <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm sm:text-base">{t('home.previous')}</span>
+          <span className="text-sm sm:text-base">{t('nav.backHome')}</span>
         </Link>
       </div>
 
@@ -347,7 +375,7 @@ export default function PaperDetailPage() {
         )}
 
         <div className="mb-4 sm:mb-6">
-          <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('home.subtitle')}</h2>
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('paper.abstract')}</h2>
           <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-sm sm:text-base">
             {paper.features?.summary || paper.abstract}
           </p>
@@ -396,7 +424,7 @@ export default function PaperDetailPage() {
       </div>
 
       {paper.similar_papers && paper.similar_papers.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-8 mb-6">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{t('paper.similarPapers')}</h2>
           <div className="space-y-3">
             {paper.similar_papers.map((similar) => (
@@ -417,18 +445,17 @@ export default function PaperDetailPage() {
                         </span>
                       )}
                       {similar.keywords_cn?.slice(0, 5).map((keyword, index) => (
-                        <button
+                        <span
                           key={index}
-                          onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-                          className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
+                          className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 rounded"
                         >
                           {keyword}
-                        </button>
+                        </span>
                       ))}
                     </div>
                   </div>
                   <div className="text-sm text-gray-600 dark:text-gray-400 ml-4 shrink-0">
-                    {(similar.similarity_score * 100).toFixed(0)}% similar
+                    {t('paper.similarity')}: {(similar.similarity_score * 100).toFixed(0)}%
                   </div>
                 </div>
               </Link>
@@ -437,18 +464,18 @@ export default function PaperDetailPage() {
         </div>
       )}
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 mb-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-8 mb-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">AI 智能分析</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('pd.aiSection')}</h2>
           </div>
           {aiAnalysis && !aiAnalyzing && (
             <button
               onClick={analyzePaper}
               className="text-sm text-primary-600 hover:underline"
             >
-              重新分析
+              {t('pd.reanalyze')}
             </button>
           )}
         </div>
@@ -456,7 +483,7 @@ export default function PaperDetailPage() {
         {aiAnalyzing && (
           <div className="flex items-center gap-3 py-8 justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
-            <span className="text-gray-500 dark:text-gray-400">正在分析论文，请稍候...</span>
+            <span className="text-gray-500 dark:text-gray-400">{t('pd.analyzing')}</span>
           </div>
         )}
 
@@ -467,7 +494,7 @@ export default function PaperDetailPage() {
               onClick={analyzePaper}
               className="mt-2 text-sm text-primary-600 hover:underline"
             >
-              重试
+              {t('pd.retryBtn')}
             </button>
           </div>
         )}
@@ -475,13 +502,13 @@ export default function PaperDetailPage() {
         {!aiAnalysis && !aiAnalyzing && !aiError && (
           <div className="text-center py-8">
             <Bot className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">点击下方按钮，让 AI 帮你分析这篇论文</p>
+            <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">{t('pd.analyzeHint')}</p>
             <button
               onClick={analyzePaper}
               className="bg-primary-600 text-white px-6 py-2.5 rounded-lg hover:bg-primary-700 text-sm font-medium"
             >
               <Sparkles className="w-4 h-4 inline mr-2" />
-              开始 AI 分析
+              {t('pd.startAnalysis')}
             </button>
           </div>
         )}
@@ -497,7 +524,7 @@ export default function PaperDetailPage() {
             <div className="border-t mt-6 pt-6">
               <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
                 <Bot className="w-4 h-4 text-primary-600" />
-                追问讨论
+                {t('pd.followUp')}
               </h3>
 
               <div className="space-y-4 mb-4 max-h-[400px] overflow-y-auto">
@@ -549,7 +576,7 @@ export default function PaperDetailPage() {
                       handleChatSubmit();
                     }
                   }}
-                  placeholder="针对这篇论文提问..."
+                  placeholder={t('pd.chatPlaceholder')}
                   disabled={chatStreaming}
                   className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-gray-50 dark:bg-gray-700/50"
                 />

@@ -232,6 +232,15 @@ export interface SettingsInfo {
   };
   app_name?: string;
   app_version?: string;
+  custom_providers?: CustomProviderStatus[];
+}
+
+export interface CustomProviderStatus {
+  name: string;
+  base_url: string;
+  api_key_configured: boolean;
+  api_key_masked: string;
+  models: string[];
 }
 
 export interface SchedulerJob {

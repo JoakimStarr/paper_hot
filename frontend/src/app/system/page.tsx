@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
-type TabType = 'overview' | 'crawler' | 'api' | 'models' | 'maintenance';
+type TabType = 'overview' | 'crawlerData' | 'aiConfig';
 
 export default function SystemPage() {
   const { t } = useLanguage();
@@ -21,6 +21,7 @@ export default function SystemPage() {
   const [crawlLogs, setCrawlLogs] = useState<CrawlLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [crawling, setCrawling] = useState(false);
+  const [cnkiCrawling, setCnkiCrawling] = useState<'top50' | 'navi' | null>(null);
   const [message, setMessage] = useState('');
 
   const [settingsInfo, setSettingsInfo] = useState<SettingsInfo | null>(null);
@@ -49,6 +50,18 @@ export default function SystemPage() {
   const [editingAppName, setEditingAppName] = useState(false);
   const [savingAppName, setSavingAppName] = useState(false);
   const [appNameMessage, setAppNameMessage] = useState('');
+
+  // Custom providers state
+  const [customProviders, setCustomProviders] = useState<Array<{
+    name: string;
+    base_url: string;
+    api_key: string;
+    models: string[];
+  }>>([]);
+  const [newProvider, setNewProvider] = useState({ name: '', base_url: '', api_key: '', models: '' });
+  const [savingCustomProvider, setSavingCustomProvider] = useState(false);
+  const [customProviderMessage, setCustomProviderMessage] = useState('');
+  const [editingProviderName, setEditingProviderName] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -91,6 +104,15 @@ export default function SystemPage() {
           version: res.app_version || '',
         });
       }
+      // Load custom providers
+      if (res.custom_providers) {
+        setCustomProviders(res.custom_providers.map(cp => ({
+          name: cp.name,
+          base_url: cp.base_url,
+          api_key: '',  // Don't store the actual key in state
+          models: cp.models,
+        })));
+      }
     } catch (error) {
       console.error('Error fetching settings:', error);
     }
@@ -106,10 +128,10 @@ export default function SystemPage() {
   };
 
   useEffect(() => {
-    if (activeTab === 'api' || activeTab === 'models') {
+    if (activeTab === 'aiConfig') {
       fetchSettings();
     }
-    if (activeTab === 'crawler') {
+    if (activeTab === 'crawlerData') {
       fetchSchedulerJobs();
     }
   }, [activeTab]);
@@ -125,6 +147,21 @@ export default function SystemPage() {
       setMessage(error.response?.data?.detail || '启动爬取失败');
     } finally {
       setCrawling(false);
+    }
+  };
+
+  const handleCNKICrawl = async (kind: 'top50' | 'navi') => {
+    setCnkiCrawling(kind);
+    setMessage('');
+    try {
+      const res = kind === 'top50'
+        ? await papersApi.startCNKITop50Crawl()
+        : await papersApi.startCNKNaviCrawl();
+      setMessage(res.message || '知网爬取任务已启动');
+    } catch (error: any) {
+      setMessage(error.response?.data?.detail || '启动知网爬取失败');
+    } finally {
+      setCnkiCrawling(null);
     }
   };
 
@@ -157,9 +194,10 @@ export default function SystemPage() {
     setSavingModels(true);
     setModelMessage('');
     try {
+      // 发送完整模型顺序（含自定义 Provider），后端会分别保存内置与自定义 Provider 的顺序
       const modelPriority = modelList.map(m => m.name);
       await papersApi.updateSettings({ model_priority: modelPriority });
-      setModelMessage('模型优先级已保存');
+      setModelMessage(t('sys.orderSaved'));
       fetchSettings();
     } catch (error: any) {
       setModelMessage(error.response?.data?.detail || '保存失败');
@@ -193,14 +231,14 @@ export default function SystemPage() {
   };
 
   const handleCleanup = async () => {
-    if (!confirm('确定要清理无效数据吗？此操作不可撤销。')) return;
+    if (!confirm(t('sys.cleanupConfirm'))) return;
     setCleaning(true);
     setCleanupResult(null);
     setCleanupMessage('');
     try {
       const res = await papersApi.cleanupData();
       setCleanupResult(res);
-      setCleanupMessage('清理完成');
+      setCleanupMessage(t('sys.cleanupDone'));
       fetchData();
     } catch (error: any) {
       setCleanupMessage(error.response?.data?.detail || '清理失败');
@@ -214,7 +252,7 @@ export default function SystemPage() {
     setPortMessage('');
     try {
       await papersApi.updateSettings({ ports: { backend_port: ports.backend, frontend_port: ports.frontend } });
-      setPortMessage('端口配置已保存，重启后生效');
+      setPortMessage(t('sys.portSaved'));
     } catch (error: any) {
       setPortMessage(error.response?.data?.detail || '保存失败');
     } finally {
@@ -234,6 +272,78 @@ export default function SystemPage() {
       setAppNameMessage(error.response?.data?.detail || '保存失败');
     } finally {
       setSavingAppName(false);
+    }
+  };
+
+  // Custom provider handlers
+  const handleEditCustomProvider = (name: string) => {
+    const cp = settingsInfo?.custom_providers?.find(p => p.name === name);
+    if (!cp) return;
+    setNewProvider({
+      name: cp.name,
+      base_url: cp.base_url,
+      api_key: '',  // 留空表示保留原 Key
+      models: cp.models.join(', '),
+    });
+    setEditingProviderName(name);
+    setCustomProviderMessage('');
+  };
+
+  const handleCancelEditProvider = () => {
+    setNewProvider({ name: '', base_url: '', api_key: '', models: '' });
+    setEditingProviderName(null);
+    setCustomProviderMessage('');
+  };
+
+  const handleSaveCustomProvider = async () => {
+    const name = newProvider.name.trim();
+    const base_url = newProvider.base_url.trim();
+    if (!name || !base_url) {
+      setCustomProviderMessage('请填写名称和 Base URL');
+      return;
+    }
+    // 新增时必须提供 API Key；编辑时可留空（保留原 Key）
+    if (!editingProviderName && !newProvider.api_key.trim()) {
+      setCustomProviderMessage('新增 Provider 必须填写 API Key');
+      return;
+    }
+    setSavingCustomProvider(true);
+    setCustomProviderMessage('');
+    try {
+      const models = newProvider.models.split(',').map(m => m.trim()).filter(m => m);
+      const updatedProviders = [
+        ...customProviders.filter(p => p.name !== name),
+        {
+          name,
+          base_url,
+          api_key: newProvider.api_key.trim(),
+          models: models,
+        }
+      ];
+      await papersApi.updateSettings({ custom_providers: updatedProviders });
+      setCustomProviderMessage(editingProviderName ? 'Provider 已更新' : '自定义 Provider 已添加');
+      handleCancelEditProvider();
+      fetchSettings();
+    } catch (error: any) {
+      setCustomProviderMessage(error.response?.data?.detail || '保存失败');
+    } finally {
+      setSavingCustomProvider(false);
+    }
+  };
+
+  const handleDeleteCustomProvider = async (name: string) => {
+    if (!confirm(`确定要删除 Provider "${name}" 吗？`)) return;
+    setSavingCustomProvider(true);
+    setCustomProviderMessage('');
+    try {
+      const updatedProviders = customProviders.filter(p => p.name !== name);
+      await papersApi.updateSettings({ custom_providers: updatedProviders });
+      setCustomProviderMessage(`Provider "${name}" 已删除`);
+      fetchSettings();
+    } catch (error: any) {
+      setCustomProviderMessage(error.response?.data?.detail || '删除失败');
+    } finally {
+      setSavingCustomProvider(false);
     }
   };
 
@@ -263,11 +373,9 @@ export default function SystemPage() {
   };
 
   const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
-    { key: 'overview', label: '概览', icon: <Activity className="w-4 h-4" /> },
-    { key: 'crawler', label: '爬虫管理', icon: <Database className="w-4 h-4" /> },
-    { key: 'api', label: 'API 配置', icon: <Key className="w-4 h-4" /> },
-    { key: 'models', label: 'AI 模型', icon: <Brain className="w-4 h-4" /> },
-    { key: 'maintenance', label: '数据维护', icon: <Trash2 className="w-4 h-4" /> },
+    { key: 'overview', label: t('systemTab.overview'), icon: <Activity className="w-4 h-4" /> },
+    { key: 'crawlerData', label: t('systemTab.crawlerData'), icon: <Database className="w-4 h-4" /> },
+    { key: 'aiConfig', label: t('systemTab.aiConfig'), icon: <Brain className="w-4 h-4" /> },
   ];
 
   const renderOverview = () => (
@@ -279,13 +387,13 @@ export default function SystemPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
-                    <label className="block text-xs text-primary-600 dark:text-primary-400 mb-1">应用名称</label>
+                    <label className="block text-xs text-primary-600 dark:text-primary-400 mb-1">{t('sys.appNameLabel')}</label>
                     <input
                       type="text"
                       value={appInfo.name}
                       onChange={e => setAppInfo(prev => ({ ...prev, name: e.target.value }))}
                       className="w-full px-3 py-2 border border-primary-300 dark:border-primary-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      placeholder="应用名称"
+                      placeholder={t('sys.appNameLabel')}
                     />
                   </div>
                 </div>
@@ -296,7 +404,7 @@ export default function SystemPage() {
                     className="flex items-center gap-1 px-3 py-1.5 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
                   >
                     {savingAppName ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    保存
+                    {t('common.save')}
                   </button>
                   <button
                     onClick={() => {
@@ -319,7 +427,7 @@ export default function SystemPage() {
             ) : (
               <>
                 <h2 className="text-2xl font-bold text-primary-700 dark:text-primary-300">{appInfo.name || stats?.app_name || 'ApplePaper'}</h2>
-                <p className="text-sm text-primary-600 dark:text-primary-400 mt-1">发现和理解热门研究论文</p>
+                <p className="text-sm text-primary-600 dark:text-primary-400 mt-1">{t('sys.appDesc')}</p>
               </>
             )}
           </div>
@@ -327,13 +435,13 @@ export default function SystemPage() {
             {!editingAppName && (
               <div className="flex items-center gap-3">
                 <div className="text-sm text-primary-500 dark:text-primary-400">
-                  <div>版本 {appInfo.version || stats?.app_version || '-'}</div>
+                  <div>{t('sys.version')} {appInfo.version || stats?.app_version || '-'}</div>
                   <div className="mt-1">FastAPI + Next.js</div>
                 </div>
                 <button
                   onClick={() => setEditingAppName(true)}
                   className="p-2 text-primary-500 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg transition-colors"
-                  title="编辑应用名称"
+                  title={t('sys.editAppName')}
                 >
                   <Edit3 className="w-4 h-4" />
                 </button>
@@ -348,28 +456,28 @@ export default function SystemPage() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-blue-600 mb-2">
               <Database className="w-5 h-5" />
-              <span className="text-sm font-medium">论文总数</span>
+              <span className="text-sm font-medium">{t('sys.totalPapers')}</span>
             </div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.total_papers}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-green-600 mb-2">
               <BookOpen className="w-5 h-5" />
-              <span className="text-sm font-medium">期刊数量</span>
+              <span className="text-sm font-medium">{t('sys.journals')}</span>
             </div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.journal_count}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-purple-600 mb-2">
               <Hash className="w-5 h-5" />
-              <span className="text-sm font-medium">关键词数</span>
+              <span className="text-sm font-medium">{t('sys.keywords')}</span>
             </div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.keyword_count}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-orange-600 mb-2">
               <Clock className="w-5 h-5" />
-              <span className="text-sm font-medium">最近更新</span>
+              <span className="text-sm font-medium">{t('sys.latestUpdate')}</span>
             </div>
             <div className="text-sm font-semibold text-gray-900 dark:text-white">
               {timeAgo(stats.latest_paper_at)}
@@ -378,7 +486,7 @@ export default function SystemPage() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-cyan-600 mb-2">
               <Database className="w-5 h-5" />
-              <span className="text-sm font-medium">数据库大小</span>
+              <span className="text-sm font-medium">{t('sys.dbSize')}</span>
             </div>
             <div className="text-2xl font-bold text-gray-900 dark:text-white">
               {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
@@ -387,12 +495,12 @@ export default function SystemPage() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-4">
             <div className="flex items-center gap-2 text-emerald-600 mb-2">
               <Activity className="w-5 h-5" />
-              <span className="text-sm font-medium">调度器状态</span>
+              <span className="text-sm font-medium">{t('sys.schedulerStatus')}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${schedulerRunning ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                {schedulerRunning ? '运行中' : '已停止'}
+                {schedulerRunning ? t('sys.running') : t('sys.stopped')}
               </span>
             </div>
           </div>
@@ -403,34 +511,34 @@ export default function SystemPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
             <Brain className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            AI 使用统计
+            {t('sys.aiUsage')}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 dark:text-gray-400">分析次数</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.totalAnalyses')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_analyses}</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 dark:text-gray-400">总 Token 消耗</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.totalTokens')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_tokens.toLocaleString()}</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 dark:text-gray-400">总处理时间</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.totalTime')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{(stats.ai_usage.total_processing_ms / 1000).toFixed(1)}s</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-              <div className="text-xs text-gray-500 dark:text-gray-400">分析论文总数</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.papersAnalyzed')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.ai_usage.total_papers_analyzed.toLocaleString()}</div>
             </div>
           </div>
           {stats.ai_usage.by_model && stats.ai_usage.by_model.length > 0 && (
             <div className="space-y-2">
-              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">按模型统计</div>
+              <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.byModel')}</div>
               {stats.ai_usage.by_model.map(item => (
                 <div key={item.model} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
                   <span className="text-sm text-gray-700 dark:text-gray-300">{item.model}</span>
                   <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-                    <span>{item.count}次</span>
+                    <span>{item.count} {t('sys.times')}</span>
                     <span>{item.tokens.toLocaleString()} tokens</span>
                   </div>
                 </div>
@@ -444,12 +552,12 @@ export default function SystemPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
             <Activity className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            来源分布
+            {t('sys.sourceDist')}
           </h3>
           <div className="flex flex-wrap gap-2">
             {Object.entries(stats.source_counts).map(([source, count]) => (
               <span key={source} className="px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 rounded-full text-sm border border-blue-100">
-                {source}: {count}篇
+                {source}: {count}{t('sys.papersUnit')}
               </span>
             ))}
           </div>
@@ -460,7 +568,7 @@ export default function SystemPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            Top 10 期刊
+            {t('sys.topJournals')}
           </h3>
           <div className="space-y-2">
             {Object.entries(stats.top_journals).map(([journal, count], idx) => (
@@ -471,7 +579,7 @@ export default function SystemPage() {
                   </span>
                   <span className="text-sm text-gray-700 dark:text-gray-300">{journal}</span>
                 </div>
-                <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}篇</span>
+                <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}{t('sys.papersUnit')}</span>
               </div>
             ))}
           </div>
@@ -482,7 +590,7 @@ export default function SystemPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 mb-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
             <Hash className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            年份分布
+            {t('sys.yearDist')}
           </h3>
           <div className="space-y-2">
             {Object.entries(stats.year_counts)
@@ -490,7 +598,7 @@ export default function SystemPage() {
               .map(([year, count]) => (
                 <div key={year} className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
                   <span className="text-sm text-gray-700 dark:text-gray-300">{year}</span>
-                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}篇</span>
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{count}{t('sys.papersUnit')}</span>
                 </div>
               ))}
           </div>
@@ -520,6 +628,27 @@ export default function SystemPage() {
               <><Play className="w-4 h-4" />{t('system.startCrawl')}</>
             )}
           </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+            <button
+              onClick={() => handleCNKICrawl('top50')}
+              disabled={cnkiCrawling !== null}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 text-sm rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50 transition-colors"
+              title="知网TOP50期刊爬取（浏览器爬虫）"
+            >
+              {cnkiCrawling === 'top50' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              知网TOP50爬取
+            </button>
+            <button
+              onClick={() => handleCNKICrawl('navi')}
+              disabled={cnkiCrawling !== null}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 text-sm rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50 transition-colors"
+              title="知网期刊导航爬取（浏览器爬虫）"
+            >
+              {cnkiCrawling === 'navi' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              知网导航爬取
+            </button>
+          </div>
+
           {message && (
             <div className={`p-3 rounded-lg text-sm ${message.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
               {message}
@@ -527,7 +656,7 @@ export default function SystemPage() {
           )}
           <div className="mt-4 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <AlertCircle className="w-4 h-4" />
-            爬虫将抓取所有已配置的期刊和arXiv最新论文
+            期刊爬虫抓取经济学核心期刊；知网爬虫为本机浏览器模式，遇验证码请在弹出窗口中人工处理
           </div>
         </div>
 
@@ -550,7 +679,7 @@ export default function SystemPage() {
                 <ToggleLeft className="w-6 h-6 text-gray-400" />
               )}
               <span className={schedulerRunning ? 'text-green-600' : 'text-gray-500 dark:text-gray-400'}>
-                {schedulerRunning ? '运行中' : '已停止'}
+                {schedulerRunning ? t('sys.running') : t('sys.stopped')}
               </span>
             </button>
           </div>
@@ -561,7 +690,7 @@ export default function SystemPage() {
                   <div>
                     <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{job.name}</div>
                     <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {job.trigger} · 下次执行: {job.next_run_time ? formatTime(job.next_run_time) : '无'}
+                      {job.trigger} · 下次执行: {job.next_run_time ? formatTime(job.next_run_time) : t('sys.noneLabel')}
                     </div>
                   </div>
                   <button
@@ -574,7 +703,7 @@ export default function SystemPage() {
                     ) : (
                       <Play className="w-3 h-3" />
                     )}
-                    立即执行
+                    {t('sys.runNow')}
                   </button>
                 </div>
               ))}
@@ -596,7 +725,7 @@ export default function SystemPage() {
         <div className="max-h-96 overflow-y-auto">
           {crawlLogs.length === 0 ? (
             <div className="text-center py-8 text-gray-400">
-              暂无爬取记录
+              {t('sys.noCrawlLogs')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -622,8 +751,8 @@ export default function SystemPage() {
                     </span>
                   </div>
                   <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-                    <span>获取: {log.papers_fetched}篇</span>
-                    {log.papers_failed > 0 && <span className="text-red-500">失败: {log.papers_failed}篇</span>}
+                    <span>{t('sys.fetchedLabel')}: {log.papers_fetched}{t('sys.papersUnit')}</span>
+                    {log.papers_failed > 0 && <span className="text-red-500">{t('sys.failedLabel')}: {log.papers_failed}{t('sys.papersUnit')}</span>}
                     <span>{formatTime(log.created_at)}</span>
                   </div>
                   {log.error_message && (
@@ -640,9 +769,9 @@ export default function SystemPage() {
 
   const renderApiConfig = () => {
     const providers = [
-      { key: 'zhipu', label: 'Zhipu（智谱）' },
+      { key: 'zhipu', label: 'Zhipu' },
       { key: 'openai', label: 'OpenAI' },
-      { key: 'siliconflow', label: 'SiliconFlow（硅基流动）' },
+      { key: 'siliconflow', label: 'SiliconFlow' },
     ];
 
     return (
@@ -660,12 +789,12 @@ export default function SystemPage() {
                   {status?.configured ? (
                     <span className="flex items-center gap-1 text-xs font-medium text-green-600">
                       <CheckCircle className="w-4 h-4" />
-                      已配置
+                      {t('sys.configured')}
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-xs font-medium text-red-500">
                       <XCircle className="w-4 h-4" />
-                      未配置
+                      {t('sys.notConfigured')}
                     </span>
                   )}
                 </div>
@@ -677,7 +806,7 @@ export default function SystemPage() {
                 <div className="flex gap-2">
                   <input
                     type="password"
-                    placeholder="输入新的 API Key"
+                    placeholder={t('sys.newKeyPlaceholder')}
                     value={apiKeys[provider.key] || ''}
                     onChange={e => setApiKeys(prev => ({ ...prev, [provider.key]: e.target.value }))}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -687,7 +816,7 @@ export default function SystemPage() {
                     disabled={updatingKey === provider.key || !apiKeys[provider.key]?.trim()}
                     className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
                   >
-                    {updatingKey === provider.key ? <Loader2 className="w-4 h-4 animate-spin" /> : '更新'}
+                    {updatingKey === provider.key ? <Loader2 className="w-4 h-4 animate-spin" /> : t('sys.updateBtn')}
                   </button>
                 </div>
                 {apiMessage[provider.key] && (
@@ -700,21 +829,155 @@ export default function SystemPage() {
           })}
         </div>
 
+        {/* Custom Providers Section */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Key className="w-5 h-5 text-purple-600" />
+              <h3 className="font-semibold text-gray-900 dark:text-white">{t('sys.customProviders')}</h3>
+            </div>
+            <span className="text-xs text-gray-500 dark:text-gray-400">{t('sys.openaiCompatible')}</span>
+          </div>
+
+          {/* Existing custom providers */}
+          {settingsInfo?.custom_providers && settingsInfo.custom_providers.length > 0 && (
+            <div className="mb-4 space-y-3">
+              {settingsInfo.custom_providers.map((cp) => (
+                <div key={cp.name} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900 dark:text-white">{cp.name}</span>
+                      {cp.api_key_configured ? (
+                        <span className="flex items-center gap-1 text-xs text-green-600">
+                          <CheckCircle className="w-3 h-3" />
+                          已配置
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs text-red-500">
+                          <XCircle className="w-3 h-3" />
+                          未配置
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">{cp.base_url}</span>
+                    {cp.models.length > 0 && (
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        模型: {cp.models.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleEditCustomProvider(cp.name)}
+                      disabled={savingCustomProvider}
+                      className="p-1 text-gray-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+                      title={t('sys.editProvider')}
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCustomProvider(cp.name)}
+                      disabled={savingCustomProvider}
+                      className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add / edit custom provider */}
+          <div className="border-t dark:border-gray-700 pt-4">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              {editingProviderName ? `${t('sys.editProvider')}: ${editingProviderName}` : t('sys.addNewProvider')}
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.nameLabel')} *</label>
+                <input
+                  type="text"
+                  placeholder="my-llm"
+                  value={newProvider.name}
+                  onChange={e => setNewProvider(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Base URL *</label>
+                <input
+                  type="text"
+                  placeholder="例如: https://api.example.com/v1"
+                  value={newProvider.base_url}
+                  onChange={e => setNewProvider(prev => ({ ...prev, base_url: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  API Key {editingProviderName ? '(留空保留原 Key)' : '*'}
+                </label>
+                <input
+                  type="password"
+                  placeholder={editingProviderName ? t('sys.keepKeyHint') : t('sys.newKeyPlaceholder')}
+                  value={newProvider.api_key}
+                  onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.modelsLabel')}</label>
+                <input
+                  type="text"
+                  placeholder="例如: gpt-4o, gpt-4o-mini"
+                  value={newProvider.models}
+                  onChange={e => setNewProvider(prev => ({ ...prev, models: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                onClick={handleSaveCustomProvider}
+                disabled={savingCustomProvider || !newProvider.name.trim() || !newProvider.base_url.trim() || (!editingProviderName && !newProvider.api_key.trim())}
+                className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors"
+              >
+                {savingCustomProvider ? <Loader2 className="w-4 h-4 animate-spin" /> : (editingProviderName ? t('sys.saveChanges') : t('sys.addProvider'))}
+              </button>
+              {editingProviderName && (
+                <button
+                  onClick={handleCancelEditProvider}
+                  disabled={savingCustomProvider}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  {t('common.cancel')}
+                </button>
+              )}
+              {customProviderMessage && (
+                <span className={`text-xs ${customProviderMessage.includes('成功') || customProviderMessage.includes('已') ? 'text-green-600' : 'text-red-500'}`}>
+                  {customProviderMessage}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">API Token 配置状态</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.tokenStatus')}</span>
           </div>
           <div className="mt-2">
             {settingsInfo?.api_token_configured ? (
               <span className="flex items-center gap-1 text-sm text-green-600">
                 <CheckCircle className="w-4 h-4" />
-                API Token 已配置
+                {t('sys.tokenConfigured')}
               </span>
             ) : (
               <span className="flex items-center gap-1 text-sm text-red-500">
                 <XCircle className="w-4 h-4" />
-                API Token 未配置
+                {t('sys.tokenNotConfigured')}
               </span>
             )}
           </div>
@@ -723,11 +986,11 @@ export default function SystemPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
           <div className="flex items-center gap-2 mb-4">
             <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">端口配置</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.portConfig')}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">后端端口</label>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.backendPort')}</label>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -738,7 +1001,7 @@ export default function SystemPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">前端端口</label>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.frontendPort')}</label>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -775,7 +1038,7 @@ export default function SystemPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Brain className="w-6 h-6 text-primary-600" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">模型优先级</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('sys.modelPriority')}</h2>
           </div>
           <button
             onClick={handleSaveModelPriority}
@@ -783,7 +1046,7 @@ export default function SystemPage() {
             className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
           >
             {savingModels ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            保存排序
+            {t('sys.saveOrder')}
           </button>
         </div>
         {modelMessage && (
@@ -803,20 +1066,24 @@ export default function SystemPage() {
                   <span className={`text-xs px-1.5 py-0.5 rounded ${
                     model.provider === 'siliconflow'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400'
+                      : model.provider === 'zhipu'
+                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400'
+                        : model.provider === 'openai'
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
                   }`}>
-                    {model.provider === 'siliconflow' ? '硅基流动' : '智谱'}
+                    {model.provider === 'siliconflow' ? '硅基流动' : model.provider === 'zhipu' ? '智谱' : model.provider === 'openai' ? 'OpenAI' : model.provider}
                   </span>
                 )}
                 {model.available ? (
                   <span className="flex items-center gap-1 text-xs text-green-600">
                     <CheckCircle className="w-3.5 h-3.5" />
-                    可用
+                    {t('sys.available')}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1 text-xs text-red-500">
                     <XCircle className="w-3.5 h-3.5" />
-                    不可用
+                    {t('sys.unavailable')}
                   </span>
                 )}
               </div>
@@ -838,24 +1105,28 @@ export default function SystemPage() {
               </div>
             </div>
           ))}
+          {modelList.length === 0 && (
+            <p className="text-sm text-gray-400 py-4">{t('sys.noModels')}</p>
+          )}
         </div>
+        <p className="mt-3 text-xs text-gray-400">{t('sys.customOrderHint')}</p>
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">AI 服务状态</span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.aiServiceStatus')}</span>
         </div>
         <div className="mt-2">
           {settingsInfo?.models?.some(m => m.available) ? (
             <span className="flex items-center gap-1 text-sm text-green-600">
               <CheckCircle className="w-4 h-4" />
-              AI 服务可用
+              {t('sys.aiAvailable')}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-sm text-red-500">
               <XCircle className="w-4 h-4" />
-              AI 服务不可用
+              {t('sys.aiUnavailable')}
             </span>
           )}
         </div>
@@ -868,24 +1139,24 @@ export default function SystemPage() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center gap-3 mb-4">
           <Database className="w-6 h-6 text-primary-600" />
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">数据库统计</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('sys.dbStats')}</h2>
         </div>
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">论文总数</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.totalPapers')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.total_papers}</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">期刊数量</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.journals')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.journal_count}</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">关键词数</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.keywords')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">{stats.keyword_count}</div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">数据库大小</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.dbSize')}</div>
               <div className="text-xl font-bold text-gray-900 dark:text-white">
                 {stats.db_size_mb ? `${stats.db_size_mb.toFixed(1)} MB` : '-'}
               </div>
@@ -898,7 +1169,7 @@ export default function SystemPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <Trash2 className="w-6 h-6 text-red-500" />
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">清理无效数据</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('sys.cleanupTitle')}</h2>
           </div>
           <button
             onClick={handleCleanup}
@@ -906,11 +1177,11 @@ export default function SystemPage() {
             className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
           >
             {cleaning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-            清理无效数据
+            {t('sys.cleanupTitle')}
           </button>
         </div>
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-          清理数据库中没有关联特征的论文、孤立的特征数据、无效评分和过期报告。
+          {t('sys.cleanupDesc')}
         </p>
         {cleanupMessage && (
           <div className={`p-3 rounded-lg text-sm ${cleanupMessage.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
@@ -919,22 +1190,22 @@ export default function SystemPage() {
         )}
         {cleanupResult && (
           <div className="mt-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">清理结果</h4>
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('sys.cleanupResult')}</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">删除论文</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.deletedPapers')}</div>
                 <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_papers}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">删除特征</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.deletedFeatures')}</div>
                 <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_features}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">删除评分</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.deletedScores')}</div>
                 <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_scores}</div>
               </div>
               <div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">删除报告</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('sys.deletedReports')}</div>
                 <div className="text-lg font-bold text-gray-900 dark:text-white">{cleanupResult.deleted_reports}</div>
               </div>
             </div>
@@ -948,14 +1219,20 @@ export default function SystemPage() {
     switch (activeTab) {
       case 'overview':
         return renderOverview();
-      case 'crawler':
-        return renderCrawler();
-      case 'api':
-        return renderApiConfig();
-      case 'models':
-        return renderModels();
-      case 'maintenance':
-        return renderMaintenance();
+      case 'crawlerData':
+        return (
+          <>
+            {renderCrawler()}
+            {renderMaintenance()}
+          </>
+        );
+      case 'aiConfig':
+        return (
+          <>
+            {renderApiConfig()}
+            {renderModels()}
+          </>
+        );
     }
   };
 
