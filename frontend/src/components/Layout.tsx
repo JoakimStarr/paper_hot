@@ -88,7 +88,7 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     const checkBackend = async () => {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
         const baseUrl = apiUrl.replace(/\/api$/, '');
         const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(5000) });
         setBackendOnline(res.ok);

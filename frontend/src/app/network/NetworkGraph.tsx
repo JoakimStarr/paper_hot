@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { NetworkData, NetworkNode } from '@/types/paper';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -44,6 +44,8 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   const simulationRef = useRef<d3.Simulation<SimNode, undefined> | null>(null);
   const initializedRef = useRef(false);
   const gRef = useRef<any>(null);
+  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const prevHighlightRef = useRef<string | null>(null);
 
   const { isDark } = useTheme();
   const textColor = isDark ? '#e5e7eb' : '#333';
@@ -86,6 +88,39 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
     return Array.from(connections.values())
       .sort((a, b) => b.linkValue - a.linkValue);
   }, [data, highlightedNodeId]);
+
+  // —— 将指定节点平移到视图中心 ——
+  const centerOnNode = useCallback((id: string) => {
+    const sim = simulationRef.current;
+    const svgEl = svgRef.current;
+    if (!sim || !svgEl || !zoomBehaviorRef.current) return;
+    const target = sim.nodes().find(n => n.id === id);
+    if (!target || target.x == null || target.y == null) return;
+    const rect = svgEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const k = d3.zoomTransform(svgEl).k;
+    const scale = k < 1 ? 1 : k;
+    const tx = rect.width / 2 - (target.x * scale);
+    const ty = rect.height / 2 - (target.y * scale);
+    const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
+
+    d3.select(svgEl)
+      .transition()
+      .duration(450)
+      .call(zoomBehaviorRef.current.transform, t);
+  }, []);
+
+  // 每次高亮节点发生变化（初始化除外）时自动把节点平移到视图中心
+  useEffect(() => {
+    const current = highlightedNodeId;
+    const changed = current !== prevHighlightRef.current;
+    prevHighlightRef.current = current;
+    if (!current || !changed) return;
+    // 等一拍让节点坐标刷新，再平滑居中
+    const timer = window.setTimeout(() => centerOnNode(current), 60);
+    return () => window.clearTimeout(timer);
+  }, [highlightedNodeId, centerOnNode]);
 
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
@@ -131,6 +166,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
           g.attr('transform', event.transform);
         });
 
+      zoomBehaviorRef.current = zoom;
       svg.call(zoom);
       svg.on('click', () => {
         onNodeClick({ id: '', name: '', group: '' });

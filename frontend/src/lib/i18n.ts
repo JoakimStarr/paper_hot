@@ -32,8 +32,9 @@ export const translations = {
     // 系统管理页
     systemTab: {
       overview: '概览',
-      crawlerData: '爬虫与数据',
-      aiConfig: 'AI 与接口',
+      crawler: '爬虫',
+      data: '数据',
+      modelConfig: '模型配置',
     },
     sys: {
       appDesc: '发现和理解热门研究论文',
@@ -126,6 +127,18 @@ export const translations = {
       deletedFeatures: '删除特征',
       deletedScores: '删除评分',
       deletedReports: '删除报告',
+      modelConfigTitle: '模型配置',
+      modelConfigDesc: '配置 AI 默认模型，并对 OpenAI 兼容模型进行连接测试',
+      defaultModelLabel: '默认模型',
+      defaultModelHint: '趋势分析、论文分析等 AI 调用未显式指定模型时，优先使用该全局默认模型',
+      setDefault: '设为默认',
+      defaultNone: '未设置（自动选择）',
+      testing: '测试中...',
+      testResultSuccess: '连接成功',
+      testResultFailed: '连接失败',
+      defaultSaved: '默认模型已保存',
+      defaultSaveFailed: '保存默认模型失败',
+      userDefaultModel: '我选择的默认模型',
     },
 
     // 趋势页
@@ -234,6 +247,10 @@ export const translations = {
       followUp: '追问讨论',
       chatPlaceholder: '针对这篇论文提问...',
       loadFailed: '加载论文详情失败',
+      selectModel: '选择分析模型',
+      defaultModel: '默认模型',
+      selectChatModel: '选择对话模型',
+      testLink: '测试连接',
     },
 
     // 通用
@@ -380,8 +397,9 @@ export const translations = {
     // System page
     systemTab: {
       overview: 'Overview',
-      crawlerData: 'Crawler & Data',
-      aiConfig: 'AI & API',
+      crawler: 'Crawler',
+      data: 'Data',
+      modelConfig: 'Model Config',
     },
     sys: {
       appDesc: 'Discover and understand trending research papers',
@@ -474,6 +492,18 @@ export const translations = {
       deletedFeatures: 'Deleted features',
       deletedScores: 'Deleted scores',
       deletedReports: 'Deleted reports',
+      modelConfigTitle: 'Model Config',
+      modelConfigDesc: 'Configure the default AI model and test OpenAI-compatible model links',
+      defaultModelLabel: 'Default Model',
+      defaultModelHint: 'Trend analysis, paper analysis and other AI calls use this global default model when none is specified',
+      setDefault: 'Set Default',
+      defaultNone: 'Not set (auto select)',
+      testing: 'Testing...',
+      testResultSuccess: 'Connection OK',
+      testResultFailed: 'Connection failed',
+      defaultSaved: 'Default model saved',
+      defaultSaveFailed: 'Failed to save default model',
+      userDefaultModel: 'Default model selected',
     },
 
     // Trends page
@@ -582,6 +612,10 @@ export const translations = {
       followUp: 'Follow-up Discussion',
       chatPlaceholder: 'Ask about this paper...',
       loadFailed: 'Failed to load paper details',
+      selectModel: 'Select analysis model',
+      defaultModel: 'Default',
+      selectChatModel: 'Select chat model',
+      testLink: 'Test Link',
     },
 
     // General

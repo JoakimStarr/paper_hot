@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     siliconflow_models: Optional[str] = None
     openai_models: Optional[str] = None
 
+    # 全局默认模型（格式 'provider/model'，如 'zhipu/glm-4'）。未显式指定模型时优先使用它。
+    default_model: Optional[str] = None
+
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
 
     scheduler_enabled: bool = True

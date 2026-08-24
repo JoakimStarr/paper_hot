@@ -58,3 +58,13 @@ htmlcov/
 
 # Trash
 trash/
+
+# 运行时端口/进程记录（由 start.sh 写入并自动清理）
+.runtime_ports
+
+# 运行时数据（爬虫历史/Db/登录态/结果），不入版本库
+backend/data/
+cnki_state.json
+urls.txt
+debug_page1.html
+frontend/tsconfig.tsbuildinfo

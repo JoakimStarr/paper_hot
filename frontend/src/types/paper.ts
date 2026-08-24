@@ -233,6 +233,14 @@ export interface SettingsInfo {
   app_name?: string;
   app_version?: string;
   custom_providers?: CustomProviderStatus[];
+  default_model?: string | null;
+}
+
+export interface ModelLinkTestResult {
+  ok: boolean;
+  model: string;
+  latency_ms?: number;
+  message: string;
 }
 
 export interface CustomProviderStatus {

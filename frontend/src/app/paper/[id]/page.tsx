@@ -3,9 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { papersApi, API_BASE_URL } from '@/lib/api';
+import { papersApi, API_BASE_URL, getLastModel, rememberModel } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -29,6 +29,41 @@ export default function PaperDetailPage() {
   const [streamContent, setStreamContent] = useState('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // —— 模型选择（OpenAI 兼容）——
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; label: string; available: boolean }>>([]);
+  const [analysisModel, setAnalysisModel] = useState('');
+  const [chatModel, setChatModel] = useState('');
+  const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
+  const [showChatModelSelect, setShowChatModelSelect] = useState(false);
+
+  const providerLabel = (provider?: string) => {
+    if (provider === 'zhipu') return '智谱';
+    if (provider === 'siliconflow') return '硅基流动';
+    if (provider === 'openai') return 'OpenAI';
+    return provider || '未知';
+  };
+  const bareModelName = (name: string) => {
+    const slashIndex = name.indexOf('/');
+    return slashIndex >= 0 ? name.slice(slashIndex + 1) : name;
+  };
+
+  useEffect(() => {
+    papersApi.getAIAnalysisModels()
+      .then(res => {
+        const list = res.models.map(m => ({
+          id: m.name,
+          label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
+          available: m.available,
+        }));
+        setAvailableModels(list);
+        const lastAnalysis = getLastModel('paper_analysis');
+        const lastChat = getLastModel('paper_chat');
+        if (lastAnalysis && list.some(m => m.id === lastAnalysis)) setAnalysisModel(lastAnalysis);
+        if (lastChat && list.some(m => m.id === lastChat)) setChatModel(lastChat);
+      })
+      .catch(() => setAvailableModels([]));
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -120,7 +155,7 @@ export default function PaperDetailPage() {
     setChatMessages([]);
     setStreamContent('');
     try {
-      const result = await papersApi.analyzePaper(params.id as string);
+      const result = await papersApi.analyzePaper(params.id as string, analysisModel || undefined);
       if (result.status === "pending") {
         if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
         let attempts = 0;
@@ -174,7 +209,7 @@ export default function PaperDetailPage() {
       const response = await fetch(`${API_BASE_URL}/papers/${paper.id}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: allMessages }),
+        body: JSON.stringify({ messages: allMessages, model: chatModel || undefined }),
       });
 
       if (!response.ok) {
@@ -469,6 +504,37 @@ export default function PaperDetailPage() {
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-primary-600" />
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('pd.aiSection')}</h2>
+            <div className="relative ml-1">
+              <button
+                onClick={() => setShowAnalysisModelSelect(!showAnalysisModelSelect)}
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title={t('pd.selectModel')}
+              >
+                <Brain className="w-3.5 h-3.5" />
+                {availableModels.find(m => m.id === analysisModel)?.label || t('pd.defaultModel')}
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showAnalysisModelSelect && (
+                <div className="absolute left-0 top-8 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
+                  <button
+                    onClick={() => { setAnalysisModel(''); rememberModel('paper_analysis', null); setShowAnalysisModelSelect(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${analysisModel === '' ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                  >
+                    {t('pd.defaultModel')}
+                  </button>
+                  {availableModels.map(model => (
+                    <button
+                      key={model.id}
+                      disabled={!model.available}
+                      onClick={() => { setAnalysisModel(model.id); rememberModel('paper_analysis', model.id); setShowAnalysisModelSelect(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${analysisModel === model.id ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                    >
+                      {model.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           {aiAnalysis && !aiAnalyzing && (
             <button
@@ -522,10 +588,43 @@ export default function PaperDetailPage() {
         {aiAnalysis && !aiAnalyzing && (
           <>
             <div className="border-t mt-6 pt-6">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-                <Bot className="w-4 h-4 text-primary-600" />
-                {t('pd.followUp')}
-              </h3>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-primary-600" />
+                  {t('pd.followUp')}
+                </h3>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowChatModelSelect(!showChatModelSelect)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    title={t('pd.selectChatModel')}
+                  >
+                    <Brain className="w-3.5 h-3.5" />
+                    {availableModels.find(m => m.id === chatModel)?.label || t('pd.defaultModel')}
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                  {showChatModelSelect && (
+                    <div className="absolute right-0 top-8 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
+                      <button
+                        onClick={() => { setChatModel(''); rememberModel('paper_chat', null); setShowChatModelSelect(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${chatModel === '' ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                      >
+                        {t('pd.defaultModel')}
+                      </button>
+                      {availableModels.map(model => (
+                        <button
+                          key={model.id}
+                          disabled={!model.available}
+                          onClick={() => { setChatModel(model.id); rememberModel('paper_chat', model.id); setShowChatModelSelect(false); }}
+                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${chatModel === model.id ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                        >
+                          {model.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <div className="space-y-4 mb-4 max-h-[400px] overflow-y-auto">
                 {chatMessages.map((msg, i) => (

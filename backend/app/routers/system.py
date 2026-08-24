@@ -1,6 +1,9 @@
 """系统设置与健康/统计接口。"""
+import asyncio
+import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -22,9 +25,42 @@ async def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
+class TestModelRequest(BaseModel):
+    model: str  # 'provider/model'
+
+
+@router.post("/settings/test-model")
+async def test_model_link(body: TestModelRequest, token: bool = Depends(verify_token)):
+    """OpenAI 兼容链接测试：向指定模型发送最小请求，验证 base_url/api_key/model 是否可用。"""
+    try:
+        provider, bare_model = ai_trend_service._resolve_model(body.model)
+        client, _used_provider = ai_trend_service.get_client(provider)
+    except KeyError as e:
+        return {"ok": False, "model": body.model, "message": f"Provider 未配置或不可用：{e}"}
+    if not bare_model:
+        return {"ok": False, "model": body.model, "message": "缺少模型名"}
+    start = time.time()
+    try:
+        await asyncio.to_thread(
+            client.chat.completions.create,
+            model=bare_model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=8,
+        )
+        latency_ms = int((time.time() - start) * 1000)
+        return {"ok": True, "model": body.model, "latency_ms": latency_ms,
+                "message": f"连接成功，模型响应正常（{latency_ms}ms）"}
+    except Exception as e:
+        latency_ms = int((time.time() - start) * 1000)
+        logger.warning(f"Model link test failed for {body.model}: {e}")
+        return {"ok": False, "model": body.model, "latency_ms": latency_ms,
+                "message": f"连接失败：{e}"}
+
+
 class UpdateSettingsRequest(BaseModel):
     api_keys: Optional[dict] = None
     model_priority: Optional[List[str]] = None
+    default_model: Optional[str] = None
     ports: Optional[dict] = None
     app_name: Optional[str] = None
     custom_providers: Optional[List[dict]] = None
@@ -87,6 +123,7 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
         "app_name": settings.app_name,
         "app_version": settings.app_version,
         "custom_providers": custom_providers_status,
+        "default_model": settings.default_model,
     }
 
 
@@ -136,6 +173,9 @@ async def update_settings_endpoint(
 
     if body.app_name is not None:
         Settings.update_setting("app_name", body.app_name)
+
+    if body.default_model is not None:
+        Settings.update_setting("default_model", body.default_model)
 
     if body.custom_providers is not None:
         # 保存自定义 provider：api_key 为空时继承已有同名 provider 的 key（支持编辑时保留原 key）

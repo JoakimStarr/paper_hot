@@ -46,7 +46,18 @@ def _resolve_model_provider(model: Optional[str]):
 
 
 def _get_default_model(provider: str) -> Optional[str]:
-    """取该 provider 优先级最高的模型（列表第一位）。"""
+    """取该 provider 的默认模型。
+
+    若设置了全局 default_model（'provider/model'）且属于该 provider，则优先返回它；
+    否则回退到该 provider 优先级列表第一位。
+    """
+    global_default = getattr(settings, "default_model", None)
+    if global_default:
+        provider_part, _, bare = global_default.partition("/")
+        if provider_part and provider_part == provider and bare:
+            models = ai_trend_service.models.get(provider) or []
+            if bare in models:
+                return bare
     models = ai_trend_service.models.get(provider) or []
     return models[0] if models else None
 

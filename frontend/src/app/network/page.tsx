@@ -35,6 +35,7 @@ export default function NetworkPage() {
   const [loading, setLoading] = useState(true);
   const [infoNode, setInfoNode] = useState<NetworkNode | null>(null);
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
+  const [linkedFilter, setLinkedFilter] = useState('');
 
   const fetchData = useCallback(async (tab: TabType) => {
     setLoading(true);
@@ -99,10 +100,12 @@ export default function NetworkPage() {
     if (!node.id) {
       setInfoNode(null);
       setHighlightedNodeId(null);
+      setLinkedFilter('');
       return;
     }
     setInfoNode(node);
     setHighlightedNodeId(node.id);
+    setLinkedFilter('');
   }, []);
 
   const handleConnectedNodeClick = (node: ConnectedNode) => {
@@ -114,6 +117,7 @@ export default function NetworkPage() {
       count: node.group === 'keyword' ? node.count : undefined,
     });
     setHighlightedNodeId(node.id);
+    setLinkedFilter('');
   };
 
   const handleNavigateToNode = (node: ConnectedNode) => {
@@ -130,10 +134,10 @@ export default function NetworkPage() {
     <Layout>
       <div className="mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
-          t('net.title')
+          {t('net.title')}
         </h1>
         <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-          t('net.subtitle')
+          {t('net.subtitle')}
         </p>
       </div>
 
@@ -147,7 +151,7 @@ export default function NetworkPage() {
           }`}
         >
           <Users className="w-4 h-4" />
-          t('net.authors')
+          {t('net.authors')}
         </button>
         <button
           onClick={() => setActiveTab('keywords')}
@@ -158,7 +162,7 @@ export default function NetworkPage() {
           }`}
         >
           <Hash className="w-4 h-4" />
-          t('net.keywords')
+          {t('net.keywords')}
         </button>
       </div>
 
@@ -194,7 +198,7 @@ export default function NetworkPage() {
             </div>
 
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-3 sm:p-4">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">t('net.nodeDetail')</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">{t('net.nodeDetail')}</h3>
               {infoNode ? (
                 <div className="space-y-3 text-sm">
                   <div>
@@ -223,11 +227,24 @@ export default function NetworkPage() {
 
                   {connectedNodes.length > 0 && (
                     <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
-                      <span className="text-gray-400 block text-xs mb-2">
-                        {infoNode.group === 'author' ? t('net.coauthors') : t('net.linkedKeywords')} ({connectedNodes.length})
-                      </span>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-gray-400 block text-xs">
+                          {infoNode.group === 'author' ? t('net.coauthors') : t('net.linkedKeywords')} ({connectedNodes.length})
+                        </span>
+                      </div>
+                      {/* 关联关键词筛选 */}
+                      <input
+                        type="text"
+                        value={linkedFilter}
+                        onChange={e => setLinkedFilter(e.target.value)}
+                        placeholder={`筛选${infoNode.group === 'author' ? '合作作者' : '关联关键词'}...`}
+                        className="w-full mb-2 px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-xs outline-none focus:ring-1 focus:ring-primary-500 bg-gray-50 dark:bg-gray-700/40"
+                      />
                       <div className="space-y-1 max-h-48 sm:max-h-64 overflow-y-auto">
-                        {connectedNodes.map(node => (
+                        {(linkedFilter.trim()
+                          ? connectedNodes.filter(n => n.name.toLowerCase().includes(linkedFilter.trim().toLowerCase()))
+                          : connectedNodes
+                        ).map(node => (
                           <div
                             key={node.id}
                             className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-xs ${
@@ -237,22 +254,27 @@ export default function NetworkPage() {
                             <button
                               onClick={() => handleConnectedNodeClick(node)}
                               className="flex items-center gap-2 flex-1 min-w-0 hover:text-primary-600 transition-colors"
+                              title="点击切换查看该节点"
                             >
                               <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />
                               <span className="text-gray-700 dark:text-gray-300 truncate">{node.name}</span>
                             </button>
                             <button
                               onClick={() => handleNavigateToNode(node)}
-                              className="flex-shrink-0 p-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                              className="flex-shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors"
                               title="查看相关论文"
                             >
-                              <ExternalLink className="w-3 h-3 text-gray-400 hover:text-primary-600" />
+                              <ExternalLink className="w-3 h-3" />
+                              相关论文
                             </button>
                             <span className="text-gray-400 flex-shrink-0">
                               {node.linkValue > 1 ? `${node.linkValue}次` : ''}
                             </span>
                           </div>
                         ))}
+                        {linkedFilter.trim() && connectedNodes.filter(n => n.name.toLowerCase().includes(linkedFilter.trim().toLowerCase())).length === 0 && (
+                          <div className="text-center py-3 text-gray-400 text-xs">未找到匹配的关联节点</div>
+                        )}
                       </div>
                     </div>
                   )}

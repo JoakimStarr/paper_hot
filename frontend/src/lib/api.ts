@@ -1,7 +1,7 @@
 import axios from 'axios';
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult } from '@/types/paper';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -162,8 +162,8 @@ export const papersApi = {
     return response.data;
   },
 
-  analyzePaper: async (paperId: string): Promise<{ analysis: string | null; status: string }> => {
-    const response = await apiClient.post<{ analysis: string | null; status: string }>(`/papers/${paperId}/analyze`);
+  analyzePaper: async (paperId: string, model?: string): Promise<{ analysis: string | null; status: string; model?: string }> => {
+    const response = await apiClient.post<{ analysis: string | null; status: string; model?: string }>(`/papers/${paperId}/analyze`, model ? { model } : {});
     return response.data;
   },
 
@@ -205,8 +205,13 @@ export const papersApi = {
     return response.data;
   },
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> => {
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> => {
     const response = await apiClient.put<{ success: boolean }>('/settings', data);
+    return response.data;
+  },
+
+  testModelLink: async (model: string): Promise<ModelLinkTestResult> => {
+    const response = await apiClient.post<ModelLinkTestResult>('/settings/test-model', { model });
     return response.data;
   },
 
@@ -232,3 +237,28 @@ export const papersApi = {
 };
 
 export { API_BASE_URL };
+
+// —— 记住上次选择的模型（localStorage）——
+const MODEL_MEM_PREFIX = 'pp_last_model:';
+
+/** 读取某场景下上次选择的模型（'provider/model'）。 */
+export function getLastModel(context: string): string | null {
+  try {
+    return localStorage.getItem(MODEL_MEM_PREFIX + context);
+  } catch {
+    return null;
+  }
+}
+
+/** 记录某场景下本次选择的模型；传 null 表示清除。 */
+export function rememberModel(context: string, model: string | null): void {
+  try {
+    if (model) {
+      localStorage.setItem(MODEL_MEM_PREFIX + context, model);
+    } else {
+      localStorage.removeItem(MODEL_MEM_PREFIX + context);
+    }
+  } catch {
+    /* ignore */
+  }
+}

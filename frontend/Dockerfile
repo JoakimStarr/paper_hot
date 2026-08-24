@@ -7,9 +7,12 @@ WORKDIR /app
 
 # 声明构建参数
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api
+# next rewrites 代理目标（构建期烘焙进 standalone，须指向 compose 内的 backend 服务名）
+ARG BACKEND_API_URL=http://backend:8000
 
 # 设置环境变量供构建使用
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV BACKEND_API_URL=$BACKEND_API_URL
 
 # 配置 npm 使用国内镜像
 RUN npm config set registry https://registry.npmmirror.com
@@ -41,11 +44,12 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# 设置环境变量
+# 设置环境变量（运行期同样保留，rewrites 运行时读取到一致值）
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
-    HOSTNAME="0.0.0.0"
+    HOSTNAME="0.0.0.0" \
+    BACKEND_API_URL=http://backend:8000
 
 # 切换到非 root 用户
 USER nextjs

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
-type TabType = 'overview' | 'crawlerData' | 'aiConfig';
+type TabType = 'overview' | 'crawler' | 'data' | 'modelConfig';
 
 export default function SystemPage() {
   const { t } = useLanguage();
@@ -63,6 +63,13 @@ export default function SystemPage() {
   const [customProviderMessage, setCustomProviderMessage] = useState('');
   const [editingProviderName, setEditingProviderName] = useState<string | null>(null);
 
+  // Default model + link test state
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  const [savingDefaultModel, setSavingDefaultModel] = useState(false);
+  const [defaultModelMessage, setDefaultModelMessage] = useState('');
+  const [testingModel, setTestingModel] = useState('');
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms?: number; message: string }>>({});
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -95,6 +102,7 @@ export default function SystemPage() {
       setSettingsInfo(res);
       setModelList([...res.models].sort((a, b) => a.priority - b.priority));
       setSchedulerRunning(res.scheduler.running);
+      setDefaultModel(res.default_model || null);
       if (res.ports) {
         setPorts(res.ports);
       }
@@ -128,10 +136,10 @@ export default function SystemPage() {
   };
 
   useEffect(() => {
-    if (activeTab === 'aiConfig') {
+    if (activeTab === 'modelConfig') {
       fetchSettings();
     }
-    if (activeTab === 'crawlerData') {
+    if (activeTab === 'crawler') {
       fetchSchedulerJobs();
     }
   }, [activeTab]);
@@ -347,6 +355,50 @@ export default function SystemPage() {
     }
   };
 
+  const handleSetDefaultModel = async (model: string) => {
+    setSavingDefaultModel(true);
+    setDefaultModelMessage('');
+    try {
+      await papersApi.updateSettings({ default_model: model });
+      setDefaultModel(model);
+      setDefaultModelMessage(t('sys.defaultSaved'));
+    } catch (error: any) {
+      setDefaultModelMessage(error.response?.data?.detail || t('sys.defaultSaveFailed'));
+    } finally {
+      setSavingDefaultModel(false);
+    }
+  };
+
+  const handleClearDefaultModel = async () => {
+    setSavingDefaultModel(true);
+    setDefaultModelMessage('');
+    try {
+      await papersApi.updateSettings({ default_model: null });
+      setDefaultModel(null);
+      setDefaultModelMessage(t('sys.defaultSaved'));
+    } catch (error: any) {
+      setDefaultModelMessage(error.response?.data?.detail || t('sys.defaultSaveFailed'));
+    } finally {
+      setSavingDefaultModel(false);
+    }
+  };
+
+  const handleTestModelLink = async (model: string) => {
+    setTestingModel(model);
+    setTestResults(prev => ({ ...prev, [model]: prev[model] || { ok: false, message: '' } }));
+    try {
+      const res = await papersApi.testModelLink(model);
+      setTestResults(prev => ({ ...prev, [model]: res }));
+    } catch (error: any) {
+      setTestResults(prev => ({
+        ...prev,
+        [model]: { ok: false, message: error.response?.data?.detail || error.message || '测试失败' },
+      }));
+    } finally {
+      setTestingModel('');
+    }
+  };
+
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
     const safeStr = (/[Zz]$/.test(dateStr) || /[+\-]\d{2}:\d{2}$/.test(dateStr)) ? dateStr : dateStr + 'Z';
@@ -374,8 +426,9 @@ export default function SystemPage() {
 
   const tabs: { key: TabType; label: string; icon: React.ReactNode }[] = [
     { key: 'overview', label: t('systemTab.overview'), icon: <Activity className="w-4 h-4" /> },
-    { key: 'crawlerData', label: t('systemTab.crawlerData'), icon: <Database className="w-4 h-4" /> },
-    { key: 'aiConfig', label: t('systemTab.aiConfig'), icon: <Brain className="w-4 h-4" /> },
+    { key: 'crawler', label: t('systemTab.crawler'), icon: <Settings className="w-4 h-4" /> },
+    { key: 'data', label: t('systemTab.data'), icon: <Database className="w-4 h-4" /> },
+    { key: 'modelConfig', label: t('systemTab.modelConfig'), icon: <Brain className="w-4 h-4" /> },
   ];
 
   const renderOverview = () => (
@@ -1032,6 +1085,106 @@ export default function SystemPage() {
     );
   };
 
+  const renderModelConfig = () => (
+    <div className="space-y-6">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Brain className="w-6 h-6 text-purple-600" />
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('sys.modelConfigTitle')}</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('sys.modelConfigDesc')}</p>
+          </div>
+        </div>
+
+        {/* 当前默认模型 */}
+        <div className="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-100 dark:border-purple-800 rounded-lg">
+          <div className="text-xs text-purple-600 dark:text-purple-400 mb-1">{t('sys.defaultModelLabel')}</div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">
+              {defaultModel ? (
+                <>
+                  {defaultModel}
+                  <span className="ml-2 text-xs font-normal text-purple-600 dark:text-purple-400">{t('sys.userDefaultModel')}</span>
+                </>
+              ) : (
+                <span className="text-gray-400">{t('sys.defaultNone')}</span>
+              )}
+            </span>
+            {defaultModel && (
+              <button
+                onClick={handleClearDefaultModel}
+                disabled={savingDefaultModel}
+                className="text-xs text-gray-500 dark:text-gray-400 hover:text-red-500 disabled:opacity-50"
+              >
+                <X className="w-3.5 h-3.5 inline mr-1" />清除
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">{t('sys.defaultModelHint')}</p>
+          {defaultModelMessage && (
+            <div className={`mt-2 text-xs ${defaultModelMessage.includes('失败') ? 'text-red-500' : 'text-green-600'}`}>
+              {defaultModelMessage}
+            </div>
+          )}
+        </div>
+
+        {/* 模型列表：设为默认 + 测试连接 */}
+        <div className="space-y-2">
+          {modelList.length === 0 ? (
+            <p className="text-sm text-gray-400 py-4">{t('sys.noModels')}</p>
+          ) : (
+            modelList.map((model) => {
+              const test = testResults[model.name];
+              const isDefault = defaultModel === model.name;
+              return (
+                <div key={model.name} className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg px-4 py-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">{model.name}</span>
+                    {model.available ? (
+                      <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle className="w-3.5 h-3.5" />{t('sys.available')}</span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-red-500"><XCircle className="w-3.5 h-3.5" />{t('sys.unavailable')}</span>
+                    )}
+                    {isDefault && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{t('sys.defaultModelLabel')}</span>
+                    )}
+                    {test && (
+                      <span className={`flex items-center gap-1 text-xs ${test.ok ? 'text-green-600' : 'text-red-500'}`}>
+                        {test.ok ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                        {test.ok ? `${t('sys.testResultSuccess')}${test.latency_ms != null ? ` ${test.latency_ms}ms` : ''}` : `${t('sys.testResultFailed')}: ${test.message}`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleTestModelLink(model.name)}
+                      disabled={testingModel !== ''}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                      title={t('pd.testLink')}
+                    >
+                      {testingModel === model.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                      {t('pd.testLink')}
+                    </button>
+                    {!isDefault && (
+                      <button
+                        onClick={() => handleSetDefaultModel(model.name)}
+                        disabled={savingDefaultModel}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                      >
+                        <Save className="w-3 h-3" />
+                        {t('sys.setDefault')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   const renderModels = () => (
     <div className="space-y-6">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
@@ -1219,17 +1372,15 @@ export default function SystemPage() {
     switch (activeTab) {
       case 'overview':
         return renderOverview();
-      case 'crawlerData':
-        return (
-          <>
-            {renderCrawler()}
-            {renderMaintenance()}
-          </>
-        );
-      case 'aiConfig':
+      case 'crawler':
+        return renderCrawler();
+      case 'data':
+        return renderMaintenance();
+      case 'modelConfig':
         return (
           <>
             {renderApiConfig()}
+            {renderModelConfig()}
             {renderModels()}
           </>
         );

@@ -234,6 +234,11 @@ class AITrendService:
             return result
 
         last_error = None
+        # 优先尝试全局默认模型（'provider/model'），失败后回退到普通优先级顺序
+        default_model_used = await self._try_default_model(analysis_data, start_time)
+        if default_model_used:
+            return default_model_used
+
         for provider in self.provider_order():
             if provider not in self.clients:
                 continue
@@ -276,6 +281,41 @@ class AITrendService:
                 )
                 await asyncio.sleep(1 * (attempt + 1))
         return None
+
+    async def _try_default_model(
+        self,
+        analysis_data: Dict[str, Any],
+        start_time: float,
+    ) -> Optional[Dict[str, Any]]:
+        """按全局 default_model（'provider/model'）尝试分析；未设置或不可用/失败时返回 None。"""
+        full = settings.default_model
+        if not full:
+            return None
+        try:
+            provider, bare_model = self._resolve_model(full)
+        except Exception:
+            return None
+        if not provider or provider not in self.clients:
+            logger.warning(f"default_model '{full}' has no available provider, skipping")
+            return None
+        if bare_model not in self.models.get(provider, []) and not self._model_exists(full):
+            logger.warning(f"default_model '{full}' not in known model list, skipping")
+            return None
+        result = await self._run_with_model(provider, bare_model, analysis_data)
+        if result:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            result["processing_time_ms"] = elapsed_ms
+            result["model"] = f"{provider}/{bare_model}"
+            logger.info(f"AI analysis completed with default_model {provider}/{bare_model}, "
+                        f"tokens={result.get('tokens_used', 0)}, time={elapsed_ms}ms")
+            return result
+        return None
+
+    def _model_exists(self, full_model: str) -> bool:
+        """判断某完整模型名（provider/model）是否已被配置（内置或自定义 provider 的模型列表）。"""
+        return any(full_model in self.models.get(name, []) or
+                   full_model.startswith(f"{name}/") and full_model[len(name) + 1:] in self.models.get(name, [])
+                   for name in self.provider_order())
 
     async def _call_model(
         self,

@@ -176,8 +176,17 @@ async def get_trending_topics(
 CACHE_TTL_HOURS = 6
 
 
+class AnalyzePaperRequest(BaseModel):
+    model: Optional[str] = None  # 'provider/model'；为空则用默认模型
+
+
 @router.post("/papers/{paper_id}/analyze")
-async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+async def analyze_paper(
+    paper_id: str,
+    body: Optional[AnalyzePaperRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
@@ -189,28 +198,42 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db), token
     authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
+    journal_issue = paper.journal_issue or ""
+    subfield = paper.economics_subfield or "未知"
 
+    system_prompt = (
+        "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
+        "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
+    )
     prompt = f"""请从学术角度分析以下论文：
 
-标题：{paper.title}
-作者：{authors}
-期刊：{journal}
-关键词：{keywords}
-摘要：{paper.abstract or '无'}
+- 标题：{paper.title}
+- 作者：{authors}
+- 期刊：{journal} {journal_issue}
+- 学科子领域：{subfield}
+- 关键词：{keywords}
 
-请从以下方面进行分析：
-1. 研究背景与核心问题
-2. 研究方法与创新点
-3. 主要发现与结论
-4. 研究意义与局限性
+摘要：
+{paper.abstract or '无'}
 
-请用中文回答，结构清晰。"""
+请从以下方面进行分析，用中文作答：
+1. **研究背景与核心问题**：论文试图解决什么问题，为什么重要
+2. **研究方法与创新点**：采用什么方法，创新之处在哪里
+3. **主要发现与结论**：核心结论与证据链条
+4. **研究意义与局限性**：对学术与实践的意义，以及存在的不足
+
+要求：结构清晰，观点明确；基于给出的论文信息作答，不要臆造未提供的内容。"""
 
     try:
-        client, provider = _get_ai_client()
+        if body and body.model:
+            provider, bare_model = _resolve_model_provider(body.model)
+            client, provider = _get_ai_client(provider)
+            model = bare_model
+        else:
+            client, provider = _get_ai_client()
+            model = _get_default_model(provider)
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
-    model = _get_default_model(provider)
 
     analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
     await db.commit()
@@ -219,8 +242,12 @@ async def analyze_paper(paper_id: str, db: AsyncSession = Depends(get_db), token
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=2048,
+            temperature=0.4,
         )
         analysis_text = response.choices[0].message.content
         await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
@@ -270,15 +297,23 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
 
-    system_prompt = f"""你是一个学术论文分析助手。以下是当前讨论的论文信息：
+    system_prompt = f"""你是一位学术论文分析助手，正在与用户围绕一篇论文进行多轮对话。以下是当前讨论的论文信息：
 
-标题：{paper.title}
-作者：{authors}
-期刊：{journal}
-关键词：{keywords}
-摘要：{paper.abstract or '无'}
+## 论文信息
+- 标题：{paper.title}
+- 作者：{authors}
+- 期刊：{journal}
+- 关键词：{keywords}
+- 子领域：{paper.economics_subfield or '未知'}
 
-请基于以上论文信息回答用户的问题，如果问题超出论文范围，请诚实说明。用中文回答。"""
+## 摘要
+{paper.abstract or '无'}
+
+## 对话规则
+1. 基于以上论文信息回答用户问题，用中文，回答做到结构清晰、有针对性。
+2. 可结合论文信息展开分析，但不要臆造论文中不存在的数据或内容。
+3. 若问题超出论文范围，先诚实说明，再基于你的专业知识给出合理建议。
+4. 这是多轮对话，请注意结合上下文保持回答连贯，不要自相矛盾。"""
 
     messages = [{"role": "system", "content": system_prompt}] + body.messages
 

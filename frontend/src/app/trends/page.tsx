@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from '@/components/Layout';
 import TrendChart from '@/components/TrendChart';
-import { papersApi } from '@/lib/api';
-import { API_BASE_URL } from '@/lib/api';
+import { papersApi, getLastModel, rememberModel, API_BASE_URL } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -97,12 +96,18 @@ export default function TrendsPage() {
   useEffect(() => {
     papersApi.getAIAnalysisModels()
       .then(res => {
-        setAvailableModels(res.models.map(m => ({
+        const list = res.models.map(m => ({
           id: m.name,
           label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
           provider: m.provider,
           available: m.available,
-        })));
+        }));
+        setAvailableModels(list);
+        // 恢复上次选择的模型（若仍可用）
+        const lastAnalysis = getLastModel('trends_analysis');
+        const lastChat = getLastModel('trends_chat');
+        if (lastAnalysis && list.some(m => m.id === lastAnalysis)) setAnalysisModel(lastAnalysis);
+        if (lastChat && list.some(m => m.id === lastChat)) setSelectedModel(lastChat);
       })
       .catch(() => setAvailableModels([]));
   }, []);
@@ -662,7 +667,7 @@ export default function TrendsPage() {
                   {showAnalysisModelSelect && (
                     <div className="absolute right-0 top-9 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
                       <button
-                        onClick={() => { setAnalysisModel(''); setShowAnalysisModelSelect(false); }}
+                        onClick={() => { setAnalysisModel(''); rememberModel('trends_analysis', null); setShowAnalysisModelSelect(false); }}
                         className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${analysisModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
                       >
                         {t('tr.defaultModelAutoSelect')}
@@ -671,7 +676,7 @@ export default function TrendsPage() {
                         <button
                           key={model.id}
                           disabled={!model.available}
-                          onClick={() => { setAnalysisModel(model.id); setShowAnalysisModelSelect(false); }}
+                          onClick={() => { setAnalysisModel(model.id); rememberModel('trends_analysis', model.id); setShowAnalysisModelSelect(false); }}
                           className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${analysisModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
                         >
                           {model.label}
@@ -887,7 +892,7 @@ export default function TrendsPage() {
                         {showModelSelect && (
                           <div className="absolute right-0 top-8 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[180px] max-h-64 overflow-y-auto">
                             <button
-                              onClick={() => { setSelectedModel(''); setShowModelSelect(false); }}
+                              onClick={() => { setSelectedModel(''); rememberModel('trends_chat', null); setShowModelSelect(false); }}
                               className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${selectedModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
                             >
                               {t('tr.defaultModel')}
@@ -896,7 +901,7 @@ export default function TrendsPage() {
                               <button
                                 key={model.id}
                                 disabled={!model.available}
-                                onClick={() => { setSelectedModel(model.id); setShowModelSelect(false); }}
+                                onClick={() => { setSelectedModel(model.id); rememberModel('trends_chat', model.id); setShowModelSelect(false); }}
                                 className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${selectedModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
                               >
                                 {model.label}

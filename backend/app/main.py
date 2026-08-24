@@ -110,6 +110,8 @@ if _frontend_origin not in _cors_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # 放行任意 localhost/127.0.0.1 端口（start.sh 端口被占用时前端可能随机换端口）
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
