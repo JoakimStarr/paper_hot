@@ -50,9 +50,11 @@ usage() {
     echo "  ./start.sh restart"
     echo ""
     echo "端口说明："
-    echo "  默认后端 8000、前端 3000（backend/.env 可改）。若端口被占用，会按 +1 逐级顺延"
-    echo "  找到第一个空闲端口（如 3000 被占用则尝试 3001、3002...）。前端通过 next rewrites"
-    echo "  在运行时把 /api 代理到后端实际端口，因此后端端口变化无需重建前端。"
+    echo "  默认后端 8000、前端 3000（backend/.env 可改）。若端口被占用，启动时会先展示"
+    echo "  占用进程并询问处理方式：[k] kill 占用进程继续使用，[n] 顺延 +1 使用新端口"
+    echo "  （3000 被占用则尝试 3001、3002...），[q] 退出。可用 PORT_CONFLICT=kill|shift"
+    echo "  预置选择（非交互环境默认自动顺延）。前端通过 next rewrites 在运行时把 /api"
+    echo "  代理到后端实际端口，因此后端端口变化无需重建前端。"
 }
 
 # ───────────────────────── 停止服务 ─────────────────────────
@@ -226,13 +228,97 @@ port_in_use() {
     lsof -t -i:"$1" >/dev/null 2>&1
 }
 
+# 交互式处理端口冲突：让用户决定 kill 占用进程、顺延新端口或退出
+# 返回值：0 = 端口已释放可继续使用；1 = 放弃启动；2 = 顺延下一个端口
+# 可用 PORT_CONFLICT=kill|shift 预置选择；无终端（非交互环境）时默认顺延
+handle_port_conflict() {
+    local port="$1" name="$2"
+    local choice pid_list pid_display
+    local conflict_mode="${PORT_CONFLICT:-ask}"
+
+    # 每行一个 PID（不转成空格分隔，避免 zsh/bash 对未加引号变量分词行为不一致）
+    pid_list=$(lsof -t -i:"$port" 2>/dev/null)
+    pid_display=$(echo "$pid_list" | tr '\n' ' ')
+
+    echo "" >&2
+    echo -e "${YELLOW}⚠️  ${name} 端口 ${port} 已被占用${NC}" >&2
+    lsof -i:"$port" 2>/dev/null | tail -n +2 | sed 's/^/     /' >&2
+
+    case "$conflict_mode" in
+        kill)
+            choice="k" ;;
+        shift|new)
+            choice="n" ;;
+        *)
+            if [ ! -t 0 ]; then
+                echo -e "${YELLOW}   非交互环境（无终端），默认顺延新端口；可用 PORT_CONFLICT=kill|shift 预设行为${NC}" >&2
+                choice="n"
+            else
+                while true; do
+                    echo "" >&2
+                    echo "   请选择处理方式：" >&2
+                    echo "     [k] kill 占用进程，继续使用该端口" >&2
+                    echo "     [n] 顺延使用新端口（+1 递增）" >&2
+                    echo "     [q] 退出启动" >&2
+                    read -r -p "   请输入 [k/n/q]: " choice
+                    case "$choice" in
+                        [kKnNqQ]) break ;;
+                        *) echo -e "${RED}   无效输入，请输入 k / n / q${NC}" >&2 ;;
+                    esac
+                done
+                choice=$(echo "$choice" | tr 'A-Z' 'a-z')
+            fi
+            ;;
+    esac
+
+    case "$choice" in
+        k)
+            echo -e "   Killing process(es) on port $port: ${pid_display:-无}" >&2
+            # 先优雅终止，未成功再强制
+            for pid in $pid_list; do
+                kill "$pid" 2>/dev/null || true
+            done
+            sleep 1
+            for pid in $pid_list; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+            done
+            if port_in_use "$port"; then
+                echo -e "${RED}Error: ${name} 端口 ${port} 的占用进程无法终止${NC}" >&2
+                return 1
+            fi
+            echo -e "${GREEN}   端口 ${port} 已释放${NC}" >&2
+            return 0
+            ;;
+        n)
+            return 2
+            ;;
+        q)
+            echo -e "${RED}Aborted by user${NC}" >&2
+            return 1
+            ;;
+    esac
+}
+
 # 从基础端口开始 +1 +1 递增，返回第一个空闲端口（可预期、有规律，替代随机分配）
+# 基础端口被占用时优先询问用户（见 handle_port_conflict），之后顺延过程保持静默递增
 next_free_port() {
     local base="$1" name="$2"
     local port="$base"
     local n="${PORT_MAX_TRIES:-100}"
     local i=0
     while port_in_use "$port"; do
+        if [ "$port" -eq "$base" ]; then
+            handle_port_conflict "$port" "$name"
+            local rc=$?
+            [ "$rc" -eq 1 ] && return 1
+            if [ "$rc" -eq 2 ]; then
+                port=$((port + 1))
+                i=$((i + 1))
+            fi
+            continue
+        fi
         port=$((port + 1))
         i=$((i + 1))
         if [ "$i" -ge "$n" ]; then
