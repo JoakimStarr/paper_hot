@@ -48,9 +48,10 @@ usage() {
 # ───────────────────────── 停止服务 ─────────────────────────
 stop_services() {
     echo "🛑 Stopping ApplePaper..."
+    load_ports
 
-    # 后端：占用 8000 端口的进程
-    PORT_PID=$(lsof -t -i:8000 2>/dev/null || true)
+    # 后端：占用 BACKEND_PORT 的进程
+    PORT_PID=$(lsof -t -i:$BACKEND_PORT 2>/dev/null || true)
     if [ -n "$PORT_PID" ]; then
         kill -9 $PORT_PID 2>/dev/null || true
         echo "   Backend stopped (PID: $PORT_PID)"
@@ -70,8 +71,8 @@ stop_services() {
         echo "   No frontend process found"
     fi
 
-    # 兜底：占用 3000 端口的进程
-    PORT3000_PID=$(lsof -t -i:3000 2>/dev/null || true)
+    # 兜底：占用 FRONTEND_PORT 的进程
+    PORT3000_PID=$(lsof -t -i:$FRONTEND_PORT 2>/dev/null || true)
     if [ -n "$PORT3000_PID" ]; then
         kill -9 $PORT3000_PID 2>/dev/null || true
         echo "   Stray process on port 3000 stopped (PID: $PORT3000_PID)"
@@ -84,16 +85,17 @@ stop_services() {
 # ───────────────────────── 查看状态 ─────────────────────────
 status_services() {
     echo "📊 ApplePaper service status:"
+    load_ports
     echo ""
-    if lsof -t -i:8000 >/dev/null 2>&1; then
-        echo -e "   Backend  (port 8000): ${GREEN}RUNNING${NC} (PID: $(lsof -t -i:8000 | tr '\n' ' '))"
+    if lsof -t -i:$BACKEND_PORT >/dev/null 2>&1; then
+        echo -e "   Backend  (port $BACKEND_PORT): ${GREEN}RUNNING${NC} (PID: $(lsof -t -i:$BACKEND_PORT | tr '\n' ' '))"
     else
-        echo -e "   Backend  (port 8000): ${RED}STOPPED${NC}"
+        echo -e "   Backend  (port $BACKEND_PORT): ${RED}STOPPED${NC}"
     fi
-    if lsof -t -i:3000 >/dev/null 2>&1; then
-        echo -e "   Frontend (port 3000): ${GREEN}RUNNING${NC} (PID: $(lsof -t -i:3000 | tr '\n' ' '))"
+    if lsof -t -i:$FRONTEND_PORT >/dev/null 2>&1; then
+        echo -e "   Frontend (port $FRONTEND_PORT): ${GREEN}RUNNING${NC} (PID: $(lsof -t -i:$FRONTEND_PORT | tr '\n' ' '))"
     else
-        echo -e "   Frontend (port 3000): ${RED}STOPPED${NC}"
+        echo -e "   Frontend (port $FRONTEND_PORT): ${RED}STOPPED${NC}"
     fi
 }
 
@@ -187,6 +189,7 @@ load_ports() {
     BACKEND_PORT=${BACKEND_PORT:-8000}
     FRONTEND_PORT=${FRONTEND_PORT:-3000}
     export NEXT_PUBLIC_API_URL="http://localhost:${BACKEND_PORT}/api"
+    export BACKEND_API_URL="http://localhost:${BACKEND_PORT}"
 }
 
 print_urls() {
@@ -208,7 +211,7 @@ print_urls() {
 health_check() {
     # 检查是否正常运行
     sleep 1
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    if curl -s http://localhost:${BACKEND_PORT}/health > /dev/null 2>&1; then
         echo "✅ Backend health check passed"
     else
         echo "⚠️  Backend health check failed, check backend/backend.log"
