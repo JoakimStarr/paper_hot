@@ -6,7 +6,8 @@ FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:20-alpine AS builde
 WORKDIR /app
 
 # 声明构建参数
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api
+# 前端 API 走同源 /api（由 next rewrites 在运行时代理到后端），部署时浏览器不会直接连 localhost
+ARG NEXT_PUBLIC_API_URL=/api
 # next rewrites 代理目标（构建期烘焙进 standalone，须指向 compose 内的 backend 服务名）
 ARG BACKEND_API_URL=http://backend:8000
 

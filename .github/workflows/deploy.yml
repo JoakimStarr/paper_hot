@@ -44,6 +44,9 @@ jobs:
           context: .
           file: frontend/Dockerfile
           push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+            BACKEND_API_URL=http://backend:8000
           tags: |
             crpi-3fswqinlrhpn1djk.cn-beijing.personal.cr.aliyuncs.com/docker-miskies/paper_hot:frontend-latest
             crpi-3fswqinlrhpn1djk.cn-beijing.personal.cr.aliyuncs.com/docker-miskies/paper_hot:frontend-${{ github.sha }}
