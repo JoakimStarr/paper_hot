@@ -3,11 +3,24 @@ import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResp
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
 
+// 可选 API Token：若后端配置了 api_token，前端需在同一处注入才能通过鉴权。
+// 不配置时（NEXT_PUBLIC_API_TOKEN 为空/未设置）行为与之前一致——后端未设 token 时默认放行。
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || '';
+
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// 统一注入 x-api-token：所有走 apiClient 的请求（含 /chat、/analyze、/chats 的写操作）自动携带
+apiClient.interceptors.request.use((config) => {
+  if (API_TOKEN) {
+    config.headers = config.headers || {};
+    config.headers['x-api-token'] = API_TOKEN;
+  }
+  return config;
 });
 
 export interface FilterStatistics {
@@ -261,4 +274,110 @@ export function rememberModel(context: string, model: string | null): void {
   } catch {
     /* ignore */
   }
+}
+
+// —— 统一的 SSE 流式对话封装 ——
+// 原先 trends/paper 页用裸 fetch 调 /chat，既不经过 apiClient 注入 token，又各自重复解析 SSE。
+// 这里收敛为单一实现，随后端 _stream_chat_response 的 SSE 数据格式对齐：
+//   data: {"content": "..."} | {"reasoning": "..."} | {"done": true}
+export interface ChatStreamCallbacks {
+  onContent: (text: string) => void;        // 累积全文内容
+  onReasoning?: (text: string) => void;     // 累积思考内容（可选，调用方不关心思考时可不传）
+  onDone: (fullContent: string) => void;    // 流结束，传完整正文
+  onError: (message: string) => void;
+}
+
+/** 通过 fetch + 手动读流发起对话，注入与 apiClient 相同的 x-api-token（保持鉴权一致）。 */
+export async function streamChat(
+  url: string,
+  messages: Array<{ role: string; content: string }>,
+  model: string | undefined,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${url}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ messages, ...(model ? { model } : {}) }),
+      signal,
+    });
+  } catch (e: any) {
+    if (e.name === 'AbortError') return;
+    cb.onError(e.message || 'Request failed');
+    return;
+  }
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Request failed' }));
+    cb.onError(err.detail || 'Request failed');
+    return;
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullContent = '';
+  let fullReasoning = '';
+  let done = false;
+
+  try {
+    while (!done) {
+      const { done: readerDone, value } = await reader.read();
+      if (readerDone) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.done) {
+            done = true;
+            cb.onDone(fullContent);
+            break;
+          } else if (data.reasoning) {
+            fullReasoning += data.reasoning;
+            if (cb.onReasoning) cb.onReasoning(fullReasoning);
+          } else if (data.content) {
+            fullContent += data.content;
+            cb.onContent(fullContent);
+          }
+        } catch {
+          /* 忽略单条解析失败 */
+        }
+      }
+    }
+    if (!done) cb.onDone(fullContent);
+  } catch (e: any) {
+    if (e.name !== 'AbortError') cb.onError(e.message || 'Stream read failed');
+  }
+}
+
+/** 趋势报告选题对话（SSE 流式，带 token）。 */
+export function streamTrendChat(
+  reportId: number,
+  messages: Array<{ role: string; content: string }>,
+  model: string | undefined,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamChat(`/ai-analysis/reports/${reportId}/chat`, messages, model, cb, signal);
+}
+
+/** 单篇论文多轮对话（SSE 流式，带 token）。 */
+export function streamPaperChat(
+  paperId: string,
+  messages: Array<{ role: string; content: string }>,
+  model: string | undefined,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamChat(`/papers/${paperId}/chat`, messages, model, cb, signal);
 }

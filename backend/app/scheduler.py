@@ -9,20 +9,8 @@ from app.config import settings
 import uuid
 import asyncio
 
-from app.fetchers import (
-    ArxivFetcher,
-    GuanliShijieFetcher,
-    JingjiYanjiuFetcher,
-    JingjixueJikanFetcher,
-    ShijieJingjiFetcher,
-    ZhongguoGongyeJingjiFetcher,
-    AmericanEconomicReviewFetcher
-)
-from app.fetchers_cnki import (
-    CNKIDrissionFetcher,
-    CNKITop50BatchFetcher,
-    CNKI_TOP50_JOURNALS
-)
+# 注意：爬虫模块（app.fetchers / app.fetchers_cnki）依赖 DrissionPage、bs4 等重型依赖，
+# 仅在爬虫功能真正被调用时惰性导入，避免轻量化服务器（不装爬虫依赖）启动失败。
 from app.crud import PaperCRUD, CrawlLogCRUD
 from app.ai_processor import AIProcessor
 from app.scoring import ScoringSystem
@@ -35,26 +23,59 @@ logger = logging.getLogger(__name__)
 class PaperScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
-        self.arxiv_fetcher = ArxivFetcher()
         self.ai_processor = AIProcessor()
         self.scoring_system = ScoringSystem()
-        
-        # 所有已实现真实爬取的期刊
-        self.economics_fetchers = {
-            "管理世界": GuanliShijieFetcher(),
-            "经济研究": JingjiYanjiuFetcher(),
-            "经济学季刊": JingjixueJikanFetcher(),
-            "世界经济": ShijieJingjiFetcher(),
-            "中国工业经济": ZhongguoGongyeJingjiFetcher(),
-            "American Economic Review": AmericanEconomicReviewFetcher(),
-        }
-        
-        # CNKI DrissionPage 爬虫（用于爬取知网期刊）
-        self.cnki_batch_fetcher = CNKITop50BatchFetcher(headless=settings.cnki_headless)
-        
+
+        # 爬虫 fetcher（arxiv / 经济学期刊 / CNKI）仅在对应任务执行时惰性创建，
+        # 见 _get_arxiv_fetcher / _get_economics_fetchers / _get_cnki_batch_fetcher。
+        # 这样不装爬虫依赖的轻量化服务器也能正常启动，仅在触发爬虫任务时报错提示。
+
         self.active_crawl_tasks: Dict[str, Dict[str, Any]] = {}
         self._background_tasks = set()  # 持有 create_task 引用，防止被 GC 中途回收
-    
+        self._arxiv_fetcher_cache = None
+        self._economics_fetchers_cache = None
+        self._cnki_batch_fetcher_cache = None
+
+    def _get_arxiv_fetcher(self):
+        """惰性创建 arXiv fetcher（依赖 arxiv 库）并缓存。"""
+        if self._arxiv_fetcher_cache is None:
+            from app.fetchers import ArxivFetcher
+            self._arxiv_fetcher_cache = ArxivFetcher()
+        return self._arxiv_fetcher_cache
+
+    def _get_economics_fetchers(self):
+        """惰性构建经济学期刊 fetcher 字典（依赖 bs4/requests）并缓存。"""
+        if self._economics_fetchers_cache is None:
+            from app.fetchers import (
+                GuanliShijieFetcher,
+                JingjiYanjiuFetcher,
+                JingjixueJikanFetcher,
+                ShijieJingjiFetcher,
+                ZhongguoGongyeJingjiFetcher,
+                AmericanEconomicReviewFetcher,
+            )
+            self._economics_fetchers_cache = {
+                "管理世界": GuanliShijieFetcher(),
+                "经济研究": JingjiYanjiuFetcher(),
+                "经济学季刊": JingjixueJikanFetcher(),
+                "世界经济": ShijieJingjiFetcher(),
+                "中国工业经济": ZhongguoGongyeJingjiFetcher(),
+                "American Economic Review": AmericanEconomicReviewFetcher(),
+            }
+        return self._economics_fetchers_cache
+
+    def _get_cnki_batch_fetcher(self):
+        """惰性创建 CNKI DrissionPage fetcher（依赖 DrissionPage）并缓存。"""
+        if self._cnki_batch_fetcher_cache is None:
+            from app.fetchers_cnki import CNKITop50BatchFetcher
+            self._cnki_batch_fetcher_cache = CNKITop50BatchFetcher(headless=settings.cnki_headless)
+        return self._cnki_batch_fetcher_cache
+
+    def _get_cnki_journals(self):
+        """惰性返回 CNKI Top50 期刊配置常量（依赖 DrissionPage，仅爬虫功能触发）。"""
+        from app.fetchers_cnki import CNKI_TOP50_JOURNALS
+        return CNKI_TOP50_JOURNALS
+
     def start(self):
         self.scheduler.add_job(
             self.fetch_and_process_papers,
@@ -117,7 +138,7 @@ class PaperScheduler:
         logger.info("Starting paper fetch and process job")
         
         try:
-            papers_data = await self.arxiv_fetcher.fetch_papers(days_back=1, max_results=50)
+            papers_data = await self._get_arxiv_fetcher().fetch_papers(days_back=1, max_results=50)
             
             async with AsyncSessionLocal() as db:
                 keyword_frequencies = await PaperCRUD.get_keyword_frequencies(db, days_back=7)
@@ -196,11 +217,11 @@ class PaperScheduler:
     async def fetch_and_process_economics_journals(self, journal_names: Optional[List[str]] = None):
         logger.info("Starting economics journals fetch job")
         
-        fetchers_to_use = self.economics_fetchers
+        fetchers_to_use = self._get_economics_fetchers()
         if journal_names:
             fetchers_to_use = {
                 name: fetcher 
-                for name, fetcher in self.economics_fetchers.items() 
+                for name, fetcher in fetchers_to_use.items() 
                 if name in journal_names
             }
         
@@ -537,14 +558,15 @@ class PaperScheduler:
             # 如果指定了期刊列表，过滤配置
             journals_to_fetch = None
             if journal_names:
+                cnki_journals = self._get_cnki_journals()
                 journals_to_fetch = {
-                    name: CNKI_TOP50_JOURNALS[name]
+                    name: cnki_journals[name]
                     for name in journal_names
-                    if name in CNKI_TOP50_JOURNALS
+                    if name in cnki_journals
                 }
             
             # 执行批量爬取
-            results = await self.cnki_batch_fetcher.fetch_all_journals(
+            results = await self._get_cnki_batch_fetcher().fetch_all_journals(
                 start_date=datetime(2025, 1, 1),
                 end_date=datetime.now(),
                 max_results_per_journal=max_results_per_journal,

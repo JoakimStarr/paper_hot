@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { papersApi, API_BASE_URL, getLastModel, rememberModel } from '@/lib/api';
+import { papersApi, getLastModel, rememberModel, streamPaperChat } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
@@ -206,51 +206,22 @@ export default function PaperDetailPage() {
     setStreamContent('');
 
     try {
-      const response = await fetch(`${API_BASE_URL}/papers/${paper.id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: allMessages, model: chatModel || undefined }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Request failed' }));
-        setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${err.detail}` }]);
-        setChatStreaming(false);
-        return;
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.done) {
-                setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
-                setStreamContent('');
-                papersApi.saveChats(paper.id, [
-                  userMsg,
-                  { role: 'assistant', content: fullContent }
-                ]).catch(() => {});
-              } else if (data.content) {
-                fullContent += data.content;
-                setStreamContent(fullContent);
-              }
-            } catch {}
+      await streamPaperChat(paper.id, allMessages, chatModel || undefined, {
+        onContent: (text) => setStreamContent(text),
+        onDone: (fullContent) => {
+          if (fullContent) {
+            setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
+            papersApi.saveChats(paper.id, [
+              userMsg,
+              { role: 'assistant', content: fullContent }
+            ]).catch(() => {});
           }
-        }
-      }
+          setStreamContent('');
+        },
+        onError: (message) => {
+          setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${message}` }]);
+        },
+      });
     } catch (e: any) {
       setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${e.message}` }]);
     } finally {

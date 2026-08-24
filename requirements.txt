@@ -1,24 +1,4 @@
-# ================= 知网爬虫依赖 =================
-# 一行安装必需项：pip install -r requirements.txt
-# 首次还需准备浏览器内核：playwright install chromium
-
-# ---- 必需：爬虫核心 ----
-playwright
-beautifulsoup4
-
-# ---- 必需：抓详情入库（后端 SQLAlchemy + SQLite）----
-sqlalchemy[asyncio]
-aiosqlite
-
-# ---- 可选：验证码自动解决（滑块/点选识别）----
-# 不装则回退为"提示手动验证"。取消注释安装即可启用。
-ddddocr
-Pillow
-
-# ---- 可选：图像预处理，提升 ddddocr 准确率 ----
-opencv-python
-numpy
-
-# ---- 可选：文字点选验证码高级识别（比 ddddocr 准，体积大）----
-paddlepaddle
-paddleocr
+# ================= 服务器端依赖（轻量化） =================
+# git clone 后直接：pip install -r requirements.txt 即可运行 Web 服务 + AI。
+# 不包含爬虫依赖；需要爬取数据时再：pip install -r requirements-crawler.txt
+-r backend/requirements.txt

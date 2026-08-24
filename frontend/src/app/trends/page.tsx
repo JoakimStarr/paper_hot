@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Layout from '@/components/Layout';
 import TrendChart from '@/components/TrendChart';
-import { papersApi, getLastModel, rememberModel, API_BASE_URL } from '@/lib/api';
+import { papersApi, getLastModel, rememberModel, streamTrendChat } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -387,55 +387,23 @@ export default function TrendsPage() {
 
       const contextMessages = allMessages.slice(-MAX_CONTEXT_MESSAGES);
 
-      const response = await fetch(`${API_BASE_URL}/ai-analysis/reports/${report.id}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: contextMessages, model: selectedModel || undefined }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: 'Request failed' }));
-        setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${err.detail}` }]);
-        setChatStreaming(false);
-        return;
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullContent = '';
-      let fullReasoning = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.done) {
-                setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
-                setStreamContent('');
-                setStreamReasoning('');
-                papersApi.saveTrendChats(report.id, [
-                  { role: 'assistant', content: fullContent }
-                ]);
-              } else if (data.reasoning) {
-                fullReasoning += data.reasoning;
-                setStreamReasoning(fullReasoning);
-              } else if (data.content) {
-                fullContent += data.content;
-                setStreamContent(fullContent);
-              }
-            } catch {}
+      await streamTrendChat(report.id, contextMessages, selectedModel || undefined, {
+        onContent: (text) => setStreamContent(text),
+        onReasoning: (text) => setStreamReasoning(text),
+        onDone: (fullContent) => {
+          if (fullContent) {
+            setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
+            papersApi.saveTrendChats(report.id, [
+              { role: 'assistant', content: fullContent }
+            ]);
           }
-        }
-      }
+          setStreamContent('');
+          setStreamReasoning('');
+        },
+        onError: (message) => {
+          setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${message}` }]);
+        },
+      });
     } catch (e: any) {
       setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${e.message}` }]);
     } finally {

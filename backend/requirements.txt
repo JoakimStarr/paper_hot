@@ -1,17 +1,32 @@
+# ================= 服务器端依赖（轻量化） =================
+# 仅包含运行 Web 服务 + AI + 相似度打分所需的依赖。
+# 不包含任何爬虫依赖（arxiv / DrissionPage / bs4 / lxml / playwright / ddddocr），
+# 因此可在轻量化服务器上直接运行，无需安装爬虫环境。
+#
+# 安装：pip install -r backend/requirements.txt
+# 若要启用爬虫功能，再安装：pip install -r requirements-crawler.txt
+
+# ---- Web 框架 ----
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.0
+
+# ---- 数据库 ----
 sqlalchemy>=2.0.0
 aiosqlite>=0.19.0
+
+# ---- 数据校验 ----
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
-httpx>=0.26.0
-arxiv>=2.1.0
+
+# ---- AI 能力（OpenAI 兼容接口调用）----
 openai>=1.10.0
+httpx>=0.26.0
+
+# ---- 论文相似度 / 关键词打分 ----
 scikit-learn>=1.4.0
 jieba>=0.42.1
 numpy>=1.26.0
+
+# ---- 定时任务（调度器；不启用爬虫时可不运行，但保留以便启动无碍）----
 apscheduler>=3.10.0
-python-dotenv>=1.0.0
-DrissionPage>=4.1.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0

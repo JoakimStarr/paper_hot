@@ -1,4 +1,3 @@
-import arxiv
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
@@ -10,8 +9,16 @@ import random
 from abc import ABC, abstractmethod
 from functools import wraps
 import time
-import requests
-from bs4 import BeautifulSoup
+# 爬虫依赖（arxiv / requests / bs4）仅在安装了 requirements-crawler.txt 后可用；
+# 轻量化服务器只装服务端依赖时，此处静默降级，仅非爬虫类（如 VenueDataFetcher）可正常使用。
+try:
+    import arxiv
+    import requests
+    from bs4 import BeautifulSoup
+except ImportError:
+    arxiv = None
+    requests = None
+    BeautifulSoup = None
 import re
 
 logger = logging.getLogger(__name__)

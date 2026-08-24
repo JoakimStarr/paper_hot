@@ -1,0 +1,29 @@
+# ================= 爬虫扩展依赖（可选，非服务器必需） =================
+# 仅在需要爬取数据（arXiv / 经济学期刊 / 知网 CNKI / 验证码自动解决）时安装。
+# 服务器只做展示与 AI 分析时无需安装本文件。
+#
+# 安装：pip install -r requirements-crawler.txt
+# 注意：爬虫依赖较重（含浏览器内核），推荐在单独的机器/环境上使用。
+
+# 先安装服务器端基础依赖
+-r backend/requirements.txt
+
+# ---- 期刊 / arXiv 抓取 ----
+arxiv>=2.1.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+requests>=2.31.0
+
+# ---- 知网 CNKI（DrissionPage 浏览器自动化）----
+DrissionPage>=4.1.0
+
+# ---- 验证码自动解决（滑块 / 点选识别）----
+# ddddocr 会自动携带 opencv-python-headless 与 onnxruntime
+ddddocr
+Pillow
+
+# ---- 浏览器自动化（知网关键词检索脚本）----
+playwright
+
+# 首次使用需准备浏览器内核：
+#   playwright install chromium
