@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload } from '@/types/paper';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
 
@@ -7,21 +6,67 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同�
 // 不配置时（NEXT_PUBLIC_API_TOKEN 为空/未设置）行为与之前一致——后端未设 token 时默认放行。
 const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || '';
 
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+// 统一请求封装（原生 fetch 替代 axios，自动注入 x-api-token，行为与旧 apiClient 完全一致）
+//
+// 幂等请求（GET/HEAD）自动重试：后端重启/启动期间，next dev 代理连不上后端时
+// 会以 500「socket hang up」返回浏览器（典型报错：api/network/gaps/analysis 500）。
+// 对这类瞬时故障短退避重试，避免页面一打开就报错；非幂等方法一律不重试。
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD']);
+const RETRY_DELAYS = [600, 1200]; // 重试间隔（ms）
 
-// 统一注入 x-api-token：所有走 apiClient 的请求（含 /chat、/analyze、/chats 的写操作）自动携带
-apiClient.interceptors.request.use((config) => {
-  if (API_TOKEN) {
-    config.headers = config.headers || {};
-    config.headers['x-api-token'] = API_TOKEN;
+async function request<T>(
+  url: string,
+  options?: { method?: string; params?: Record<string, unknown>; body?: unknown },
+): Promise<T> {
+  const method = options?.method || 'GET';
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
+
+  let fullUrl = `${API_BASE_URL}${url}`;
+  if (options?.params) {
+    const qs = new URLSearchParams(
+      Object.entries(options.params)
+        .filter(([, v]) => v !== undefined && v !== null)
+        .map(([k, v]) => [k, String(v)]),
+    ).toString();
+    if (qs) fullUrl += `?${qs}`;
   }
-  return config;
-});
+
+  const maxRetries = RETRYABLE_METHODS.has(method) ? RETRY_DELAYS.length : 0;
+
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(fullUrl, {
+        method,
+        headers,
+        body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+      });
+    } catch (e: any) {
+      // 网络层失败（代理/后端不可达），幂等请求重试，AbortError 不重试
+      if (attempt < maxRetries && (!e || e?.name !== 'AbortError')) {
+        await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+        continue;
+      }
+      throw e;
+    }
+
+    // 5xx（含代理转发的 500）通常为后端临时不可用，幂等请求重试
+    if (res.status >= 500 && attempt < maxRetries) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+      continue;
+    }
+
+    if (!res.ok) {
+      const err = (await res.json().catch(() => null)) as { detail?: string } | null;
+      throw new Error(err?.detail || `Request failed: ${res.status}`);
+    }
+
+    // 部分 DELETE/空响应无 body，返回 undefined
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+}
 
 export interface FilterStatistics {
   discipline_counts: Record<string, number>;
@@ -78,176 +123,148 @@ export const papersApi = {
     search_field?: string;
     sort_by?: string;
     sort_order?: string;
-  }): Promise<PaperCardListResponse> => {
-    const response = await apiClient.get<PaperCardListResponse>('/papers', { params });
-    return response.data;
-  },
+  }): Promise<PaperCardListResponse> => request<PaperCardListResponse>('/papers', { params }),
 
-  getPaperById: async (id: string): Promise<PaperDetailResponse> => {
-    const response = await apiClient.get<PaperDetailResponse>(`/papers/${id}`);
-    return response.data;
-  },
+  getPaperById: async (id: string): Promise<PaperDetailResponse> =>
+    request<PaperDetailResponse>(`/papers/${id}`),
 
-  getTrendingTopics: async (weeks_back?: number): Promise<TrendingTopicsResponse> => {
-    const response = await apiClient.get<TrendingTopicsResponse>('/trending-topics', {
-      params: { weeks_back },
-    });
-    return response.data;
-  },
+  getTrendingTopics: async (weeks_back?: number): Promise<TrendingTopicsResponse> =>
+    request<TrendingTopicsResponse>('/trending-topics', { params: { weeks_back } }),
 
-  getAIAnalysisV2: async (): Promise<AIAnalysisResponseV2> => {
-    const response = await apiClient.get<AIAnalysisResponseV2>('/ai-analysis/v2');
-    return response.data;
-  },
+  getAIAnalysisV2: async (): Promise<AIAnalysisResponseV2> =>
+    request<AIAnalysisResponseV2>('/ai-analysis/v2'),
 
-  startAIAnalysis: async (model?: string): Promise<AIAnalysisResponseV2> => {
-    const response = await apiClient.post<AIAnalysisResponseV2>('/ai-analysis/v2/analyze', { model });
-    return response.data;
-  },
+  startAIAnalysis: async (model?: string): Promise<AIAnalysisResponseV2> =>
+    request<AIAnalysisResponseV2>('/ai-analysis/v2/analyze', { method: 'POST', body: { model } }),
 
-  getAIAnalysisModels: async (): Promise<{ models: Array<{ name: string; available: boolean; priority: number; provider?: string }> }> => {
-    const response = await apiClient.get<{ models: Array<{ name: string; available: boolean; priority: number; provider?: string }> }>('/ai-analysis/models');
-    return response.data;
-  },
+  getAIAnalysisModels: async (): Promise<{ models: Array<{ name: string; available: boolean; priority: number; provider?: string }> }> =>
+    request('/ai-analysis/models'),
 
-  getAIAnalysisReports: async (limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> => {
-    const response = await apiClient.get<{ reports: AIAnalysisReport[]; total: number }>('/ai-analysis/reports', {
-      params: { limit },
-    });
-    return response.data;
-  },
+  getAIAnalysisReports: async (limit: number = 10): Promise<{ reports: AIAnalysisReport[]; total: number }> =>
+    request('/ai-analysis/reports', { params: { limit } }),
 
-  getAIAnalysisReportById: async (reportId: number): Promise<AIAnalysisReport> => {
-    const response = await apiClient.get<AIAnalysisReport>(`/ai-analysis/reports/${reportId}`);
-    return response.data;
-  },
+  getAIAnalysisReportById: async (reportId: number): Promise<AIAnalysisReport> =>
+    request(`/ai-analysis/reports/${reportId}`),
 
-  getTrendChats: async (reportId: number): Promise<Array<{ role: string; content: string }>> => {
-    const response = await apiClient.get(`/ai-analysis/reports/${reportId}/chats`);
-    return response.data;
-  },
+  getTrendChats: async (reportId: number): Promise<Array<{ role: string; content: string }>> =>
+    request(`/ai-analysis/reports/${reportId}/chats`),
 
-  saveTrendChats: async (reportId: number, messages: Array<{ role: string; content: string }>): Promise<void> => {
-    await apiClient.post(`/ai-analysis/reports/${reportId}/chats`, { messages });
-  },
+  saveTrendChats: async (reportId: number, messages: Array<{ role: string; content: string }>): Promise<void> =>
+    request(`/ai-analysis/reports/${reportId}/chats`, { method: 'POST', body: { messages } }),
 
-  clearTrendChats: async (reportId: number): Promise<void> => {
-    await apiClient.delete(`/ai-analysis/reports/${reportId}/chats`);
-  },
+  clearTrendChats: async (reportId: number): Promise<void> =>
+    request(`/ai-analysis/reports/${reportId}/chats`, { method: 'DELETE' }),
 
-  getFilterStatistics: async (): Promise<FilterStatistics> => {
-    const response = await apiClient.get<FilterStatistics>('/filter-statistics');
-    return response.data;
-  },
+  getFilterStatistics: async (): Promise<FilterStatistics> =>
+    request('/filter-statistics'),
 
-  getSystemStats: async (): Promise<SystemStats> => {
-    const response = await apiClient.get<SystemStats>('/stats');
-    return response.data;
-  },
+  getSystemStats: async (): Promise<SystemStats> =>
+    request('/stats'),
 
-  getAuthorNetwork: async (limit: number = 50): Promise<NetworkData> => {
-    const response = await apiClient.get<NetworkData>('/network/authors', { params: { limit } });
-    return response.data;
-  },
+  getAuthorNetwork: async (limit: number = 50): Promise<NetworkData> =>
+    request('/network/authors', { params: { limit } }),
 
-  getKeywordNetwork: async (limit: number = 200): Promise<NetworkData> => {
-    const response = await apiClient.get<NetworkData>('/network/keywords', { params: { limit } });
-    return response.data;
-  },
+  getKeywordNetwork: async (limit: number = 200): Promise<NetworkData> =>
+    request('/network/keywords', { params: { limit } }),
 
-  getCrawlStatus: async (limit: number = 10): Promise<{ logs: CrawlLog[]; total: number }> => {
-    const response = await apiClient.get<{ logs: CrawlLog[]; total: number }>('/crawl/status', { params: { limit } });
-    return response.data;
-  },
+  getCrawlStatus: async (limit: number = 10): Promise<{ logs: CrawlLog[]; total: number }> =>
+    request('/crawl/status', { params: { limit } }),
 
-  startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: string; status: string; message: string }> => {
-    const response = await apiClient.post('/crawl/start', { journal_names: journalNames || null });
-    return response.data;
-  },
+  startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: string; status: string; message: string }> =>
+    request('/crawl/start', { method: 'POST', body: { journal_names: journalNames || null } }),
 
-  startCNKITop50Crawl: async (opts?: { journal_names?: string[]; max_results_per_journal?: number; max_journals?: number }): Promise<{ status: string; message: string }> => {
-    const response = await apiClient.post('/crawl/cnki/top50/start', opts || {});
-    return response.data;
-  },
+  startCNKITop50Crawl: async (opts?: { journal_names?: string[]; max_results_per_journal?: number; max_journals?: number }): Promise<{ status: string; message: string }> =>
+    request('/crawl/cnki/top50/start', { method: 'POST', body: opts || {} }),
 
-  startCNKNaviCrawl: async (): Promise<{ status: string; message: string }> => {
-    const response = await apiClient.post('/crawl/cnki/navi/start', {});
-    return response.data;
-  },
+  startCNKNaviCrawl: async (): Promise<{ status: string; message: string }> =>
+    request('/crawl/cnki/navi/start', { method: 'POST', body: {} }),
 
-  analyzePaper: async (paperId: string, model?: string): Promise<{ analysis: string | null; status: string; model?: string }> => {
-    const response = await apiClient.post<{ analysis: string | null; status: string; model?: string }>(`/papers/${paperId}/analyze`, model ? { model } : {});
-    return response.data;
-  },
+  analyzePaper: async (paperId: string, model?: string): Promise<{ analysis: string | null; status: string; model?: string }> =>
+    request(`/papers/${paperId}/analyze`, { method: 'POST', body: model ? { model } : {} }),
 
-  getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> => {
-    const response = await apiClient.get(`/papers/${paperId}/analyses/latest`);
-    return response.data;
-  },
+  getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> =>
+    request(`/papers/${paperId}/analyses/latest`),
 
-  getChats: async (paperId: string): Promise<Array<{ role: string; content: string }>> => {
-    const response = await apiClient.get(`/papers/${paperId}/chats`);
-    return response.data;
-  },
+  getChats: async (paperId: string): Promise<Array<{ role: string; content: string }>> =>
+    request(`/papers/${paperId}/chats`),
 
-  saveChats: async (paperId: string, messages: Array<{ role: string; content: string }>): Promise<void> => {
-    await apiClient.post(`/papers/${paperId}/chats`, { messages });
-  },
+  saveChats: async (paperId: string, messages: Array<{ role: string; content: string }>): Promise<void> =>
+    request(`/papers/${paperId}/chats`, { method: 'POST', body: { messages } }),
 
-  getAuthorPapers: async (authorName: string, page: number = 1, pageSize: number = 20): Promise<AuthorPapersResponse> => {
-    const response = await apiClient.get<AuthorPapersResponse>(`/authors/${encodeURIComponent(authorName)}/papers`, {
-      params: { page, page_size: pageSize },
-    });
-    return response.data;
-  },
+  getAuthorPapers: async (authorName: string, page: number = 1, pageSize: number = 20): Promise<AuthorPapersResponse> =>
+    request(`/authors/${encodeURIComponent(authorName)}/papers`, { params: { page, page_size: pageSize } }),
 
-  getSearchSuggestions: async (q: string, limit: number = 8): Promise<SearchSuggestResponse> => {
-    const response = await apiClient.get<SearchSuggestResponse>('/search/suggest', {
-      params: { q, limit },
-    });
-    return response.data;
-  },
+  getSearchSuggestions: async (q: string, limit: number = 8): Promise<SearchSuggestResponse> =>
+    request('/search/suggest', { params: { q, limit } }),
 
-  getSubfieldDistribution: async (): Promise<SubfieldDistributionResponse> => {
-    const response = await apiClient.get<SubfieldDistributionResponse>('/subfield-distribution');
-    return response.data;
-  },
+  getSubfieldDistribution: async (): Promise<SubfieldDistributionResponse> =>
+    request('/subfield-distribution'),
 
-  getSettings: async (): Promise<SettingsInfo> => {
-    const response = await apiClient.get<SettingsInfo>('/settings');
-    return response.data;
-  },
+  getSettings: async (): Promise<SettingsInfo> =>
+    request('/settings'),
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> => {
-    const response = await apiClient.put<{ success: boolean }>('/settings', data);
-    return response.data;
-  },
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> =>
+    request('/settings', { method: 'PUT', body: data }),
 
-  testModelLink: async (model: string): Promise<ModelLinkTestResult> => {
-    const response = await apiClient.post<ModelLinkTestResult>('/settings/test-model', { model });
-    return response.data;
-  },
+  testModelLink: async (model: string): Promise<ModelLinkTestResult> =>
+    request('/settings/test-model', { method: 'POST', body: { model } }),
 
-  getSchedulerJobs: async (): Promise<SchedulerJob[]> => {
-    const response = await apiClient.get<SchedulerJob[]>('/scheduler/jobs');
-    return response.data;
-  },
+  getSchedulerJobs: async (): Promise<SchedulerJob[]> =>
+    request('/scheduler/jobs'),
 
-  triggerSchedulerJob: async (jobId: string): Promise<{ success: boolean; message: string }> => {
-    const response = await apiClient.post<{ success: boolean; message: string }>(`/scheduler/trigger/${jobId}`);
-    return response.data;
-  },
+  triggerSchedulerJob: async (jobId: string): Promise<{ success: boolean; message: string }> =>
+    request(`/scheduler/trigger/${jobId}`, { method: 'POST' }),
 
-  toggleScheduler: async (): Promise<{ running: boolean; message: string }> => {
-    const response = await apiClient.post<{ running: boolean; message: string }>('/scheduler/toggle');
-    return response.data;
-  },
+  toggleScheduler: async (): Promise<{ running: boolean; message: string }> =>
+    request('/scheduler/toggle', { method: 'POST' }),
 
-  cleanupData: async (): Promise<MaintenanceResult> => {
-    const response = await apiClient.post<MaintenanceResult>('/maintenance/cleanup');
-    return response.data;
-  },
+  cleanupData: async (): Promise<MaintenanceResult> =>
+    request('/maintenance/cleanup', { method: 'POST' }),
 };
+
+// —— 选题中心：研究空白发现（P1）+ 选题验证器（P2）——
+export const topicsApi = {
+  getResearchGaps: async (limit = 10): Promise<ResearchGapsResponse> =>
+    request('/network/gaps', { params: { limit } }),
+
+  startGapAnalysis: async (model?: string, limit = 10): Promise<GapAnalysisResponse> =>
+    request('/network/gaps/analyze', { method: 'POST', body: { model, limit } }),
+
+  getGapAnalysis: async (): Promise<GapAnalysisResponse> =>
+    request('/network/gaps/analysis'),
+
+  getValidatorStatus: async (): Promise<ValidatorStatus> =>
+    request('/topic-validator/status'),
+
+  backfillEmbeddings: async (batchSize = 100): Promise<{ status: string; batch_size: number }> =>
+    request('/topic-validator/embeddings/backfill', { method: 'POST', params: { batch_size: batchSize } }),
+
+  // —— 选题库（决策层）——
+  listTopicProjects: async (status?: string): Promise<TopicProject[]> =>
+    request<TopicProject[]>('/topic-projects', { params: status ? { status } : {} }),
+
+  createTopicProject: async (payload: TopicProjectPayload): Promise<TopicProject> =>
+    request<TopicProject>('/topic-projects', { method: 'POST', body: payload }),
+
+  updateTopicProject: async (
+    id: number,
+    payload: Partial<Pick<TopicProject, 'title' | 'status' | 'novelty' | 'crowding' | 'feasibility'>>,
+  ): Promise<TopicProject> =>
+    request<TopicProject>(`/topic-projects/${id}`, { method: 'PATCH', body: payload }),
+
+  deleteTopicProject: async (id: number): Promise<void> =>
+    request<void>(`/topic-projects/${id}`, { method: 'DELETE' }),
+};
+
+/** 选题验证器（SSE 流式，带 token）。 */
+export function streamValidateTopic(
+  topic: string,
+  model: string | undefined,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal, { topic });
+}
 
 export { API_BASE_URL };
 
@@ -285,6 +302,7 @@ export interface ChatStreamCallbacks {
   onReasoning?: (text: string) => void;     // 累积思考内容（可选，调用方不关心思考时可不传）
   onDone: (fullContent: string) => void;    // 流结束，传完整正文
   onError: (message: string) => void;
+  onMeta?: (data: Record<string, unknown>) => void;  // 可选：非 content/reasoning/done 的结构化 SSE 载荷
 }
 
 /** 通过 fetch + 手动读流发起对话，注入与 apiClient 相同的 x-api-token（保持鉴权一致）。 */
@@ -294,27 +312,43 @@ export async function streamChat(
   model: string | undefined,
   cb: ChatStreamCallbacks,
   signal?: AbortSignal,
+  extraBody?: Record<string, unknown>,
 ): Promise<void> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
 
   let response: Response;
   try {
+    const body = extraBody ? { ...extraBody, messages } : { messages, ...(model ? { model } : {}) };
     response = await fetch(`${API_BASE_URL}${url}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ messages, ...(model ? { model } : {}) }),
+      body: JSON.stringify(body),
       signal,
     });
   } catch (e: any) {
     if (e.name === 'AbortError') return;
-    cb.onError(e.message || 'Request failed');
+    cb.onError(String(e?.message || 'Request failed'));
     return;
   }
 
   if (!response.ok) {
+    // 后端可能返回字符串 detail，也可能是 pydantic 校验错误对象数组（{type,loc,msg,input}）
+    // 一律安全转成可展示字符串，避免把对象注入 React child 触发渲染崩溃
     const err = await response.json().catch(() => ({ detail: 'Request failed' }));
-    cb.onError(err.detail || 'Request failed');
+    const rawDetail = err.detail || 'Request failed';
+    let message: string;
+    if (typeof rawDetail === 'string') {
+      message = rawDetail;
+    } else if (Array.isArray(rawDetail)) {
+      message = rawDetail
+        .map((e: any) => `${e?.loc?.join('.') ?? ''}: ${e?.msg ?? String(e)}`)
+        .filter(Boolean)
+        .join('; ');
+    } else {
+      message = JSON.stringify(rawDetail);
+    }
+    cb.onError(message);
     return;
   }
 
@@ -348,6 +382,9 @@ export async function streamChat(
           } else if (data.content) {
             fullContent += data.content;
             cb.onContent(fullContent);
+          } else if (cb.onMeta) {
+            // 结构化元消息（如验证器的 papers 召回载荷）原样交回调处理
+            cb.onMeta(data);
           }
         } catch {
           /* 忽略单条解析失败 */

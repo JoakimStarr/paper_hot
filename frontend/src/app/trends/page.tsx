@@ -1,15 +1,32 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
-import TrendChart from '@/components/TrendChart';
 import { papersApi, getLastModel, rememberModel, streamTrendChat } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useTheme } from '@/contexts/ThemeContext';
-import MarkdownRenderer from '@/components/MarkdownRenderer';
-import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip } from 'recharts';
+
+// 重组件按需加载：recharts(雷达/折线) 与 react-markdown 栈各成独立懒 chunk，首屏不阻塞
+const TrendChart = dynamic(() => import('@/components/TrendChart'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-64 flex items-center justify-center text-gray-400 text-sm animate-pulse">图表加载中...</div>
+  ),
+});
+const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-20 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>
+  ),
+});
+const SubfieldRadar = dynamic(() => import('@/components/SubfieldRadar'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[320px] flex items-center justify-center text-gray-400 text-sm animate-pulse">图表加载中...</div>
+  ),
+});
 
 const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
 const ERROR_COOLDOWN_SECONDS = 30;
@@ -40,7 +57,6 @@ const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
 
 export default function TrendsPage() {
   const { t } = useLanguage();
-  const { isDark } = useTheme();
   const [topics, setTopics] = useState<TrendingTopic[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -561,39 +577,7 @@ export default function TrendsPage() {
           <TrendChart topics={topics} />
 
           {!radarLoading && radarData.length > 0 && (
-            <div className="mt-6 sm:mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-lg sm:text-xl">🎯</span>
-                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">{t('tr.radarTitle')}</h2>
-                <span className="text-xs text-gray-400 hidden sm:inline">{t('tr.radarSub')}</span>
-              </div>
-              <ResponsiveContainer width="100%" height={280}>
-                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
-                  <PolarGrid stroke={isDark ? '#4b5563' : '#e5e7eb'} />
-                  <PolarAngleAxis
-                    dataKey="subfield"
-                    tick={{ fontSize: 10, fill: isDark ? '#d1d5db' : '#4b5563' }}
-                  />
-                  <PolarRadiusAxis
-                    angle={30}
-                    domain={[0, 'auto']}
-                    tick={{ fontSize: 9, fill: '#9ca3af' }}
-                  />
-                  <Tooltip
-                    formatter={(value: number) => [`${value}`, t('tr.radarUnit')]}
-                    labelFormatter={(label: string) => `${t('tr.subfieldLabel')}: ${label}`}
-                    contentStyle={isDark ? { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' } : undefined}
-                  />
-                  <Radar
-                    name={t('tr.radarUnit')}
-                    dataKey="count"
-                    stroke="#7c3aed"
-                    fill="#7c3aed"
-                    fillOpacity={0.25}
-                  />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
+            <SubfieldRadar data={radarData} />
           )}
 
           <div className="mt-6 sm:mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">

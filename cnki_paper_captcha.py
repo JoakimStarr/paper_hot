@@ -590,6 +590,17 @@ class CaptchaSolver:
 
                 await asyncio.sleep(2)
 
+                # 预检：每次重试开始前，先判断当前 URL 是否仍在验证码页面。
+                # 若已离开（验证已通过或已自动跳转），直接判定成功返回，
+                # 避免「找不到 verify-msg 元素 / 找不到刷新按钮」时无限空转刷新。
+                if page.is_closed():
+                    print(f"    [线程{self.thread_id}] 页面已关闭，无法继续解决验证码")
+                    return False
+                current_url = page.url
+                if not current_url.startswith(VERIFY_URL_PREFIX):
+                    print(f"    [线程{self.thread_id}] 当前 URL 已不在验证码页，视为验证已通过")
+                    return True
+
                 # 获取提示文字 - 使用正确的选择器
                 verify_msg_elem = await page.query_selector('div.verify-bar-area span.verify-msg')
                 if not verify_msg_elem:
@@ -632,6 +643,18 @@ class CaptchaSolver:
                     await self._click_refresh(page)
                     continue
 
+                # 校验截图字节为有效图片：页面跳转/刷新瞬间可能截到空或损坏字节，
+                # 会令 PIL / ddddocr 抛 cannot identify image file，提前拦截并刷新重试
+                from PIL import Image
+                import io
+                try:
+                    img = Image.open(io.BytesIO(captcha_bytes))
+                    img.load()
+                except Exception as img_err:
+                    print(f"    [线程{self.thread_id}] 截图非有效图片（{img_err}），刷新重试...")
+                    await self._click_refresh(page)
+                    continue
+
                 print(f"    [线程{self.thread_id}] 验证码图片已截取，开始识别文字位置和文字内容...")
 
                 # 使用目标检测获取所有文字位置
@@ -654,12 +677,8 @@ class CaptchaSolver:
                 panel_x = panel_box['x']
                 panel_y = panel_box['y']
 
-                # 使用 OCR 识别每个位置上的文字
-                from PIL import Image
-                import io
-
+                # 使用 OCR 识别每个位置上的文字（img 已在截图校验时打开，直接复用）
                 char_map = {}  # 文字 -> 位置的映射
-                img = Image.open(io.BytesIO(captcha_bytes))
 
                 for i, bbox in enumerate(bboxes):
                     x1, y1, x2, y2 = bbox
@@ -971,13 +990,14 @@ class JournalCrawler:
             await self.playwright.stop()
         print(f"  [线程{self.thread_id}] 浏览器已关闭")
 
-    async def random_scroll(self):
+    async def random_scroll(self, page=None):
         """随机滚动页面模拟人类行为"""
+        page = page or self.page
         try:
             scroll_times = random.randint(1, 3)
             for _ in range(scroll_times):
                 scroll_y = random.randint(100, 500)
-                await self.page.evaluate(f'window.scrollBy(0, {scroll_y})')
+                await page.evaluate(f'window.scrollBy(0, {scroll_y})')
                 await asyncio.sleep(random.uniform(0.5, 2))
         except Exception:
             pass
@@ -986,9 +1006,10 @@ class JournalCrawler:
         """检查是否是验证码页面"""
         return page_url.startswith(VERIFY_URL_PREFIX)
 
-    async def wait_for_page_stable(self, target_url: str, max_wait_time: int = 300) -> bool:
+    async def wait_for_page_stable(self, target_url: str, max_wait_time: int = 300, page=None) -> bool:
         """等待页面稳定，自动解决验证码"""
-        current_url = self.page.url
+        page = page or self.page
+        current_url = page.url
 
         if not self.is_verify_page(current_url):
             return True
@@ -1004,16 +1025,16 @@ class JournalCrawler:
 
         # 尝试自动解决验证码
         if self.captcha_solver.is_available():
-            captcha_type = await self.captcha_solver.detect_captcha_type(self.page)
+            captcha_type = await self.captcha_solver.detect_captcha_type(page)
             print(f"    [线程{self.thread_id}] 检测到验证码类型: {captcha_type}")
 
             if captcha_type == 'slider':
-                success = await self.captcha_solver.solve_slider_captcha(self.page)
+                success = await self.captcha_solver.solve_slider_captcha(page)
                 if success:
                     self._captcha_retry_count = 0  # 成功后重置计数器
                     return True
             elif captcha_type == 'click':
-                success = await self.captcha_solver.solve_click_captcha(self.page)
+                success = await self.captcha_solver.solve_click_captcha(page)
                 if success:
                     self._captcha_retry_count = 0
                     return True
@@ -1037,7 +1058,7 @@ class JournalCrawler:
                 print(f"    [线程{self.thread_id}] 等待验证码解决超时")
                 return False
 
-            current_url = self.page.url
+            current_url = page.url
 
             if not self.is_verify_page(current_url):
                 print(f"    [线程{self.thread_id}] ✓ 验证码已解决")
@@ -1343,8 +1364,9 @@ class JournalCrawler:
         print(f"\n[线程{self.thread_id}] 期刊 {journal_name} 共获取 {len(all_papers)} 篇论文")
         return all_papers
 
-    async def crawl_paper_detail(self, paper_info: dict, journal_name: str = None, year: str = None, issue: str = None) -> dict:
+    async def crawl_paper_detail(self, paper_info: dict, journal_name: str = None, year: str = None, issue: str = None, page=None) -> dict:
         """获取论文详情"""
+        page = page or self.page
         paper_url = paper_info['url']
 
         try:
@@ -1368,15 +1390,15 @@ class JournalCrawler:
         await asyncio.sleep(wait_time)
 
         try:
-            await self.page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
+            await page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
 
-            if not await self.wait_for_page_stable(paper_url):
+            if not await self.wait_for_page_stable(paper_url, page=page):
                 return {'error': 'verify_page'}
 
-            await self.random_scroll()
+            await self.random_scroll(page=page)
             await asyncio.sleep(random.uniform(3, 6))
 
-            html = await self.page.content()
+            html = await page.content()
             soup = BeautifulSoup(html, 'lxml')
 
             title = ''
@@ -1468,6 +1490,7 @@ class JournalCrawler:
                 'abstract': abstract,
                 'keywords': keywords,
                 'url': paper_url,
+                'journal': paper_info.get('journal', ''),
                 **meta
             }
 
@@ -1485,49 +1508,58 @@ class JournalCrawler:
 
     async def save_to_database(self, paper_data: dict, journal_name: str = None, year: str = None, issue: str = None):
         """异步保存到数据库"""
-        try:
-            import sys
-            import re
-            sys.path.insert(0, str(BACKEND_DIR))
+        # 多 worker 并发写库会撞 SQLite 写锁：实例级锁串行化写操作
+        if not hasattr(self, "_db_lock"):
+            self._db_lock = asyncio.Lock()
+        async with self._db_lock:
+            try:
+                import sys
+                import re
+                sys.path.insert(0, str(BACKEND_DIR))
 
-            from app.database import init_db
-            from app.crud import PaperCRUD
-            from app.database import AsyncSessionLocal
+                from app.database import init_db
+                from app.crud import PaperCRUD
+                from app.database import AsyncSessionLocal
 
-            if not self.db_initialized:
-                db_file = BACKEND_DIR / 'data' / 'paperpulse.db'
-                if not db_file.exists():
-                    print(f"    [线程{self.thread_id}] 数据库文件不存在，正在创建...")
-                    await init_db()
-                    print(f"    [线程{self.thread_id}] ✓ 数据库已创建")
-                self.db_initialized = True
+                if not self.db_initialized:
+                    db_file = BACKEND_DIR / 'data' / 'paperpulse.db'
+                    # SQLite 不会自动创建父目录：先确保 backend/data/ 存在，
+                    # 否则 init_db() 报 unable to open database file
+                    db_file.parent.mkdir(parents=True, exist_ok=True)
+                    if not db_file.exists():
+                        print(f"    [线程{self.thread_id}] 数据库文件不存在，正在创建...")
+                        await init_db()
+                        print(f"    [线程{self.thread_id}] ✓ 数据库已创建")
+                    self.db_initialized = True
 
-            async with AsyncSessionLocal() as db:
-                existing = await PaperCRUD.get_paper_by_url(db, paper_data['url'])
-                if existing:
-                    print(f"    [线程{self.thread_id}] 数据库中已存在，跳过")
-                    return
+                async with AsyncSessionLocal() as db:
+                    existing = await PaperCRUD.get_paper_by_url(db, paper_data['url'])
+                    if existing:
+                        print(f"    [线程{self.thread_id}] 数据库中已存在，跳过")
+                        return
 
-                if journal_name:
-                    paper_data['journal_name'] = journal_name
+                    if journal_name:
+                        paper_data['journal_name'] = journal_name
+                    elif paper_data.get('journal'):
+                        paper_data['journal_name'] = paper_data.pop('journal')
 
-                if year and issue:
-                    paper_data['journal_issue'] = f"{year}年第{issue}期"
+                    if year and issue:
+                        paper_data['journal_issue'] = f"{year}年第{issue}期"
 
-                doi = paper_data.get('doi', '')
-                if doi:
-                    match = re.search(r'\.(\d{4})\.', doi)
-                    if match:
-                        paper_data['year'] = int(match.group(1))
+                    doi = paper_data.get('doi', '')
+                    if doi:
+                        match = re.search(r'\.(\d{4})\.', doi)
+                        if match:
+                            paper_data['year'] = int(match.group(1))
 
-                paper = await PaperCRUD.create_paper_from_cnki(db, paper_data)
-                if paper:
-                    await db.commit()
-                    print(f"    [线程{self.thread_id}] ✓ 已保存到数据库")
-        except Exception as e:
-            print(f"    [线程{self.thread_id}] ✗ 保存到数据库失败: {e}")
-            import traceback
-            traceback.print_exc()
+                    paper = await PaperCRUD.create_paper_from_cnki(db, paper_data)
+                    if paper:
+                        await db.commit()
+                        print(f"    [线程{self.thread_id}] ✓ 已保存到数据库")
+            except Exception as e:
+                print(f"    [线程{self.thread_id}] ✗ 保存到数据库失败: {e}")
+                import traceback
+                traceback.print_exc()
 
     async def process_journal(self, journal_name: str, journal_info: dict):
         """处理单个期刊（线程入口）"""
@@ -1900,7 +1932,8 @@ class KeywordSearchCrawler(JournalCrawler):
 
     def __init__(self, headless=True, keyword="", search_field="主题", max_pages=None,
                  min_year=None, max_year=None, state_file=None, thread_id=0,
-                 urls_only=False, urls_file=None, debug_html=None):
+                 urls_only=False, urls_file=None, debug_html=None,
+                 search_url=None, search_url_file=None, detail_workers=3):
         super().__init__(headless=headless, thread_id=thread_id)
         self.keyword = keyword
         self.search_field = search_field
@@ -1911,7 +1944,14 @@ class KeywordSearchCrawler(JournalCrawler):
         # 只收集 URL 模式（不抓详情入库），并保存到 urls_file
         self.urls_only = urls_only
         self.urls_file = Path(urls_file) if urls_file else Path(__file__).parent / 'urls.txt'
+        self.search_url = search_url
+        # 保存/复用检索结果页 URL（供 --search-url 直接跳转，跳过首页重复检索）
+        self.search_url_file = Path(search_url_file) if search_url_file else Path(__file__).parent / 'search_url.txt'
         self.debug_html = Path(debug_html) if debug_html else Path(__file__).parent / 'debug_page1.html'
+
+        # 详情页并发抓取数（翻页收集仍串行）
+        self.detail_workers = max(1, int(detail_workers))
+        self.context = None  # init_browser 时保存，供详情并发阶段开 worker tab
 
     async def init_browser(self):
         """初始化浏览器（支持复用已保存的登录态）。"""
@@ -1940,14 +1980,14 @@ class KeywordSearchCrawler(JournalCrawler):
             ctx_kwargs['storage_state'] = str(self.state_file)
             print(f"  [关键词#{self.thread_id}] 复用登录态: {self.state_file}")
 
-        context = await self.browser.new_context(**ctx_kwargs)
-        await context.add_init_script("""
+        self.context = await self.browser.new_context(**ctx_kwargs)
+        await self.context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
             Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN','zh','en'] });
             window.chrome = { runtime: {} };
         """)
-        self.page = await context.new_page()
+        self.page = await self.context.new_page()
         print(f"  [关键词#{self.thread_id}] 浏览器已启动 (headless={self.headless})")
 
     async def _captcha_popup_visible(self) -> bool:
@@ -2085,7 +2125,9 @@ class KeywordSearchCrawler(JournalCrawler):
                 const title = (a.textContent || '').trim();
                 if (!href || href === 'javascript:void(0)' || !title) return null;
                 const ym = (row.textContent || '').match(/(20\\d{2})/);
-                return { href, title, year: ym ? Number(ym[1]) : null };
+                const srcA = row.querySelector('.source a, td.source a');
+                const journal = srcA ? (srcA.textContent || '').trim() : '';
+                return { href, title, year: ym ? Number(ym[1]) : null, journal };
             })"""
         )
         papers = []
@@ -2096,6 +2138,7 @@ class KeywordSearchCrawler(JournalCrawler):
                 'url': urljoin('https://kns.cnki.net/', r['href']),
                 'title': r['title'],
                 'year': r['year'],
+                'journal': r['journal'],
             })
         return papers
 
@@ -2123,6 +2166,27 @@ class KeywordSearchCrawler(JournalCrawler):
         cls = await nxt.first.get_attribute("class") or ""
         return "disabled" not in cls
 
+    async def _current_page_num(self) -> int | None:
+        """读取「下一页」按钮上的 data-curpage（当前页码），用于判断翻页是否真的前进。"""
+        try:
+            nxt = self.page.locator(self.NEXT_PAGE_SELECTOR)
+            if await nxt.count() == 0:
+                return None
+            v = await nxt.first.get_attribute("data-curpage")
+            if v is None:
+                return None
+            return int(v)
+        except Exception:
+            return None
+    async def _wait_loading_gone(self, timeout=30000):
+        """等待结果页分页 loading 遮罩（div.divLoading）消失，避免遮挡翻页点击。"""
+        try:
+            loader = self.page.locator('div.divLoading')
+            if await loader.count() > 0:
+                await loader.first.wait_for(state='hidden', timeout=timeout)
+        except Exception:
+            pass
+
     async def run_search(self):
         """执行关键词检索：搜索 -> 主题/期刊筛选 -> 翻页收集 -> 详情入库。"""
         tag = f"[关键词#{self.thread_id}]"
@@ -2133,56 +2197,70 @@ class KeywordSearchCrawler(JournalCrawler):
 
         await self.init_browser()
         try:
-            # 1. 打开知网首页（校外经登录态直接进，否则等待手动登录跳回）
-            print(f"{tag} 打开知网首页...")
-            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
-            for _ in range(90):
-                if 'cnki.net' in self.page.url:
-                    break
-                await asyncio.sleep(2)
+            if self.search_url:
+                # 复用已保存的检索结果页 URL，跳过首页检索/主题/类型筛选
+                print(f"{tag} 直接打开已保存的检索结果页: {self.search_url}")
+                await self.page.goto(self.search_url, wait_until='domcontentloaded', timeout=60000)
+                await self._ensure_no_captcha(timeout=180)
+                await asyncio.sleep(random.uniform(2, 4))
+            else:
+                # 1. 打开知网首页（校外经登录态直接进，否则等待手动登录跳回）
+                print(f"{tag} 打开知网首页...")
+                await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+                for _ in range(90):
+                    if 'cnki.net' in self.page.url:
+                        break
+                    await asyncio.sleep(2)
 
-            # 2. 等待搜索框
-            box = self.page.locator(self.SEARCH_SELECTOR)
-            await box.wait_for(state='visible', timeout=60000)
-            print(f"{tag} 已进入检索页")
+                # 2. 等待搜索框
+                box = self.page.locator(self.SEARCH_SELECTOR)
+                await box.wait_for(state='visible', timeout=60000)
+                print(f"{tag} 已进入检索页")
 
-            # 保存登录态（供下次复用）
-            if self.state_file:
+                # 保存登录态（供下次复用）
+                if self.state_file:
+                    try:
+                        await self.page.context.storage_state(path=str(self.state_file))
+                        print(f"{tag} 登录态已保存: {self.state_file}")
+                    except Exception:
+                        pass
+
+                # 3. 设置检索字段并输入关键词
+                await self._set_search_field()
+                await self.random_scroll()
+                await box.click()
+                await box.fill(self.keyword)
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await box.press('Enter')
+                await self._ensure_no_captcha(timeout=180)
+
+                # 4. 主题筛选（主要主题 ZYZT，匹配关键词）与文献类型（学术期刊）
                 try:
-                    await self.page.context.storage_state(path=str(self.state_file))
-                    print(f"{tag} 登录态已保存: {self.state_file}")
+                    subj = self.page.locator(self.SUBJECT_SELECTOR).first
+                    await subj.wait_for(state='visible', timeout=15000)
                 except Exception:
                     pass
+                # 点击最匹配的主题项后等待结果刷新（参考 demo 的 zyzt 点击流程）
+                if await self._pick_subject():
+                    try:
+                        await self.page.wait_for_load_state('domcontentloaded')
+                    except Exception:
+                        pass
+                    await asyncio.sleep(random.uniform(2.5, 5))
+                # 选择"学术期刊"文献类型并等待结果刷新
+                if await self._select_doctype():
+                    try:
+                        await self.page.wait_for_load_state('domcontentloaded')
+                    except Exception:
+                        pass
+                    await asyncio.sleep(random.uniform(2.5, 5))
 
-            # 3. 设置检索字段并输入关键词
-            await self._set_search_field()
-            await self.random_scroll()
-            await box.click()
-            await box.fill(self.keyword)
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            await box.press('Enter')
-            await self._ensure_no_captcha(timeout=180)
-
-            # 4. 主题筛选（主要主题 ZYZT，匹配关键词）与文献类型（学术期刊）
-            try:
-                subj = self.page.locator(self.SUBJECT_SELECTOR).first
-                await subj.wait_for(state='visible', timeout=15000)
-            except Exception:
-                pass
-            # 点击最匹配的主题项后等待结果刷新（参考 demo 的 zyzt 点击流程）
-            if await self._pick_subject():
+                # 4.5 记录当前检索结果页 URL 到本地，供下次 --search-url 直接复用
                 try:
-                    await self.page.wait_for_load_state('domcontentloaded')
-                except Exception:
-                    pass
-                await asyncio.sleep(random.uniform(2.5, 5))
-            # 选择"学术期刊"文献类型并等待结果刷新
-            if await self._select_doctype():
-                try:
-                    await self.page.wait_for_load_state('domcontentloaded')
-                except Exception:
-                    pass
-                await asyncio.sleep(random.uniform(2.5, 5))
+                    self.search_url_file.write_text(self.page.url, encoding='utf-8')
+                    print(f"{tag} 已保存检索结果页 URL -> {self.search_url_file}")
+                except Exception as e:
+                    print(f"{tag} 保存检索 URL 失败: {e}")
 
             # 5. 翻页收集论文
             all_papers = []
@@ -2207,8 +2285,52 @@ class KeywordSearchCrawler(JournalCrawler):
                 if not await self._next_page_exists():
                     print(f"{tag} 已是最后一页")
                     break
-                await self.page.locator(self.NEXT_PAGE_SELECTOR).first.click()
+                # 翻页：等 loading 遮罩消失后「单击」下一页（JS 点击优先，失败才用 force 兜底；
+                # 不能两种点击都执行——双击会把分页器状态点乱，导致页码误判提前停止）
+                await self._wait_loading_gone()
+                prev_cur = await self._current_page_num()
+                click_ok = False
+                try:
+                    await self.page.locator(self.NEXT_PAGE_SELECTOR).first.evaluate('el => el.click()')
+                    click_ok = True
+                except Exception:
+                    try:
+                        await self.page.locator(self.NEXT_PAGE_SELECTOR).first.click(force=True, timeout=10000)
+                        click_ok = True
+                    except Exception:
+                        click_ok = False
+                if not click_ok:
+                    print(f"{tag} 「下一页」点击失败（元素脱离/被遮挡），等待页面稳定后判断")
                 await self._ensure_no_captcha(timeout=120)
+
+                # 等翻页真正完成：loading 消失 + 结果表格重新可见 + 页码前进（最多 20 秒）
+                advanced = False
+                deadline = asyncio.get_event_loop().time() + 20
+                while asyncio.get_event_loop().time() < deadline:
+                    await self._wait_loading_gone(timeout=5000)
+                    try:
+                        await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(state='visible', timeout=3000)
+                    except Exception:
+                        continue  # 结果表格还没重绘完，继续等
+                    new_cur = await self._current_page_num()
+                    if new_cur is not None and prev_cur is not None and new_cur > prev_cur:
+                        advanced = True
+                        break
+                    if not await self._next_page_exists():
+                        break  # 页面稳定后按钮已消失 → 翻到了真正的末页
+                    await asyncio.sleep(0.5)
+
+                if not advanced:
+                    # 首要停止条件：下一页按钮不存在
+                    if not await self._next_page_exists():
+                        print(f"{tag} 下一页按钮不存在，已是最后一页")
+                        break
+                    # 按钮还在但页码未前进：复核一次，仍未前进才视为末页
+                    await asyncio.sleep(2)
+                    new_cur = await self._current_page_num()
+                    if new_cur is not None and prev_cur is not None and new_cur <= prev_cur:
+                        print(f"{tag} 翻页后页码未前进（{prev_cur} -> {new_cur}），视为已到末页，停止")
+                        break
                 page_no += 1
 
             print(f"{tag} 共收集 {len(all_papers)} 篇待处理论文")
@@ -2223,14 +2345,40 @@ class KeywordSearchCrawler(JournalCrawler):
                     print(f"{tag} 写入 URL 文件失败: {e}")
                 return
 
-            # 逐篇获取详情并入库（含去重，见 crawl_paper_detail）
+            # 并发获取详情并入库（含去重，见 crawl_paper_detail）：
+            # 翻页收集必须串行（同一结果页），详情抓取用 detail_workers 个 tab 并行
+            total = len(all_papers)
+            done = 0
             ok = 0
-            for i, paper in enumerate(all_papers, 1):
-                print(f"{tag} [{i}/{len(all_papers)}] 处理: {paper['title'][:30]}...")
-                res = await self.crawl_paper_detail(paper)
-                if res and res.get('title'):
-                    ok += 1
-                await asyncio.sleep(random.uniform(2, 4))
+            queue = asyncio.Queue()
+            for p in all_papers:
+                queue.put_nowait(p)
+
+            async def detail_worker(wid: int):
+                nonlocal done, ok
+                wtag = f"{tag}[W{wid}]"
+                page = await self.context.new_page()
+                try:
+                    while True:
+                        try:
+                            paper = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            return
+                        done += 1
+                        print(f"{wtag} [{done}/{total}] 处理: {paper['title'][:30]}...")
+                        res = await self.crawl_paper_detail(paper, page=page)
+                        if res and res.get('title'):
+                            ok += 1
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                finally:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
+            n = max(1, self.detail_workers)
+            print(f"{tag} 详情并发数: {n}")
+            await asyncio.gather(*[detail_worker(i) for i in range(n)])
 
             print(f"{tag} 完成，成功入库 {ok} 篇（含已存在跳过）")
         except Exception as e:
@@ -2259,6 +2407,12 @@ async def main():
                         help='只收集论文 URL 写入文件，不抓详情入库（仅检索模式）')
     parser.add_argument('--urls-file', type=str, default=None,
                         help='URL 输出文件路径（默认当前目录 urls.txt，配合 --urls-only）')
+    parser.add_argument('--search-url', type=str, default=None,
+                        help='直接复用已保存的检索结果页 URL（传完整URL，或传含URL的文本文件路径）')
+    parser.add_argument('--save-url-file', type=str, default=None,
+                        help='检索结果页 URL 保存路径（默认当前目录 search_url.txt）')
+    parser.add_argument('--detail-workers', type=int, default=3,
+                        help='详情页并发抓取数（仅检索模式，默认3；翻页收集仍串行）')
     args = parser.parse_args()
 
     if args.search:
@@ -2272,6 +2426,10 @@ async def main():
                 print("年份格式错误，忽略 --years，应为如 2024-2026")
                 min_year = max_year = None
         state_file = None if args.no_login_state else str(Path(__file__).parent / 'cnki_state.json')
+        # --search-url 支持直接传 URL，或传一个含 URL 的本地文件路径（自动读取）
+        search_url = args.search_url
+        if search_url and Path(search_url).is_file():
+            search_url = Path(search_url).read_text(encoding='utf-8').strip()
         crawler = KeywordSearchCrawler(
             headless=not args.show_browser,
             keyword=args.search,
@@ -2282,6 +2440,9 @@ async def main():
             state_file=state_file,
             urls_only=args.urls_only,
             urls_file=args.urls_file,
+            search_url=search_url,
+            search_url_file=args.save_url_file,
+            detail_workers=args.detail_workers,
         )
         await crawler.run_search()
         return

@@ -70,6 +70,12 @@ export default function SystemPage() {
   const [testingModel, setTestingModel] = useState('');
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms?: number; message: string }>>({});
 
+  // Embedding model state（选题验证器的向量模型，可自定义到任意 provider）
+  const [embeddingModel, setEmbeddingModel] = useState<string | null>(null);
+  const [embeddingModelDraft, setEmbeddingModelDraft] = useState('');
+  const [savingEmbeddingModel, setSavingEmbeddingModel] = useState(false);
+  const [embeddingModelMessage, setEmbeddingModelMessage] = useState('');
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -103,6 +109,8 @@ export default function SystemPage() {
       setModelList([...res.models].sort((a, b) => a.priority - b.priority));
       setSchedulerRunning(res.scheduler.running);
       setDefaultModel(res.default_model || null);
+      setEmbeddingModel(res.embedding_model || null);
+      setEmbeddingModelDraft(res.embedding_model || '');
       if (res.ports) {
         setPorts(res.ports);
       }
@@ -380,6 +388,21 @@ export default function SystemPage() {
       setDefaultModelMessage(error.response?.data?.detail || t('sys.defaultSaveFailed'));
     } finally {
       setSavingDefaultModel(false);
+    }
+  };
+
+  const handleSaveEmbeddingModel = async () => {
+    const value = embeddingModelDraft.trim();
+    setSavingEmbeddingModel(true);
+    setEmbeddingModelMessage('');
+    try {
+      await papersApi.updateSettings({ embedding_model: value || null });
+      setEmbeddingModel(value || null);
+      setEmbeddingModelMessage(t('sys.embeddingSaved'));
+    } catch (error: any) {
+      setEmbeddingModelMessage(error.response?.data?.detail || t('sys.embeddingSaveFailed'));
+    } finally {
+      setSavingEmbeddingModel(false);
     }
   };
 
@@ -1124,6 +1147,38 @@ export default function SystemPage() {
           {defaultModelMessage && (
             <div className={`mt-2 text-xs ${defaultModelMessage.includes('失败') ? 'text-red-500' : 'text-green-600'}`}>
               {defaultModelMessage}
+            </div>
+          )}
+        </div>
+
+        {/* 向量化模型（选题验证器）配置 */}
+        <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded-lg">
+          <div className="text-xs text-green-700 dark:text-green-400 mb-1">{t('sys.embeddingLabel')}</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              value={embeddingModelDraft}
+              onChange={(e) => setEmbeddingModelDraft(e.target.value)}
+              placeholder={t('sys.embeddingPlaceholder')}
+              className="flex-1 min-w-[240px] px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-md text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
+            <button
+              onClick={handleSaveEmbeddingModel}
+              disabled={savingEmbeddingModel}
+              className="flex items-center gap-1 px-3.5 py-2 text-sm font-medium bg-green-600 hover:bg-green-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-md transition-colors"
+            >
+              {savingEmbeddingModel ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+              {t('sys.embeddingSave')}
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-gray-400">{t('sys.embeddingHint')}</p>
+          {embeddingModelMessage && (
+            <div className={`mt-2 text-xs ${embeddingModelMessage.includes('失败') ? 'text-red-500' : 'text-green-600'}`}>
+              {embeddingModelMessage}
+            </div>
+          )}
+          {embeddingModel && (
+            <div className="mt-2 text-xs text-green-700 dark:text-green-400">
+              {t('sys.embeddingCurrent')}: <code className="font-mono bg-green-100 dark:bg-green-900/40 px-1 rounded">{embeddingModel}</code>
             </div>
           )}
         </div>

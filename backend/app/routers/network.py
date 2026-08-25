@@ -68,39 +68,29 @@ async def get_keyword_network(
     limit: int = Query(200, ge=1, le=500),
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import select as sa_select
-    from app.models import PaperFeatures, Paper
+    from app.stats import keyword_network
 
-    result = await db.execute(
-        sa_select(PaperFeatures.keywords)
-        .join(Paper)
-        .where(PaperFeatures.keywords.isnot(None))
-        .order_by(Paper.published_at.desc())
-        .limit(limit)
-    )
+    # 统计核心见 app/stats.py（与 ai.py / topic.py 共用同一实现，数据源 papers.keywords_cn）
+    return await keyword_network(db, limit=limit)
 
-    nodes_map = {}
-    links_map = {}
 
-    for row in result:
-        keywords = row[0] if row[0] else []
-        for kw in keywords:
-            if kw and kw not in nodes_map:
-                nodes_map[kw] = {"id": kw, "name": kw, "count": 0, "group": "keyword"}
-            if kw:
-                nodes_map[kw]["count"] += 1
+async def _compute_keyword_gaps(db: AsyncSession, limit: int = 10) -> list:
+    """研究空白识别（薄代理：实现收敛在 app/stats.py，供 /network/gaps 与 topic.py 复用）。"""
+    from app.stats import compute_keyword_gaps
 
-        for i in range(len(keywords)):
-            for j in range(i + 1, len(keywords)):
-                pair = tuple(sorted([keywords[i], keywords[j]]))
-                if pair not in links_map:
-                    links_map[pair] = {"source": pair[0], "target": pair[1], "value": 0}
-                links_map[pair]["value"] += 1
+    return await compute_keyword_gaps(db, limit=limit)
 
-    nodes = sorted(nodes_map.values(), key=lambda x: x["count"], reverse=True)[:80]
-    node_ids = {n["id"] for n in nodes}
-    links = [l for l in links_map.values() if l["source"] in node_ids and l["target"] in node_ids][:400]
 
-    return {"nodes": nodes, "links": links}
+@router.get("/network/gaps")
+async def get_keyword_gaps(
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db)
+):
+    """研究空白组合列表（纯数据接口，无 LLM 调用，秒回）。
+
+    LLM 解读走 POST /network/gaps/analyze（后台任务），见 topic.py。
+    """
+    gaps = await _compute_keyword_gaps(db, limit=limit)
+    return {"gaps": gaps, "total": len(gaps)}
 
 

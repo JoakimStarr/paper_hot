@@ -93,15 +93,9 @@ async def _collect_analysis_data(db: AsyncSession) -> dict:
     """))
     keyword_freq = [{"keyword": row[0], "count": row[1]} for row in keyword_freq_result.fetchall()]
 
-    cooccurrence_result = await db.execute(sa_text("""
-        SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
-        FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
-        WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
-        GROUP BY a.value, b.value
-        ORDER BY cnt DESC
-        LIMIT 15
-    """))
-    cooccurrence_data = [{"kw1": row[0], "kw2": row[1], "count": row[2]} for row in cooccurrence_result.fetchall()]
+    # 关键词共现统计收敛在 app/stats.py（与 network.py / topic.py 共用同一实现）
+    from app.stats import keyword_cooccurrence
+    cooccurrence_data = await keyword_cooccurrence(db, limit=15)
 
     subfield_keyword_result = await db.execute(sa_text("""
         SELECT p.economics_subfield, j.value AS keyword, COUNT(*) as cnt

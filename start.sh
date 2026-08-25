@@ -28,7 +28,7 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# 记录实际运行端口 / 进程的文件（stop、status 用于定位；端口被占用顺延后保存最新值）
+# 记录实际运行端口 / 进程 / 启动模式的文件（stop、status、restart 用于定位；端口被占用顺延后保存最新值）
 RUNTIME_PORTS_FILE="$PROJECT_DIR/.runtime_ports"
 # 端口顺延最大步数：基础端口被占用则 +1 逐级寻找空闲端口，最多顺延该步数（可按需覆盖）
 PORT_MAX_TRIES=${PORT_MAX_TRIES:-100}
@@ -40,14 +40,15 @@ usage() {
     echo "  start      启动生产模式（默认）"
     echo "  dev        启动开发模式（热重载 / HMR）"
     echo "  stop       停止所有服务"
-    echo "  restart    重启服务（生产模式）"
+    echo "  restart    重启服务（默认沿用上次启动模式；可用 restart dev / restart prod 显式指定）"
     echo "  status     查看服务运行状态"
     echo "  help       -h --help  显示本帮助"
     echo ""
     echo "Examples:"
     echo "  ./start.sh           # 等同 ./start.sh start"
     echo "  ./start.sh dev"
-    echo "  ./start.sh restart"
+    echo "  ./start.sh restart   # 沿用上次模式重启"
+    echo "  ./start.sh restart dev"
     echo ""
     echo "端口说明："
     echo "  默认后端 8000、前端 3000（backend/.env 可改）。若端口被占用，启动时会先展示"
@@ -55,6 +56,12 @@ usage() {
     echo "  （3000 被占用则尝试 3001、3002...），[q] 退出。可用 PORT_CONFLICT=kill|shift"
     echo "  预置选择（非交互环境默认自动顺延）。前端通过 next rewrites 在运行时把 /api"
     echo "  代理到后端实际端口，因此后端端口变化无需重建前端。"
+    echo ""
+    echo "其他说明："
+    echo "  - 启动前若检测到本项目的旧实例仍在运行，会先自动停止，避免双实例并存。"
+    echo "  - dev 模式启动时会清空 .next（依赖或导入结构变更后旧产物会导致"
+    echo "    Loading CSS chunk failed 等前端报错）。"
+    echo "  - 健康检查为轮询等待（后端 30s / 前端 60s），替代旧的固定 sleep。"
 }
 
 # ───────────────────────── 停止服务 ─────────────────────────
@@ -94,11 +101,39 @@ stop_services() {
     echo "✅ ApplePaper has been stopped"
 }
 
+# ───────── 启动前自动清理本项目的旧实例 ─────────
+# 背景：旧实例未停时再次 start 会端口顺延另起新进程，导致双实例并存、
+# 浏览器连到陈旧的 dev server（典型症状：Loading CSS chunk ... failed）。
+# 仅清理「记录在案且确实存活且工作目录属于本项目」的进程；记录的进程均已退出时只清掉过期记录。
+stop_stale_instance() {
+    [ -f "$RUNTIME_PORTS_FILE" ] || return 0
+    local bp fp pid alive=""
+    bp=$(grep -E '^backend_pid=' "$RUNTIME_PORTS_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' \r')
+    fp=$(grep -E '^frontend_pid=' "$RUNTIME_PORTS_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' \r')
+    for pid in $bp $fp; do
+        kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+    done
+    if [ -z "$alive" ]; then
+        # 记录的进程均已退出：仅清理过期记录
+        rm -f "$RUNTIME_PORTS_FILE"
+        return 0
+    fi
+    echo -e "${YELLOW}♻️  检测到本项目的旧实例仍在运行 (PID:${alive})，先自动停止以避免双实例${NC}"
+    kill_project_pids "$bp" "Backend(stale)"
+    kill_project_pids "$fp" "Frontend(stale)"
+    rm -f "$RUNTIME_PORTS_FILE"
+    sleep 1
+}
+
 # ───────────────────────── 查看状态 ─────────────────────────
 status_services() {
     echo "📊 ApplePaper service status:"
     load_ports
     load_runtime_ports
+    local mode
+    mode=$(grep -E '^mode=' "$RUNTIME_PORTS_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' \r')
+    mode=${mode:-unknown}
+    echo "   Last start mode: ${mode}"
     echo ""
     if lsof -t -i:$BACKEND_PORT >/dev/null 2>&1; then
         echo -e "   Backend  (port $BACKEND_PORT): ${GREEN}RUNNING${NC} (PID: $(lsof -t -i:$BACKEND_PORT | tr '\n' ' '))"
@@ -117,8 +152,9 @@ start_production() {
     echo -e "🚀 Starting ApplePaper (${GREEN}Production${NC} Mode)..."
     echo ""
 
+    stop_stale_instance
     load_ports
-    resolve_ports
+    resolve_ports prod
     echo "   Ports: backend=${BACKEND_PORT}, frontend=${FRONTEND_PORT}"
 
     # 启动后端服务
@@ -131,8 +167,8 @@ start_production() {
     echo "backend_pid=${BACKEND_PID}" >> "$RUNTIME_PORTS_FILE"
     echo "   Backend started (PID: $BACKEND_PID)"
 
-    # 等待后端启动
-    sleep 2
+    # 等后端健康后再启前端：避免前端先就绪、浏览器打开即吃到代理 500（socket hang up）
+    wait_for_http "http://localhost:${BACKEND_PORT}/health" "Backend" "backend/backend.log" 30 || true
 
     # 构建前端（生产模式）：已存在生产构建产物时跳过，可用 FORCE_BUILD=1 强制重建。
     # 端口不再在构建期内联：前端经 next rewrites 在运行时代理到后端实际地址，因此后端端口变化无需重建。
@@ -152,9 +188,6 @@ start_production() {
     echo "frontend_pid=${FRONTEND_PID}" >> "$RUNTIME_PORTS_FILE"
     echo "   Frontend started (PID: $FRONTEND_PID)"
 
-    # 等待前端启动
-    sleep 3
-
     print_urls "Production"
     health_check
 }
@@ -165,27 +198,32 @@ start_dev() {
     echo -e "${YELLOW}⚠️  DEV MODE: Hot reload enabled, not for production use${NC}"
     echo ""
 
+    stop_stale_instance
     load_ports
-    resolve_ports
+    resolve_ports dev
     echo "   Ports: backend=${BACKEND_PORT}, frontend=${FRONTEND_PORT}"
 
     # 启动后端服务
-    echo "📦 Starting backend server (dev)..."
+    # 注意：WSL 环境下 uvicorn --reload 的 spawn 子进程存在 loopback SYN 不应答问题
+    # （端口在监听但 TCP 握手挂起），故 dev 模式也用无 reload 启动；改后端代码后需 restart
+    echo "📦 Starting backend server (dev, no reload)..."
     cd "$PROJECT_DIR/backend"
     require_venv
     source "$VENV_DIR/bin/activate"
-    setsid nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload > backend.log 2>&1 &
+    setsid nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" > backend.log 2>&1 &
     BACKEND_PID=$!
     echo "backend_pid=${BACKEND_PID}" >> "$RUNTIME_PORTS_FILE"
-    echo "   Backend started (PID: $BACKEND_PID) with hot reload"
+    echo "   Backend started (PID: $BACKEND_PID) without hot reload"
 
-    sleep 2
+    # 等后端健康后再启前端：避免前端先就绪、浏览器打开即吃到代理 500（socket hang up）
+    wait_for_http "http://localhost:${BACKEND_PORT}/health" "Backend" "backend/backend.log" 30 || true
 
     # 启动前端（开发模式）
     echo ""
     echo "📱 Starting frontend server (dev with HMR)..."
     cd "$PROJECT_DIR/frontend"
-    # dev 与生产共用 .next，先清空避免与 next build 产物冲突
+    # dev 与生产共用 .next；依赖或导入结构变更后，旧产物会导致浏览器端
+    # 「Loading CSS chunk ... failed」等问题，启动前一律清空重建
     rm -rf .next
     setsid nohup npm run dev -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
     FRONTEND_PID=$!
@@ -193,10 +231,26 @@ start_dev() {
     echo "   Frontend started (PID: $FRONTEND_PID)"
     echo "   Hot Module Replacement enabled"
 
-    sleep 3
-
     print_urls "DEV"
     health_check
+}
+
+# ───────────────────────── 重启服务 ─────────────────────────
+# 默认沿用上次启动模式（.runtime_ports 中的 mode= 记录，缺省 prod）；
+# 也可显式指定：./start.sh restart dev | ./start.sh restart prod
+restart_services() {
+    local target="${1:-}"
+    if [ -z "$target" ]; then
+        target=$(grep -E '^mode=' "$RUNTIME_PORTS_FILE" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' \r')
+        target=${target:-prod}
+    fi
+    stop_services
+    echo ""
+    if [ "$target" = "dev" ]; then
+        start_dev
+    else
+        start_production
+    fi
 }
 
 # ───────────────────────── 端口处理 ─────────────────────────
@@ -334,13 +388,16 @@ next_free_port() {
 }
 
 # 仅用于启动流程：按顺序解析实际可用端口，并导出前端运行时所需的后端地址
+# mode 参数（dev|prod）写入 .runtime_ports，供 restart 沿用上次模式
 resolve_ports() {
+    local mode="${1:-prod}"
     BACKEND_PORT=$(next_free_port "$BACKEND_PORT" "backend") || exit 1
     FRONTEND_PORT=$(next_free_port "$FRONTEND_PORT" "frontend") || exit 1
     # 前端通过 next rewrites 在运行时把 /api 代理到后端，仅需注入后端实际地址，无需构建期内联
     export BACKEND_API_URL="http://localhost:${BACKEND_PORT}"
-    # 记录实际端口，供本次启动后的 stop / status 使用
+    # 记录实际端口与模式，供本次启动后的 stop / status / restart 使用
     cat > "$RUNTIME_PORTS_FILE" <<EOF
+mode=${mode}
 backend_port=${BACKEND_PORT}
 frontend_port=${FRONTEND_PORT}
 EOF
@@ -362,14 +419,28 @@ print_urls() {
     echo ""
 }
 
+# ───────── 就绪等待（轮询重试，替代固定 sleep） ─────────
+# dev 首次编译、后端 reload 都可能超过固定等待时长；轮询直至就绪或超时。
+# 返回 0 = 就绪；1 = 超时（调用方用 || true 兜底，不影响 set -e）
+wait_for_http() {
+    local url="$1" name="$2" log_hint="$3" tries="${4:-30}"
+    local i=0
+    while [ "$i" -lt "$tries" ]; do
+        if curl -sf --max-time 5 -o /dev/null "$url" 2>/dev/null; then
+            echo -e "${GREEN}✅ ${name} 就绪 (${url})${NC}"
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    echo -e "${RED}⚠️  ${name} 在 ${tries}s 内未就绪（${url}），请检查 ${log_hint}${NC}"
+    return 1
+}
+
+# 健康检查：后端 /health + 前端首页，均带重试等待
 health_check() {
-    # 检查是否正常运行
-    sleep 1
-    if curl -s http://localhost:${BACKEND_PORT}/health > /dev/null 2>&1; then
-        echo "✅ Backend health check passed"
-    else
-        echo "⚠️  Backend health check failed, check backend/backend.log"
-    fi
+    wait_for_http "http://localhost:${BACKEND_PORT}/health" "Backend" "backend/backend.log" 30 || true
+    wait_for_http "http://localhost:${FRONTEND_PORT}" "Frontend" "frontend/frontend.log" 60 || true
 }
 
 # ───────────────────────── 命令分发 ─────────────────────────
@@ -386,9 +457,7 @@ case "$COMMAND" in
         stop_services
         ;;
     restart)
-        stop_services
-        echo ""
-        start_production
+        restart_services "${2:-}"
         ;;
     status)
         status_services

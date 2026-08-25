@@ -133,7 +133,38 @@ class PaperScheduler:
 
     def is_running(self) -> bool:
         return self.scheduler.running
-    
+
+    async def _process_and_score_paper(
+        self,
+        db,
+        paper,
+        keyword_frequencies: Dict,
+        previous_frequencies: Dict,
+    ) -> List:
+        """AI 处理 + 特征入库 + 四项打分入库（三个爬虫流程共用的单一实现）。
+
+        返回 [recency, venue, trend, final] 分数，调用方可用于日志或统计。
+        """
+        summary, keywords, embedding, topic = await self.ai_processor.process_paper(
+            paper.abstract,
+            paper.title
+        )
+        await PaperCRUD.create_paper_features(
+            db, paper.id, summary, keywords or [], embedding, topic
+        )
+        recency_score = self.scoring_system.compute_recency_score(paper.published_at)
+        venue_score = self.scoring_system.compute_venue_score(paper.venue, paper.source)
+        trend_score = self.scoring_system.compute_trend_score(
+            keywords or [], keyword_frequencies, previous_frequencies
+        )
+        final_score = self.scoring_system.compute_final_score(
+            recency_score, venue_score, trend_score
+        )
+        await PaperCRUD.create_paper_score(
+            db, paper.id, recency_score, venue_score, trend_score, final_score
+        )
+        return [recency_score, venue_score, trend_score, final_score]
+
     async def fetch_and_process_papers(self):
         logger.info("Starting paper fetch and process job")
         
@@ -152,42 +183,10 @@ class PaperScheduler:
                     paper_create = PaperCreate(**paper_data)
                     paper = await PaperCRUD.create_paper(db, paper_create)
                     
-                    summary, keywords, embedding, topic = await self.ai_processor.process_paper(
-                        paper.abstract,
-                        paper.title
+                    await self._process_and_score_paper(
+                        db, paper, keyword_frequencies, previous_frequencies
                     )
-                    
-                    await PaperCRUD.create_paper_features(
-                        db,
-                        paper.id,
-                        summary,
-                        keywords or [],
-                        embedding,
-                        topic
-                    )
-                    
-                    recency_score = self.scoring_system.compute_recency_score(paper.published_at)
-                    venue_score = self.scoring_system.compute_venue_score(paper.venue, paper.source)
-                    trend_score = self.scoring_system.compute_trend_score(
-                        keywords or [],
-                        keyword_frequencies,
-                        previous_frequencies
-                    )
-                    final_score = self.scoring_system.compute_final_score(
-                        recency_score,
-                        venue_score,
-                        trend_score
-                    )
-                    
-                    await PaperCRUD.create_paper_score(
-                        db,
-                        paper.id,
-                        recency_score,
-                        venue_score,
-                        trend_score,
-                        final_score
-                    )
-                    
+
                     logger.info(f"Processed paper: {paper.title[:50]}...")
                 
                 await db.commit()
@@ -275,42 +274,10 @@ class PaperScheduler:
                             paper_create = PaperCreate(**paper_data)
                             paper = await PaperCRUD.create_paper(db, paper_create)
                             
-                            summary, keywords, embedding, topic = await self.ai_processor.process_paper(
-                                paper.abstract,
-                                paper.title
+                            await self._process_and_score_paper(
+                                db, paper, keyword_frequencies, previous_frequencies
                             )
-                            
-                            await PaperCRUD.create_paper_features(
-                                db,
-                                paper.id,
-                                summary,
-                                keywords or [],
-                                embedding,
-                                topic
-                            )
-                            
-                            recency_score = self.scoring_system.compute_recency_score(paper.published_at)
-                            venue_score = self.scoring_system.compute_venue_score(paper.venue, paper.source)
-                            trend_score = self.scoring_system.compute_trend_score(
-                                keywords or [],
-                                keyword_frequencies,
-                                previous_frequencies
-                            )
-                            final_score = self.scoring_system.compute_final_score(
-                                recency_score,
-                                venue_score,
-                                trend_score
-                            )
-                            
-                            await PaperCRUD.create_paper_score(
-                                db,
-                                paper.id,
-                                recency_score,
-                                venue_score,
-                                trend_score,
-                                final_score
-                            )
-                            
+
                             papers_fetched += 1
                             logger.info(f"Processed economics paper from {journal_name}: {paper.title[:50]}...")
                             
@@ -605,44 +572,10 @@ class PaperScheduler:
                                 paper_create = PaperCreate(**paper_data)
                                 paper = await PaperCRUD.create_paper(db, paper_create)
                                 
-                                # AI处理
-                                summary, keywords, embedding, topic = await self.ai_processor.process_paper(
-                                    paper.abstract,
-                                    paper.title
+                                await self._process_and_score_paper(
+                                    db, paper, keyword_frequencies, previous_frequencies
                                 )
-                                
-                                await PaperCRUD.create_paper_features(
-                                    db,
-                                    paper.id,
-                                    summary,
-                                    keywords or [],
-                                    embedding,
-                                    topic
-                                )
-                                
-                                # 计算分数
-                                recency_score = self.scoring_system.compute_recency_score(paper.published_at)
-                                venue_score = self.scoring_system.compute_venue_score(paper.venue, paper.source)
-                                trend_score = self.scoring_system.compute_trend_score(
-                                    keywords or [],
-                                    keyword_frequencies,
-                                    previous_frequencies
-                                )
-                                final_score = self.scoring_system.compute_final_score(
-                                    recency_score,
-                                    venue_score,
-                                    trend_score
-                                )
-                                
-                                await PaperCRUD.create_paper_score(
-                                    db,
-                                    paper.id,
-                                    recency_score,
-                                    venue_score,
-                                    trend_score,
-                                    final_score
-                                )
-                                
+
                                 papers_fetched += 1
                                 logger.info(f"Processed CNKI paper from {journal_name}: {paper.title[:50]}...")
                                 

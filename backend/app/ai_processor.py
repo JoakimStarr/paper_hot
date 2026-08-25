@@ -93,7 +93,25 @@ class AIProcessor:
         return result
 
     def compute_embedding(self, text: str) -> Optional[str]:
-        return None
+        """生成文本 embedding（JSON 字符串，落库前序列化）。
+
+        P0-4：原实现恒返回 None，导致 scheduler 打分路径新入库论文永远没有
+        embedding，只能依赖手动触发 /topic-validator/backfill。这里改为调用全局
+        AITrendService.embed_texts 复用同一套 provider/模型配置与降级逻辑（失败
+        返回 None，由调用方决定不回填，不影响打分主流程）。
+        """
+        try:
+            from app.ai_service import ai_trend_service
+            if text is None or not str(text).strip():
+                return None
+            vecs = ai_trend_service.embed_texts([str(text)])
+            if not vecs or not vecs[0]:
+                return None
+            import json
+            return json.dumps(vecs[0])
+        except Exception as e:
+            logger.warning(f"compute_embedding failed: {e}")
+            return None
 
     def classify_topic(self, abstract: str, title: str) -> Optional[str]:
         combined_text = f"{title} {abstract}".lower()
@@ -126,7 +144,7 @@ class AIProcessor:
     async def process_paper(self, abstract: str, title: str) -> Tuple[str, List[str], Optional[str], Optional[str]]:
         summary = self.generate_summary(abstract, title)
         keywords = self.extract_keywords(abstract, title)
-        embedding = None
+        embedding = self.compute_embedding(f"{title}\n{(abstract or '')[:2000]}")
         topic = self.classify_topic(abstract, title)
 
         return summary, keywords, embedding, topic

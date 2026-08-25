@@ -234,6 +234,7 @@ export interface SettingsInfo {
   app_version?: string;
   custom_providers?: CustomProviderStatus[];
   default_model?: string | null;
+  embedding_model?: string | null;
 }
 
 export interface ModelLinkTestResult {
@@ -264,4 +265,85 @@ export interface MaintenanceResult {
   deleted_features: number;
   deleted_scores: number;
   deleted_reports: number;
+}
+
+// ============ 选题中心（研究空白 + 选题验证器） ============
+
+export interface ResearchGap {
+  source: string;
+  target: string;
+  source_count: number;
+  target_count: number;
+  cooccurrence: number;
+  gap_score: number;
+}
+
+export interface ResearchGapsResponse {
+  gaps: ResearchGap[];
+  total: number;
+}
+
+export interface GapAnalysisResponse {
+  report_id: number | null;
+  status: string | null;
+  is_running: boolean;
+  model: string | null;
+  created_at: string | null;
+  raw_analysis: string | null;
+  gaps_snapshot: ResearchGap[] | null;
+  error_message: string | null;
+}
+
+export interface ValidatorStatus {
+  embedded_papers: number;
+  total_papers: number;
+}
+
+/** 验证器召回的一篇近似论文（recall 可见化）。 */
+export interface RetrievedPaper {
+  id: number;
+  title: string;
+  source: string | null;
+  published_at: string | null;
+  keywords: string[];
+  similarity: number;
+}
+
+/** 验证器 SSE 流首条论文元消息（召回数据 + 模式 + 拥挤度统计）。 */
+export interface ValidatorMeta {
+  papers: RetrievedPaper[];
+  mode: string;
+  stats: {
+    top30_avg_similarity?: number;
+    max_similarity?: number;
+    recent_3m_count?: number;
+    keyword_overlap?: Array<{ keyword: string; count: number }>;
+  };
+}
+
+// ============ 选题库（决策层：选题工作台项目） ============
+
+export type TopicProjectStatus = 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
+
+export interface TopicProject {
+  id: number;
+  title: string;
+  source_gap: string | null;
+  source_paper_id: number | null;
+  novelty: number | null;
+  crowding: string | null;
+  feasibility: number | null;
+  status: TopicProjectStatus;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface TopicProjectPayload {
+  title: string;
+  source_gap?: string | null;
+  source_paper_id?: number | null;
+  validation_report?: string | null;
+  novelty?: number | null;
+  crowding?: string | null;
+  feasibility?: number | null;
 }

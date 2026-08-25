@@ -8,21 +8,40 @@ import json as _json
 
 
 class UnicodeJSON(TypeDecorator):
-    impl = JSON
+    # 用 Text 而非 JSON 作为底层实现：JSON impl 会对本类型已序列化的字符串再编码一次，
+    # 导致 list/dict 被双重编码存成 '"[...]"'（历史数据 2484 篇即因此损坏）。
+    impl = Text
     cache_ok = True
 
     def process_bind_param(self, value, dialect):
-        if value is not None:
-            return _json.dumps(value, ensure_ascii=False)
-        return value
+        if value is None:
+            return None
+        if isinstance(value, str):
+            # 已是序列化后的 JSON 字符串：原样存储，避免二次编码
+            try:
+                _json.loads(value)
+                return value
+            except (_json.JSONDecodeError, TypeError):
+                return _json.dumps(value, ensure_ascii=False)
+        return _json.dumps(value, ensure_ascii=False)
 
     def process_result_value(self, value, dialect):
-        if value is not None and isinstance(value, str):
+        if value is None or not isinstance(value, str):
+            return value
+        try:
+            result = _json.loads(value)
+        except (_json.JSONDecodeError, TypeError):
+            return value
+        # 兼容历史双重编码数据（'"[\"...\"]"'）：内层仍是 JSON 字符串则再解一层
+        if isinstance(result, str):
             try:
-                return _json.loads(value)
+                inner = _json.loads(result)
+                if isinstance(inner, (list, dict)):
+                    return inner
             except (_json.JSONDecodeError, TypeError):
-                return value
-        return value
+                pass
+            return result
+        return result
 from app.database import Base
 from app.config import settings
 
@@ -172,5 +191,107 @@ class AIAnalysisReport(Base):
     tokens_used = Column(Integer, default=0)
     processing_time_ms = Column(Integer, default=0)
     status = Column(String(20), default="success")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ResearchGapReport(Base):
+    """研究空白 LLM 解读报告（P1）。
+
+    多用户预留：user_id 当前恒为 "local"，接入账号体系后按真实用户隔离，
+    表结构无需迁移。
+    """
+    __tablename__ = "research_gap_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    gaps_snapshot = Column(UnicodeJSON, nullable=True)  # 触发时的空白组合快照（数据可追溯）
+    raw_analysis = Column(Text, nullable=True)          # LLM 生成的空白假设卡片（markdown）
+    model = Column(String(50), nullable=True)
+    status = Column(String(20), default="running", index=True)
+    error_message = Column(Text, nullable=True)
+    processing_time_ms = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TopicProject(Base):
+    """选题工作台：把「验证过的选题」沉淀为可决策、可跟踪的项目（P6）。
+
+    多用户预留：user_id 当前恒为 "local"，接入账号体系后按真实用户隔离。
+    status 流转：to_validate -> validated -> subscribed -> abandoned，
+    用于记录选题从「刚验证」到「决定做了(订阅跟踪)」或「放弃」的决策状态。
+    """
+    __tablename__ = "topic_projects"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    title = Column(String(500), nullable=False)            # 选题标题
+    source_gap = Column(String(200), nullable=True)        # 来源空白词对，如 "耐心资本×新质生产力"
+    source_paper_id = Column(Integer, nullable=True)       # 若从某篇论文起题，记录来源论文 id
+    validation_report = Column(Text, nullable=True)        # 验证器生成的报告（markdown）
+    novelty = Column(Integer, nullable=True)               # 新颖性评分 1-10
+    crowding = Column(String(20), nullable=True)           # 拥挤度 低/中/高
+    feasibility = Column(Integer, nullable=True)           # 可行性评分 1-10
+    status = Column(String(20), default="to_validate", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Favorite(Base):
+    """收藏（P1-10 个人化）：替代 localStorage，跨设备可用。
+
+    多用户预留：user_id 当前恒为 "local"。
+    """
+    __tablename__ = "favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "paper_id", name="uq_favorites_user_paper"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReadingHistory(Base):
+    """阅读历史（P1-10 个人化）：已读/未读标记与"我的研究栈"数据源。"""
+    __tablename__ = "reading_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "paper_id", name="uq_reading_user_paper"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    read_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class FollowedSubfield(Base):
+    """关注的子领域（P1-10 个人化）：驱动研究工作台推荐与领域快讯。"""
+    __tablename__ = "followed_subfields"
+    __table_args__ = (
+        UniqueConstraint("user_id", "subfield", name="uq_followed_user_subfield"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    subfield = Column(String(100), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReviewReport(Base):
+    """综述生成报告（P2-11 产出环节）：输入选题 -> 检索论文 -> AI 结构化综述。
+
+    多用户预留：user_id 当前恒为 "local"。
+    """
+    __tablename__ = "review_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    topic = Column(String(500), nullable=False)          # 综述选题
+    content = Column(Text, nullable=True)                # markdown 综述正文
+    papers_json = Column(UnicodeJSON, nullable=True)     # 引用的论文列表快照
+    model = Column(String(50), nullable=True)
+    status = Column(String(20), default="running", index=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

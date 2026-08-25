@@ -1,5 +1,14 @@
 export function getIssuePeriod(doi: string | null, publishedAt: string | null, journalIssue: string | null): string {
-  if (journalIssue) return journalIssue;
+  // 优先级 1: journal_issue（最准，CNKI 源为"2026年第03期"格式）
+  if (journalIssue?.trim()) return journalIssue.trim();
+  // 优先级 2: published_at（回退到"YYYY年M月"，比只显示年更有信息量）
+  if (publishedAt) {
+    const d = new Date(publishedAt);
+    if (!Number.isNaN(d.getTime())) {
+      return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+    }
+  }
+  // 优先级 3: DOI 启发式兜底（arXiv 等缺 issue 缺可靠日期时的最后一道）
   if (doi) {
     const fy = doi.match(/f\.(\d{4})\.(\d+)$/);
     if (fy && fy[2].length === 4) {
@@ -7,16 +16,11 @@ export function getIssuePeriod(doi: string | null, publishedAt: string | null, j
       return `${fy[1]}年 第${issue}期`;
     }
     const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
-    if (mm) {
-      return `${mm[1]}年 第${parseInt(mm[2], 10)}期`;
-    }
+    if (mm) return `${mm[1]}年${parseInt(mm[2], 10)}月`;
     const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
-    if (ymd) {
-      return `${ymd[1]}年 第${parseInt(ymd[2], 10)}期`;
-    }
-  }
-  if (publishedAt) {
-    return `${new Date(publishedAt).getFullYear()}年`;
+    if (ymd) return `${ymd[1]}年${parseInt(ymd[2], 10)}月`;
+    const y4 = doi.match(/(19|20)\d{2}/);
+    if (y4) return `${y4[0]}年`;
   }
   return '';
 }

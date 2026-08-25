@@ -1,18 +1,33 @@
 'use client';
 
 import React, { useEffect, useRef, useMemo, useCallback } from 'react';
-import * as d3 from 'd3';
+import {
+  forceSimulation,
+  forceLink,
+  forceManyBody,
+  forceCenter,
+  forceCollide,
+  type Simulation,
+  type SimulationNodeDatum,
+  type SimulationLinkDatum,
+} from 'd3-force';
+import { select, type BaseType, type Selection } from 'd3-selection';
+import { scaleLinear, scaleOrdinal } from 'd3-scale';
+import { schemeCategory10 } from 'd3-scale-chromatic';
+import { max } from 'd3-array';
+import { zoom, zoomIdentity, zoomTransform, type ZoomBehavior } from 'd3-zoom';
+import 'd3-transition'; // 仅为 d3-selection 注入 .transition() 扩展
 import { NetworkData, NetworkNode } from '@/types/paper';
 import { useTheme } from '@/contexts/ThemeContext';
 
-interface SimNode extends d3.SimulationNodeDatum {
+interface SimNode extends SimulationNodeDatum {
   id: string;
   name: string;
   count: number;
   group: string;
 }
 
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
+interface SimLink extends SimulationLinkDatum<SimNode> {
   value: number;
 }
 
@@ -41,10 +56,10 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   const containerRef = useRef<HTMLDivElement | null>(null);
   const nodeGroupsRef = useRef<any>(null);
   const linkLinesRef = useRef<any>(null);
-  const simulationRef = useRef<d3.Simulation<SimNode, undefined> | null>(null);
+  const simulationRef = useRef<Simulation<SimNode, undefined> | null>(null);
   const initializedRef = useRef(false);
   const gRef = useRef<any>(null);
-  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const prevHighlightRef = useRef<string | null>(null);
 
   const { isDark } = useTheme();
@@ -99,13 +114,13 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
     const rect = svgEl.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
 
-    const k = d3.zoomTransform(svgEl).k;
+    const k = zoomTransform(svgEl).k;
     const scale = k < 1 ? 1 : k;
     const tx = rect.width / 2 - (target.x * scale);
     const ty = rect.height / 2 - (target.y * scale);
-    const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
+    const t = zoomIdentity.translate(tx, ty).scale(scale);
 
-    d3.select(svgEl)
+    select(svgEl)
       .transition()
       .duration(450)
       .call(zoomBehaviorRef.current.transform, t);
@@ -142,32 +157,32 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       })
       .map(l => ({ ...l, value: l.value || 1 }));
 
-    const colorScale = d3.scaleOrdinal<string>(d3.schemeCategory10);
-    const linkWidthScale = d3.scaleLinear<number>()
-      .domain([0, d3.max(links, d => d.value) || 1])
+    const colorScale = scaleOrdinal<string>(schemeCategory10);
+    const linkWidthScale = scaleLinear<number>()
+      .domain([0, max(links, d => d.value) || 1])
       .range([0.5, 3]);
-    const nodeRadiusScale = d3.scaleLinear<number>()
-      .domain([0, d3.max(nodes, d => d.count) || 1])
+    const nodeRadiusScale = scaleLinear<number>()
+      .domain([0, max(nodes, d => d.count) || 1])
       .range([5, 22]);
 
     if (!initializedRef.current) {
-      d3.select(svgRef.current).selectAll('*').remove();
+      select(svgRef.current).selectAll('*').remove();
 
-      const svg = d3.select(svgRef.current)
+      const svg = select(svgRef.current)
         .attr('width', width)
         .attr('height', height);
 
       const g = svg.append('g');
       gRef.current = g;
 
-      const zoom = d3.zoom<SVGSVGElement, unknown>()
+      const zoomBehavior = zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.2, 5])
         .on('zoom', (event) => {
           g.attr('transform', event.transform);
         });
 
-      zoomBehaviorRef.current = zoom;
-      svg.call(zoom);
+      zoomBehaviorRef.current = zoomBehavior;
+      svg.call(zoomBehavior);
       svg.on('click', () => {
         onNodeClick({ id: '', name: '', group: '' });
       });
@@ -177,13 +192,13 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       if (gRef.current) {
         gRef.current.selectAll('*').remove();
       } else {
-        const g = d3.select(svgRef.current).select('g');
+        const g = select(svgRef.current).select('g');
         g.selectAll('*').remove();
         gRef.current = g;
       }
     }
 
-    const g = gRef.current as d3.Selection<SVGGElement, unknown, null, undefined>;
+    const g = gRef.current as Selection<SVGGElement, unknown, null, undefined>;
 
     linkLinesRef.current = g.append('g')
       .selectAll('line')
@@ -230,11 +245,11 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       simulationRef.current.stop();
     }
 
-    const simulation = d3.forceSimulation<SimNode>(nodes)
-      .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-200))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => nodeRadiusScale((d as SimNode).count) + 2));
+    const simulation = forceSimulation<SimNode>(nodes)
+      .force('link', forceLink<SimNode, SimLink>(links).id(d => d.id).distance(80))
+      .force('charge', forceManyBody().strength(-200))
+      .force('center', forceCenter(width / 2, height / 2))
+      .force('collision', forceCollide().radius(d => nodeRadiusScale((d as SimNode).count) + 2));
 
     simulationRef.current = simulation;
 
@@ -258,8 +273,8 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   useEffect(() => {
     if (!nodeGroupsRef.current || !linkLinesRef.current) return;
 
-    const nodeGroups = nodeGroupsRef.current as d3.Selection<d3.BaseType, SimNode, SVGGElement, unknown>;
-    const linkLines = linkLinesRef.current as d3.Selection<d3.BaseType, SimLink, SVGGElement, unknown>;
+    const nodeGroups = nodeGroupsRef.current as Selection<BaseType, SimNode, SVGGElement, unknown>;
+    const linkLines = linkLinesRef.current as Selection<BaseType, SimLink, SVGGElement, unknown>;
     const connectedIds = new Set(connectedNodes.map(n => n.id));
 
     nodeGroups

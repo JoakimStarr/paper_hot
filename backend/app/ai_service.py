@@ -203,6 +203,67 @@ class AITrendService:
                 return name, model[len(name) + 1:]
         return None, model
 
+    # ---------- Embedding（选题验证器 P2） ----------
+
+    # 各 provider 的默认 embedding 模型（均支持 OpenAI 兼容 /embeddings 端点）
+    DEFAULT_EMBEDDING_MODELS = {
+        "zhipu": "embedding-3",
+        "siliconflow": "BAAI/bge-large-zh-v1.5",
+        "openai": "text-embedding-3-small",
+    }
+
+    def embed_texts(self, texts: List[str], model: Optional[str] = None) -> Optional[List[Optional[List[float]]]]:
+        """批量文本向量化（同步调用，供后台任务与验证器使用）。
+
+        - 模型优先级：显式 model 参数 > settings.embedding_model > provider 默认映射
+        - 模型格式 'provider/model'，支持自定义 provider（如 '阿里云百炼/qwen3.7-text-embedding'）
+        - 自定义 provider 也可通过 DEFAULT_EMBEDDING_MODELS 指定默认 embedding 模型
+        - 任何失败返回 None（调用方负责降级，如 TF-IDF），不抛异常
+        """
+        if not texts:
+            return []
+        try:
+            embedding_model = model or getattr(settings, "embedding_model", None)
+            provider = None
+            bare_model = None
+            if embedding_model:
+                provider, bare_model = self._resolve_model(embedding_model)
+            if not provider:
+                # 未指定或解析失败：按 provider 可用性取默认 embedding 模型
+                # 依次尝试内置默认映射 + 自定义 provider（若配了 embedding 模型）
+                candidates = dict(self.DEFAULT_EMBEDDING_MODELS)
+                for cp in settings.get_custom_providers():
+                    cp_name = cp.get("name", "")
+                    cp_models = cp.get("models") or []
+                    if cp_name and cp_name not in candidates:
+                        # 自定义 provider 模型列表首个作为默认 embedding 候选；仍需能命中原生 embedding
+                        candidates.setdefault(cp_name, cp_models[0] if cp_models else None)
+                for name in self.provider_order():
+                    preset = candidates.get(name)
+                    if name in self.clients and preset:
+                        provider, bare_model = name, preset
+                        break
+            if not provider or provider not in self.clients:
+                logger.warning("embed_texts: no provider with embedding support available")
+                return None
+
+            client = self.clients[provider]
+            # 部分 embedding 服务（如阿里云百炼 MaaS 网关）限制单次批量 ≤20，按 20 分批保守兼容
+            batch = 20
+            vectors: List[Optional[List[float]]] = []
+            truncated = [t[:4000] for t in texts]
+            for i in range(0, len(truncated), batch):
+                response = client.embeddings.create(
+                    model=bare_model,
+                    input=truncated[i:i + batch],
+                )
+                vectors.extend(item.embedding for item in response.data)
+            logger.info(f"embed_texts: {len(vectors)} texts embedded via {provider}/{bare_model}")
+            return vectors
+        except Exception as e:
+            logger.warning(f"embed_texts failed: {e}")
+            return None
+
     # ---------- 分析入口 ----------
 
     async def analyze_trends(

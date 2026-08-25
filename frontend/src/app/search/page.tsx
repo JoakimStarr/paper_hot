@@ -1,18 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import React, { useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import SearchBar from '@/components/SearchBar';
 import PaperCard from '@/components/PaperCard';
 import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
-import { papersApi } from '@/lib/api';
-import { PaperCardListResponse, PaperCard as PaperCardType } from '@/types/paper';
 import { Loader2, Search, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { getCache, setCache, buildCacheKey } from '@/lib/cache';
+import { usePapersPage } from '@/lib/usePapersPage';
 
 export default function SearchPage() {
   return (
@@ -33,34 +31,11 @@ function SearchPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const initialSearch = searchParams.get('search') || '';
-  const initialField = searchParams.get('search_field') || 'keyword';
-  const initialJournal = searchParams.get('journal') || '';
+  const currentSearch = searchParams.get('search') || '';
+  const currentField = searchParams.get('search_field') || 'keyword';
+  const currentJournal = searchParams.get('journal') || '';
 
-  const [papers, setPapers] = useState<PaperCardType[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [queryKey, setQueryKey] = useState(0);
-  const [pageSize, setPageSize] = useState(20);
-
-  const [currentSearch, setCurrentSearch] = useState(initialSearch);
-  const [currentField, setCurrentField] = useState(initialField);
-  const [currentJournal, setCurrentJournal] = useState(initialJournal);
-
-  useEffect(() => {
-    const s = searchParams.get('search') || '';
-    const f = searchParams.get('search_field') || 'keyword';
-    const j = searchParams.get('journal') || '';
-    setCurrentSearch(s);
-    setCurrentField(f);
-    setCurrentJournal(j);
-    setPage(1);
-    setQueryKey(k => k + 1);
-  }, [searchParams]);
-
-  const buildParams = useCallback((p: number) => ({
+  const buildParams = useCallback((p: number, pageSize: number) => ({
     page: p,
     page_size: pageSize,
     search: currentSearch || undefined,
@@ -68,63 +43,23 @@ function SearchPageInner() {
     journal_name: currentJournal || undefined,
     sort_by: 'date',
     sort_order: 'desc',
-  }), [currentSearch, currentField, currentJournal, pageSize]);
+  }), [currentSearch, currentField, currentJournal]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadPage = async () => {
-      if (!currentSearch && !currentJournal) {
-        setPapers([]);
-        setTotal(0);
-        setTotalPages(0);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const params = buildParams(page);
-        const cacheKey = buildCacheKey(params as Record<string, unknown>);
-        let response = getCache<PaperCardListResponse>(cacheKey);
-
-        if (!response) {
-          response = await papersApi.getPapers(params);
-          setCache(cacheKey, response);
-        }
-
-        if (!cancelled) {
-          setPapers(response.papers);
-          setTotal(response.total);
-          setTotalPages(Math.ceil(response.total / pageSize));
-        }
-      } catch (error) {
-        console.error('Error searching papers:', error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    loadPage();
-    return () => { cancelled = true; };
-  }, [page, queryKey, pageSize]);
+  // 数据流收敛在 lib/usePapersPage.ts（与首页共用）；无搜索词/期刊时禁用请求
+  const {
+    papers, loading, total, totalPages,
+    page, pageSize, handlePageChange, handlePageSizeChange,
+  } = usePapersPage({
+    buildParams,
+    deps: [currentSearch, currentField, currentJournal],
+    enabled: !!(currentSearch || currentJournal),
+  });
 
   const handleSearch = (query: string, field: string) => {
     const params = new URLSearchParams();
     params.set('search', query);
     params.set('search_field', field);
     router.push(`/search?${params.toString()}`);
-  };
-
-  const handlePageChange = (newPage: number) => {
-    if (newPage < 1 || newPage > totalPages) return;
-    setPage(newPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handlePageSizeChange = (size: number) => {
-    setPageSize(size);
-    setPage(1);
   };
 
   const hasParams = currentSearch || currentJournal;

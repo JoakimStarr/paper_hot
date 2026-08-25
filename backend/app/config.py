@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # 全局默认模型（格式 'provider/model'，如 'zhipu/glm-4'）。未显式指定模型时优先使用它。
     default_model: Optional[str] = None
 
+    # 选题验证器用的 embedding 模型（格式 'provider/model'，如 'zhipu/embedding-3'）。
+    # 留空时按 provider 可用性自动选择默认 embedding 模型。
+    embedding_model: Optional[str] = None
+
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
 
     scheduler_enabled: bool = True

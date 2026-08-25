@@ -1,15 +1,22 @@
 'use client';
 
-import React, { useEffect, useRef, useState, memo } from 'react';
+import React, { useEffect, useMemo, useState, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
-import 'katex/dist/katex.min.css';
 
 interface MarkdownRendererProps {
   content: string;
   className?: string;
+}
+
+// 检测正文是否含 LaTeX 公式：\(...\) / \[...\] / \begin{env} / $$...$$ / $...$
+const MATH_RE = /\\\(|\\\)|\\\[|\\\]|\\begin\{[a-zA-Z]+\}|\$\$|\$[^\$\n]+\$/;
+// KaTeX 资产已复制到 public/katex（node_modules/katex/dist 的 css+fonts），仅含公式时才注入
+const KATEX_CSS_HREF = '/katex/katex.min.css';
+
+interface MathPlugins {
+  remark: unknown;
+  rehype: unknown;
 }
 
 const MermaidBlock = memo(function MermaidBlock({ definition }: { definition: string }) {
@@ -53,11 +60,44 @@ const MermaidBlock = memo(function MermaidBlock({ definition }: { definition: st
 });
 
 function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
+  const needsMath = useMemo(() => MATH_RE.test(content), [content]);
+  const [math, setMath] = useState<MathPlugins | null>(null);
+
+  useEffect(() => {
+    if (!needsMath || math) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // 仅当正文含公式时才加载 KaTeX 的 JS 处理管线
+        const [{ default: remarkMath }, { default: rehypeKatex }] = await Promise.all([
+          import('remark-math'),
+          import('rehype-katex'),
+        ]);
+        // 按需注入 KaTeX CSS（浏览器此刻才真正下载 css+字体）
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = KATEX_CSS_HREF;
+        document.head.appendChild(link);
+        if (!cancelled) setMath({ remark: remarkMath, rehype: rehypeKatex });
+      } catch {
+        // 公式渲染失败则回退为普通渲染，保证内容不丢
+        console.warn('KaTeX 加载失败，已回退为普通 markdown 渲染');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [needsMath, math]);
+
+  const remarkPlugins = useMemo<unknown[]>(
+    () => [remarkGfm, ...(math ? [math.remark] : [])],
+    [math]
+  );
+  const rehypePlugins = useMemo<unknown[]>(() => (math ? [math.rehype] : []), [math]);
+
   return (
     <div className={`prose prose-sm max-w-none dark:prose-invert ${className}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={remarkPlugins as never}
+        rehypePlugins={rehypePlugins as never}
         components={{
           pre: ({ children, ...props }) => {
             const codeElement = children as React.ReactElement | undefined;

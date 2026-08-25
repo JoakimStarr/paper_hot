@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
 import { ExternalLink, Calendar, TrendingUp, Award, Bookmark } from 'lucide-react';
-import { format } from 'date-fns';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
 import { toggleBookmark, isBookmarked as checkBookmarked } from '@/lib/cache';
@@ -171,11 +170,6 @@ function PaperCardInner({ paper }: PaperCardProps) {
             >
               {paper.journal_name}
             </button>
-          )}
-          {paper.journal_issue && (
-            <span className="bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs">
-              {paper.journal_issue}
-            </span>
           )}
         </div>
         <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">

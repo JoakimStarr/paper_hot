@@ -43,8 +43,10 @@ class ArxivFetcher:
             
             papers = []
             cutoff_date = datetime.now() - timedelta(days=days_back)
-            
-            for result in await asyncio.to_thread(lambda: list(search.results())):
+
+            # arxiv>=2 的 API：迭代入口在 Client.results(search)，Search 对象自身无 results 方法
+            client = arxiv.Client()
+            for result in await asyncio.to_thread(lambda: list(client.results(search))):
                 if result.published.replace(tzinfo=None) < cutoff_date.replace(tzinfo=None):
                     continue
                     

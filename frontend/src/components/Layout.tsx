@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu, Compass } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { papersApi, SearchSuggestion } from '@/lib/api';
@@ -178,6 +178,10 @@ export default function Layout({ children }: LayoutProps) {
                 <TrendingUp className="w-4 h-4" />
                 <span>{t('nav.trends')}</span>
               </Link>
+              <Link href="/topics" className={navLinkClass('/topics')}>
+                <Compass className="w-4 h-4" />
+                <span>{t('nav.topics')}</span>
+              </Link>
               <Link href="/network" className={navLinkClass('/network')}>
                 <Share2 className="w-4 h-4" />
                 <span>{t('nav.network')}</span>
@@ -247,6 +251,14 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <TrendingUp className="w-5 h-5" />
                 <span>{t('nav.trends')}</span>
+              </Link>
+              <Link
+                href="/topics"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+              >
+                <Compass className="w-5 h-5" />
+                <span>{t('nav.topics')}</span>
               </Link>
               <Link
                 href="/network"

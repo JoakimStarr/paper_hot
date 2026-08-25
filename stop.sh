@@ -1,18 +1,4 @@
 #!/bin/bash
-
-echo "🛑 Stopping ApplePaper..."
-
-# 强制关闭 8000 端口（后端）
-PORT_PID=$(lsof -t -i:8000 2>/dev/null)
-if [ -n "$PORT_PID" ]; then
-  kill -9 $PORT_PID 2>/dev/null
-  echo "Killed process on port 8000 (PID: $PORT_PID)"
-else
-  echo "No process found on port 8000"
-fi
-
-# 停止前端服务
-pkill -f "next dev" 2>/dev/null && echo "Frontend stopped" || echo "No frontend process found"
-
-echo ""
-echo "✅ ApplePaper has been stopped"
+# 兼容入口：停止服务统一委托 start.sh stop
+# （历史独立实现曾硬编码 8000 端口并 pkill 全机 next dev，存在误杀风险，已废弃）
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/start.sh" stop "$@"

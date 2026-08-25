@@ -68,3 +68,6 @@ cnki_state.json
 urls.txt
 debug_page1.html
 frontend/tsconfig.tsbuildinfo
+
+# 运行时爬虫产物
+search_url.txt
