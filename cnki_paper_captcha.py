@@ -1837,11 +1837,401 @@ class MultiThreadedCrawler:
         print("=" * 60)
 
 
+class KeywordSearchCrawler(JournalCrawler):
+    """按关键词/主题检索知网论文（结合关键词检索流程与主脚本的验证码/入库能力）。
+
+    复用父类：CaptchaSolver 自动解验证码、wait_for_page_stable、
+    random_scroll、crawl_paper_detail / save_to_database（去重入库）。
+    新增：登录态复用(storage_state)、检索入口、主要主题/学术期刊筛选、翻页。
+
+    用法:
+        python cnki_paper_captcha.py --search "新质生产力" --show-browser
+        python cnki_paper_captcha.py --search "新质生产力" --max-pages 3 --years 2025-2026
+    """
+
+    VERIFY_MARK = "/verify"
+    # CNKI 检索页 XPath 选择器
+    SEARCH_SELECTOR = '//textarea[@id="txt_SearchText"]'
+    FIELD_SELECTOR = '//dd[@id="searchField"]'
+    SUBJECT_SELECTOR = '//dd[@field="ZYZT"]//li'
+    DOCTYPE_SELECTOR = '//ul[contains(@class, "doctype-menus")]'
+    RESULT_TABLE_SELECTOR = '//table[contains(@class, "result-table-list")]'
+    NEXT_PAGE_SELECTOR = '//a[@id="PageNext"]'
+    TITLE_LINK_SELECTOR = './/a[contains(@class, "fz14")]'
+    ROW_LINK_SELECTOR = './/td[1]//a'
+    # 验证码弹窗/遮罩检测（不改变 URL 的滑块 iframe 等）
+    CAPTCHA_POPUP_SELECTORS = [
+        '//iframe[contains(@src,"captcha") or contains(@src,"verify") or contains(@src,"nc")]',
+        '//div[contains(@class,"captcha") or contains(@class,"verify")]',
+        '//div[contains(@id,"captcha")]',
+    ]
+
+    def __init__(self, headless=True, keyword="", search_field="主题", max_pages=None,
+                 min_year=None, max_year=None, state_file=None, thread_id=0,
+                 urls_only=False, urls_file=None, debug_html=None):
+        super().__init__(headless=headless, thread_id=thread_id)
+        self.keyword = keyword
+        self.search_field = search_field
+        self.max_pages = max_pages
+        self.min_year = min_year
+        self.max_year = max_year
+        self.state_file = Path(state_file) if state_file else None
+        # 只收集 URL 模式（不抓详情入库），并保存到 urls_file
+        self.urls_only = urls_only
+        self.urls_file = Path(urls_file) if urls_file else Path(__file__).parent / 'urls.txt'
+        self.debug_html = Path(debug_html) if debug_html else Path(__file__).parent / 'debug_page1.html'
+
+    async def init_browser(self):
+        """初始化浏览器（支持复用已保存的登录态）。"""
+        self.playwright = await async_playwright().start()
+        launch_kwargs = {
+            'headless': self.headless,
+            'args': [
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+            ]
+        }
+        import shutil
+        if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
+            launch_kwargs['channel'] = 'chrome'
+        self.browser = await self.playwright.chromium.launch(**launch_kwargs)
+
+        ctx_kwargs = {
+            'locale': 'zh-CN',
+            'timezone_id': 'Asia/Shanghai',
+        }
+        if self.state_file and self.state_file.exists():
+            ctx_kwargs['storage_state'] = str(self.state_file)
+            print(f"  [关键词#{self.thread_id}] 复用登录态: {self.state_file}")
+
+        context = await self.browser.new_context(**ctx_kwargs)
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN','zh','en'] });
+            window.chrome = { runtime: {} };
+        """)
+        self.page = await context.new_page()
+        print(f"  [关键词#{self.thread_id}] 浏览器已启动 (headless={self.headless})")
+
+    def _captcha_popup_visible(self) -> bool:
+        """检测不改变 URL 的验证码弹窗/遮罩。"""
+        for sel in self.CAPTCHA_POPUP_SELECTORS:
+            try:
+                loc = self.page.locator(sel).first
+                if loc.count() > 0 and loc.is_visible():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _ensure_no_captcha(self, timeout: int = 180) -> bool:
+        """确保当前无安全验证：优先自动解（滑块/点选），失败则提示手动（非无头）。"""
+        start = asyncio.get_event_loop().time()
+        prompted = False
+        while True:
+            url_verify = self.VERIFY_MARK in self.page.url
+            popup = self._captcha_popup_visible()
+            if not url_verify and not popup:
+                if prompted:
+                    print(f"  [关键词#{self.thread_id}] ✓ 安全验证已通过")
+                return True
+            if asyncio.get_event_loop().time() - start > timeout:
+                print(f"  [关键词#{self.thread_id}] 等待安全验证超时")
+                return False
+            # 优先尝试自动解决（仅首次）
+            if not prompted and self.captcha_solver.is_available():
+                try:
+                    ctype = await self.captcha_solver.detect_captcha_type(self.page)
+                    ok = False
+                    if ctype == 'slider':
+                        ok = await self.captcha_solver.solve_slider_captcha(self.page)
+                    elif ctype == 'click':
+                        ok = await self.captcha_solver.solve_click_captcha(self.page)
+                    if ok:
+                        continue
+                except Exception:
+                    pass
+            if not prompted and not self.headless:
+                print(f"  [关键词#{self.thread_id}] 请在浏览器中手动完成安全验证/滑块...")
+                prompted = True
+            await asyncio.sleep(1.5)
+
+    def _pick_subject(self):
+        """在主要主题(ZYZT)列表中选出与关键词最匹配的一项并点击；无匹配返回 False。"""
+        lis = self.page.locator(self.SUBJECT_SELECTOR)
+        if lis.count() == 0:
+            print(f"  [关键词#{self.thread_id}] 未找到主要主题列表，跳过主题筛选")
+            return False
+        best_li, best_score = None, 0
+        for i in range(lis.count()):
+            li = lis.nth(i)
+            try:
+                text = li.inner_text().strip()
+            except Exception:
+                continue
+            base = re.split(r"[（(]", text)[0].strip()
+            if base == self.keyword:
+                score = 100
+            elif base in self.keyword or self.keyword in base:
+                score = 50
+            else:
+                score = len(set(base) & set(self.keyword))
+            if score > best_score:
+                best_score, best_li = score, li
+        if best_li is None or best_score <= 0:
+            print(f"  [关键词#{self.thread_id}] 没有与关键词匹配的主题项")
+            return False
+        try:
+            clickable = best_li.locator('xpath=.//a').first
+            if clickable.count() == 0:
+                clickable = best_li
+            clickable.click()
+            print(f"  [关键词#{self.thread_id}] 已选择主题: {best_li.inner_text().strip()[:30]}")
+            return True
+        except Exception as e:
+            print(f"  [关键词#{self.thread_id}] 点击主题项失败: {e}")
+            return False
+
+    def _select_doctype(self) -> bool:
+        """在文献类型菜单中选中"学术期刊"。"""
+        menu = self.page.locator(self.DOCTYPE_SELECTOR)
+        if menu.count() == 0:
+            print(f"  [关键词#{self.thread_id}] 未找到文献类型菜单")
+            return False
+        for li in menu.locator('xpath=.//li').all():
+            try:
+                text = li.inner_text().strip()
+            except Exception:
+                continue
+            if "学术期刊" in text:
+                li.click()
+                print(f"  [关键词#{self.thread_id}] 已选择文献类型: {text}")
+                return True
+        print(f"  [关键词#{self.thread_id}] 未找到'学术期刊'类型")
+        return False
+
+    def _set_search_field(self) -> bool:
+        """尝试设置检索字段（主题/篇名/关键词/作者等），失败静默回到默认。"""
+        dd = self.page.locator(self.FIELD_SELECTOR)
+        if dd.count() == 0:
+            return False
+        try:
+            dd.click()
+            for li in dd.locator('xpath=.//li').all():
+                if self.search_field in li.inner_text():
+                    li.click()
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _collect_papers_from_rows(self) -> list:
+        """从结果表格收集论文（url + title + 年份信息）。"""
+        table = self.page.locator(self.RESULT_TABLE_SELECTOR)
+        if table.count() == 0:
+            return []
+        papers = []
+        for row in table.locator('xpath=.//tr').all():
+            try:
+                link = row.locator('xpath=' + self.TITLE_LINK_SELECTOR).first
+                if link.count() == 0:
+                    link = row.locator('xpath=' + self.ROW_LINK_SELECTOR).first
+                if link.count() == 0:
+                    continue
+                href = link.get_attribute("href") or ""
+                title = link.inner_text().strip()
+                if not href or href == "javascript:void(0)" or not title:
+                    continue
+                # 最佳努力解析年份（用于区间过滤）
+                year = None
+                row_text = row.inner_text()
+                ym = re.search(r'(20\d{2})', row_text)
+                if ym:
+                    year = int(ym.group(1))
+                papers.append({'url': urljoin('https://kns.cnki.net/', href), 'title': title, 'year': year})
+            except Exception:
+                continue
+        return papers
+
+    def _dump_page_html(self):
+        """把当前页面 HTML 保存到文件，便于核对真实结构。"""
+        try:
+            self.debug_html.write_text(self.page.content(), encoding='utf-8')
+            print(f"  [关键词#{self.thread_id}] 已保存页面 HTML 到 {self.debug_html}")
+        except Exception as e:
+            print(f"  [关键词#{self.thread_id}] 保存调试 HTML 失败: {e}")
+
+    def _within_year_range(self, year) -> bool:
+        if not year:
+            return True
+        if self.min_year is not None and year < self.min_year:
+            return False
+        if self.max_year is not None and year > self.max_year:
+            return False
+        return True
+
+    def _next_page_exists(self) -> bool:
+        nxt = self.page.locator(self.NEXT_PAGE_SELECTOR)
+        if nxt.count() == 0:
+            return False
+        cls = nxt.first.get_attribute("class") or ""
+        return "disabled" not in cls
+
+    async def run_search(self):
+        """执行关键词检索：搜索 -> 主题/期刊筛选 -> 翻页收集 -> 详情入库。"""
+        tag = f"[关键词#{self.thread_id}]"
+        print("=" * 60)
+        print(f"{tag} 关键词检索: {self.keyword} (字段: {self.search_field})")
+        print(f"{tag} 当前年份区间: {self.min_year or '不限'} ~ {self.max_year or '不限'}, 最大翻页: {self.max_pages or '不限'}")
+        print("=" * 60)
+
+        await self.init_browser()
+        try:
+            # 1. 打开知网首页（校外经登录态直接进，否则等待手动登录跳回）
+            print(f"{tag} 打开知网首页...")
+            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+            for _ in range(90):
+                if 'cnki.net' in self.page.url:
+                    break
+                await asyncio.sleep(2)
+
+            # 2. 等待搜索框
+            box = self.page.locator(self.SEARCH_SELECTOR)
+            await box.wait_for(state='visible', timeout=60000)
+            print(f"{tag} 已进入检索页")
+
+            # 保存登录态（供下次复用）
+            if self.state_file:
+                try:
+                    await self.page.context.storage_state(path=str(self.state_file))
+                    print(f"{tag} 登录态已保存: {self.state_file}")
+                except Exception:
+                    pass
+
+            # 3. 设置检索字段并输入关键词
+            self._set_search_field()
+            await self.random_scroll()
+            await box.click()
+            await box.fill(self.keyword)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await box.press('Enter')
+            await self._ensure_no_captcha(timeout=180)
+
+            # 4. 主题筛选（主要主题 ZYZT，匹配关键词）与文献类型（学术期刊）
+            try:
+                subj = self.page.locator(self.SUBJECT_SELECTOR).first
+                await subj.wait_for(state='visible', timeout=15000)
+            except Exception:
+                pass
+            self._pick_subject()
+            self._select_doctype()
+
+            # 5. 翻页收集论文
+            all_papers = []
+            page_no = 1
+            while True:
+                await self._ensure_no_captcha(timeout=120)
+                try:
+                    await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(state='visible', timeout=30000)
+                except Exception:
+                    print(f"{tag} 第 {page_no} 页结果表格未出现")
+                page_papers = self._collect_papers_from_rows()
+                page_papers = [p for p in page_papers if self._within_year_range(p.get('year'))]
+                all_papers.extend(page_papers)
+                print(f"{tag} 第 {page_no} 页获取 {len(page_papers)} 条，累计 {len(all_papers)} 条")
+                # 首页无内容时 dump 页面 HTML 便于核对真实结构
+                if not page_papers and page_no == 1:
+                    self._dump_page_html()
+
+                if self.max_pages is not None and page_no >= self.max_pages:
+                    print(f"{tag} 已达到最大翻页数 {self.max_pages}，停止")
+                    break
+                if not self._next_page_exists():
+                    print(f"{tag} 已是最后一页")
+                    break
+                self.page.locator(self.NEXT_PAGE_SELECTOR).first.click()
+                await self._ensure_no_captcha(timeout=120)
+                page_no += 1
+
+            print(f"{tag} 共收集 {len(all_papers)} 篇待处理论文")
+
+            # —— 分支：只收集 URL vs 抓详情入库 ——
+            if self.urls_only:
+                hrefs = [p.get('url') for p in all_papers if p.get('url')]
+                try:
+                    self.urls_file.write_text("\n".join(hrefs), encoding='utf-8')
+                    print(f"{tag} 已写入 {len(hrefs)} 条 URL 到 {self.urls_file}")
+                except Exception as e:
+                    print(f"{tag} 写入 URL 文件失败: {e}")
+                return
+
+            # 逐篇获取详情并入库（含去重，见 crawl_paper_detail）
+            ok = 0
+            for i, paper in enumerate(all_papers, 1):
+                print(f"{tag} [{i}/{len(all_papers)}] 处理: {paper['title'][:30]}...")
+                res = await self.crawl_paper_detail(paper)
+                if res and res.get('title'):
+                    ok += 1
+                await asyncio.sleep(random.uniform(2, 4))
+
+            print(f"{tag} 完成，成功入库 {ok} 篇（含已存在跳过）")
+        except Exception as e:
+            print(f"{tag} 检索流程异常: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            await self.close_browser()
+
+
 async def main():
-    parser = argparse.ArgumentParser(description='知网期刊爬虫 - 验证码自动解决版本')
+    parser = argparse.ArgumentParser(description='知网爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索）')
     parser.add_argument('--show-browser', action='store_true', help='显示浏览器窗口（默认不显示）')
-    parser.add_argument('--threads', type=int, default=3, help='线程数/浏览器窗口数（默认3）')
+    parser.add_argument('--threads', type=int, default=3, help='线程数/浏览器窗口数（默认3，仅期刊模式有效）')
+    parser.add_argument('--search', type=str, default=None,
+                        help='按关键词/主题检索知网并入库（启用检索模式，替代按期刊爬取）')
+    parser.add_argument('--search-field', type=str, default='主题',
+                        help='检索字段：主题/篇名/关键词/作者等（默认主题）')
+    parser.add_argument('--max-pages', type=int, default=None,
+                        help='检索模式最大翻页数（不设则翻到最后一页）')
+    parser.add_argument('--years', type=str, default=None,
+                        help='年份区间，如 2024-2026（仅检索模式，按结果行年份过滤，可选）')
+    parser.add_argument('--no-login-state', action='store_true',
+                        help='禁用登录态复用（默认自动复用 ./cnki_state.json）')
+    parser.add_argument('--urls-only', action='store_true',
+                        help='只收集论文 URL 写入文件，不抓详情入库（仅检索模式）')
+    parser.add_argument('--urls-file', type=str, default=None,
+                        help='URL 输出文件路径（默认当前目录 urls.txt，配合 --urls-only）')
     args = parser.parse_args()
+
+    if args.search:
+        min_year = max_year = None
+        if args.years:
+            parts = args.years.replace('，', ',').split('-')
+            try:
+                min_year = int(parts[0].strip())
+                max_year = int(parts[1].strip()) if len(parts) > 1 else min_year
+            except Exception:
+                print("年份格式错误，忽略 --years，应为如 2024-2026")
+                min_year = max_year = None
+        state_file = None if args.no_login_state else str(Path(__file__).parent / 'cnki_state.json')
+        crawler = KeywordSearchCrawler(
+            headless=not args.show_browser,
+            keyword=args.search,
+            search_field=args.search_field,
+            max_pages=args.max_pages,
+            min_year=min_year,
+            max_year=max_year,
+            state_file=state_file,
+            urls_only=args.urls_only,
+            urls_file=args.urls_file,
+        )
+        await crawler.run_search()
+        return
 
     crawler = MultiThreadedCrawler(headless=not args.show_browser, max_workers=args.threads)
     await crawler.run()
