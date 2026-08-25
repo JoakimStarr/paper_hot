@@ -70,6 +70,35 @@ JOURNALS_HISTORY_FILE = DATA_DIR / 'journals_history.json'
 PAPERS_HISTORY_FILE = DATA_DIR / 'papers_history.json'
 
 
+def detect_browser_channel():
+    """检测可用的系统浏览器，返回 playwright channel 名；都没有则返回 None。
+
+    优先复用本机已安装的浏览器，避免下载 Playwright 自带内核：
+    - Windows: 使用系统 Edge（channel='msedge'）
+    - Linux:   使用系统 Chrome（channel='chrome'）
+    """
+    import os
+    import shutil
+    if os.name == 'nt':
+        # Windows 下 Edge 几乎必然存在
+        edge_path = shutil.which('msedge')
+        if not edge_path:
+            candidates = [
+                r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+            ]
+            edge_path = next((p for p in candidates if os.path.exists(p)), None)
+        if edge_path:
+            return 'msedge'
+    else:
+        # Linux / macOS：优先 Chrome，其次 Edge
+        if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
+            return 'chrome'
+        if shutil.which('microsoft-edge') or shutil.which('microsoft-edge-stable'):
+            return 'msedge'
+    return None
+
+
 class CaptchaSolver:
     """验证码解决器 - 使用 ddddocr 和 PaddleOCR 自动识别和解决验证码"""
 
@@ -306,8 +335,8 @@ class CaptchaSolver:
                 print(f"    [线程{self.thread_id}] 检测到点选验证码元素 (verify-img-panel + verify-msg)")
                 return 'click'
 
-            # 检查滑块验证码特征
-            slider_elem = await page.query_selector('.verify-slider, .slider, [class*="slider"]')
+            # 检查滑块验证码特征（用知网验证码专有的精确类，避免误命中结果页普通元素）
+            slider_elem = await page.query_selector('.verify-slider, .slider-img, .nc-container, .yidun_slider, .jy-captcha')
             if slider_elem:
                 print(f"    [线程{self.thread_id}] 检测到滑块验证码元素")
                 return 'slider'
@@ -884,10 +913,10 @@ class JournalCrawler:
                 '--disable-features=IsolateOrigins,site-per-process',
             ]
         }
-        # 检测系统是否安装了 Google Chrome
-        import shutil
-        if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
-            launch_kwargs['channel'] = 'chrome'
+        # 优先复用系统已安装的浏览器（Windows 用 Edge，Linux 用 Chrome），避免下载自带内核
+        channel = detect_browser_channel()
+        if channel:
+            launch_kwargs['channel'] = channel
         self.browser = await self.playwright.chromium.launch(**launch_kwargs)
 
         user_agents = [
@@ -1662,9 +1691,10 @@ class MultiThreadedCrawler:
                     '--disable-blink-features=AutomationControlled',
                 ]
             }
-            import shutil
-            if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
-                launch_kwargs['channel'] = 'chrome'
+            # 优先复用系统已安装的浏览器
+            channel = detect_browser_channel()
+            if channel:
+                launch_kwargs['channel'] = channel
             browser = await playwright.chromium.launch(**launch_kwargs)
             context = await browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -1859,11 +1889,13 @@ class KeywordSearchCrawler(JournalCrawler):
     NEXT_PAGE_SELECTOR = '//a[@id="PageNext"]'
     TITLE_LINK_SELECTOR = './/a[contains(@class, "fz14")]'
     ROW_LINK_SELECTOR = './/td[1]//a'
-    # 验证码弹窗/遮罩检测（不改变 URL 的滑块 iframe 等）
+    # 验证码弹窗/遮罩检测（不改变 URL 时的滑块 iframe 等，选择器需精确，避免误命中结果页普通元素）
+    # 主判据是 URL 是否含 /verify（见 _ensure_no_captcha），此处仅做严格辅助
     CAPTCHA_POPUP_SELECTORS = [
-        '//iframe[contains(@src,"captcha") or contains(@src,"verify") or contains(@src,"nc")]',
-        '//div[contains(@class,"captcha") or contains(@class,"verify")]',
-        '//div[contains(@id,"captcha")]',
+        '//iframe[contains(@src,"captcha") or contains(@src,"verify") or contains(@src,"nc_") or contains(@src,"yidun")]',
+        '//div[contains(@class,"verify-slide") or contains(@class,"verify-slider")]',
+        '//div[contains(@class,"nc-container") or contains(@class,"yidun")]',
+        '//div[@id="captcha"]',
     ]
 
     def __init__(self, headless=True, keyword="", search_field="主题", max_pages=None,
@@ -1895,9 +1927,9 @@ class KeywordSearchCrawler(JournalCrawler):
                 '--disable-features=IsolateOrigins,site-per-process',
             ]
         }
-        import shutil
-        if shutil.which('google-chrome') or shutil.which('google-chrome-stable'):
-            launch_kwargs['channel'] = 'chrome'
+        channel = detect_browser_channel()
+        if channel:
+            launch_kwargs['channel'] = channel
         self.browser = await self.playwright.chromium.launch(**launch_kwargs)
 
         ctx_kwargs = {
@@ -1918,12 +1950,12 @@ class KeywordSearchCrawler(JournalCrawler):
         self.page = await context.new_page()
         print(f"  [关键词#{self.thread_id}] 浏览器已启动 (headless={self.headless})")
 
-    def _captcha_popup_visible(self) -> bool:
+    async def _captcha_popup_visible(self) -> bool:
         """检测不改变 URL 的验证码弹窗/遮罩。"""
         for sel in self.CAPTCHA_POPUP_SELECTORS:
             try:
                 loc = self.page.locator(sel).first
-                if loc.count() > 0 and loc.is_visible():
+                if await loc.count() > 0 and await loc.is_visible():
                     return True
             except Exception:
                 continue
@@ -1935,7 +1967,7 @@ class KeywordSearchCrawler(JournalCrawler):
         prompted = False
         while True:
             url_verify = self.VERIFY_MARK in self.page.url
-            popup = self._captcha_popup_visible()
+            popup = await self._captcha_popup_visible()
             if not url_verify and not popup:
                 if prompted:
                     print(f"  [关键词#{self.thread_id}] ✓ 安全验证已通过")
@@ -1961,19 +1993,18 @@ class KeywordSearchCrawler(JournalCrawler):
                 prompted = True
             await asyncio.sleep(1.5)
 
-    def _pick_subject(self):
+    async def _pick_subject(self):
         """在主要主题(ZYZT)列表中选出与关键词最匹配的一项并点击；无匹配返回 False。"""
         lis = self.page.locator(self.SUBJECT_SELECTOR)
-        if lis.count() == 0:
+        if await lis.count() == 0:
             print(f"  [关键词#{self.thread_id}] 未找到主要主题列表，跳过主题筛选")
             return False
-        best_li, best_score = None, 0
-        for i in range(lis.count()):
-            li = lis.nth(i)
-            try:
-                text = li.inner_text().strip()
-            except Exception:
-                continue
+        # 一次性批量取所有主题项文本，避免逐项 inner_text 的多次往返
+        texts = await lis.evaluate_all(
+            """(lis) => lis.map((li) => (li.textContent || '').trim())"""
+        )
+        best_i, best_score = None, 0
+        for i, text in enumerate(texts):
             base = re.split(r"[（(]", text)[0].strip()
             if base == self.keyword:
                 score = 100
@@ -1982,86 +2013,96 @@ class KeywordSearchCrawler(JournalCrawler):
             else:
                 score = len(set(base) & set(self.keyword))
             if score > best_score:
-                best_score, best_li = score, li
-        if best_li is None or best_score <= 0:
+                best_i, best_score = i, score
+        if best_i is None or best_score <= 0:
             print(f"  [关键词#{self.thread_id}] 没有与关键词匹配的主题项")
             return False
         try:
+            best_li = lis.nth(best_i)
             clickable = best_li.locator('xpath=.//a').first
-            if clickable.count() == 0:
+            if await clickable.count() == 0:
                 clickable = best_li
-            clickable.click()
-            print(f"  [关键词#{self.thread_id}] 已选择主题: {best_li.inner_text().strip()[:30]}")
+            await clickable.click()
+            print(f"  [关键词#{self.thread_id}] 已选择主题: {texts[best_i][:30]}")
             return True
         except Exception as e:
             print(f"  [关键词#{self.thread_id}] 点击主题项失败: {e}")
             return False
 
-    def _select_doctype(self) -> bool:
+    async def _select_doctype(self) -> bool:
         """在文献类型菜单中选中"学术期刊"。"""
         menu = self.page.locator(self.DOCTYPE_SELECTOR)
-        if menu.count() == 0:
+        if await menu.count() == 0:
             print(f"  [关键词#{self.thread_id}] 未找到文献类型菜单")
             return False
-        for li in menu.locator('xpath=.//li').all():
-            try:
-                text = li.inner_text().strip()
-            except Exception:
-                continue
+        # 一次性批量取所有菜单项文本，避免逐项 inner_text 的多次往返
+        texts = await menu.locator('xpath=.//li').evaluate_all(
+            """(lis) => lis.map((li) => (li.textContent || '').trim())"""
+        )
+        for text in texts:
             if "学术期刊" in text:
-                li.click()
+                li = menu.locator('xpath=.//li', has_text=text).first
+                await li.click()
                 print(f"  [关键词#{self.thread_id}] 已选择文献类型: {text}")
                 return True
         print(f"  [关键词#{self.thread_id}] 未找到'学术期刊'类型")
         return False
 
-    def _set_search_field(self) -> bool:
+    async def _set_search_field(self) -> bool:
         """尝试设置检索字段（主题/篇名/关键词/作者等），失败静默回到默认。"""
         dd = self.page.locator(self.FIELD_SELECTOR)
-        if dd.count() == 0:
+        if await dd.count() == 0:
             return False
         try:
-            dd.click()
-            for li in dd.locator('xpath=.//li').all():
-                if self.search_field in li.inner_text():
-                    li.click()
+            await dd.click()
+            texts = await dd.locator('xpath=.//li').evaluate_all(
+                """(lis) => lis.map((li) => (li.textContent || '').trim())"""
+            )
+            for text in texts:
+                if self.search_field in text:
+                    await dd.locator('xpath=.//li', has_text=text).first.click()
                     return True
         except Exception:
             pass
         return False
 
-    def _collect_papers_from_rows(self) -> list:
-        """从结果表格收集论文（url + title + 年份信息）。"""
-        table = self.page.locator(self.RESULT_TABLE_SELECTOR)
-        if table.count() == 0:
+    async def _collect_papers_from_rows(self) -> list:
+        """从结果表格收集论文（url + title + 年份信息）。
+
+        用 evaluate_all 在浏览器端一次性批量提取，避免逐行的多次往返通信
+        （每调用一次内燃 inner_text / count 都是一次 CDP 往返，是收集阶段的性能热点）。
+        """
+        loc = self.page.locator(self.RESULT_TABLE_SELECTOR)
+        if await loc.count() == 0:
             return []
+        raw = await loc.locator('xpath=.//tr').evaluate_all(
+            """(rows) => rows.map((row) => {
+                const titleA = row.querySelector('a.fz14');
+                const fallbackA = row.querySelector('td:first-child a');
+                const a = (titleA || fallbackA);
+                if (!a) return null;
+                const href = a.getAttribute('href') || '';
+                const title = (a.textContent || '').trim();
+                if (!href || href === 'javascript:void(0)' || !title) return null;
+                const ym = (row.textContent || '').match(/(20\\d{2})/);
+                return { href, title, year: ym ? Number(ym[1]) : null };
+            })"""
+        )
         papers = []
-        for row in table.locator('xpath=.//tr').all():
-            try:
-                link = row.locator('xpath=' + self.TITLE_LINK_SELECTOR).first
-                if link.count() == 0:
-                    link = row.locator('xpath=' + self.ROW_LINK_SELECTOR).first
-                if link.count() == 0:
-                    continue
-                href = link.get_attribute("href") or ""
-                title = link.inner_text().strip()
-                if not href or href == "javascript:void(0)" or not title:
-                    continue
-                # 最佳努力解析年份（用于区间过滤）
-                year = None
-                row_text = row.inner_text()
-                ym = re.search(r'(20\d{2})', row_text)
-                if ym:
-                    year = int(ym.group(1))
-                papers.append({'url': urljoin('https://kns.cnki.net/', href), 'title': title, 'year': year})
-            except Exception:
+        for r in raw:
+            if r is None:
                 continue
+            papers.append({
+                'url': urljoin('https://kns.cnki.net/', r['href']),
+                'title': r['title'],
+                'year': r['year'],
+            })
         return papers
 
-    def _dump_page_html(self):
+    async def _dump_page_html(self):
         """把当前页面 HTML 保存到文件，便于核对真实结构。"""
         try:
-            self.debug_html.write_text(self.page.content(), encoding='utf-8')
+            self.debug_html.write_text(await self.page.content(), encoding='utf-8')
             print(f"  [关键词#{self.thread_id}] 已保存页面 HTML 到 {self.debug_html}")
         except Exception as e:
             print(f"  [关键词#{self.thread_id}] 保存调试 HTML 失败: {e}")
@@ -2075,11 +2116,11 @@ class KeywordSearchCrawler(JournalCrawler):
             return False
         return True
 
-    def _next_page_exists(self) -> bool:
+    async def _next_page_exists(self) -> bool:
         nxt = self.page.locator(self.NEXT_PAGE_SELECTOR)
-        if nxt.count() == 0:
+        if await nxt.count() == 0:
             return False
-        cls = nxt.first.get_attribute("class") or ""
+        cls = await nxt.first.get_attribute("class") or ""
         return "disabled" not in cls
 
     async def run_search(self):
@@ -2114,7 +2155,7 @@ class KeywordSearchCrawler(JournalCrawler):
                     pass
 
             # 3. 设置检索字段并输入关键词
-            self._set_search_field()
+            await self._set_search_field()
             await self.random_scroll()
             await box.click()
             await box.fill(self.keyword)
@@ -2128,8 +2169,20 @@ class KeywordSearchCrawler(JournalCrawler):
                 await subj.wait_for(state='visible', timeout=15000)
             except Exception:
                 pass
-            self._pick_subject()
-            self._select_doctype()
+            # 点击最匹配的主题项后等待结果刷新（参考 demo 的 zyzt 点击流程）
+            if await self._pick_subject():
+                try:
+                    await self.page.wait_for_load_state('domcontentloaded')
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(2.5, 5))
+            # 选择"学术期刊"文献类型并等待结果刷新
+            if await self._select_doctype():
+                try:
+                    await self.page.wait_for_load_state('domcontentloaded')
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(2.5, 5))
 
             # 5. 翻页收集论文
             all_papers = []
@@ -2140,21 +2193,21 @@ class KeywordSearchCrawler(JournalCrawler):
                     await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(state='visible', timeout=30000)
                 except Exception:
                     print(f"{tag} 第 {page_no} 页结果表格未出现")
-                page_papers = self._collect_papers_from_rows()
+                page_papers = await self._collect_papers_from_rows()
                 page_papers = [p for p in page_papers if self._within_year_range(p.get('year'))]
                 all_papers.extend(page_papers)
                 print(f"{tag} 第 {page_no} 页获取 {len(page_papers)} 条，累计 {len(all_papers)} 条")
                 # 首页无内容时 dump 页面 HTML 便于核对真实结构
                 if not page_papers and page_no == 1:
-                    self._dump_page_html()
+                    await self._dump_page_html()
 
                 if self.max_pages is not None and page_no >= self.max_pages:
                     print(f"{tag} 已达到最大翻页数 {self.max_pages}，停止")
                     break
-                if not self._next_page_exists():
+                if not await self._next_page_exists():
                     print(f"{tag} 已是最后一页")
                     break
-                self.page.locator(self.NEXT_PAGE_SELECTOR).first.click()
+                await self.page.locator(self.NEXT_PAGE_SELECTOR).first.click()
                 await self._ensure_no_captcha(timeout=120)
                 page_no += 1
 
