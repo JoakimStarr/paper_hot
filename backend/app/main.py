@@ -32,7 +32,7 @@ def spawn_background_task(coro):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up ApplePaper...")
+    logger.info("Starting up PaperPulse...")
 
     await init_db()
     logger.info("Database initialized")
@@ -47,13 +47,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Shutting down ApplePaper...")
+    logger.info("Shutting down PaperPulse...")
     if settings.scheduler_enabled:
         scheduler.stop()
     for task in list(_background_tasks):
         task.cancel()
     
-    logger.info("Shutting down ApplePaper...")
+    logger.info("Shutting down PaperPulse...")
     if settings.scheduler_enabled:
         scheduler.stop()
 

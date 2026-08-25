@@ -502,7 +502,7 @@ export default function SystemPage() {
               </div>
             ) : (
               <>
-                <h2 className="text-2xl font-bold text-primary-700 dark:text-primary-300">{appInfo.name || stats?.app_name || 'ApplePaper'}</h2>
+                <h2 className="text-2xl font-bold text-primary-700 dark:text-primary-300">{appInfo.name || stats?.app_name || 'PaperPulse'}</h2>
                 <p className="text-sm text-primary-600 dark:text-primary-400 mt-1">{t('sys.appDesc')}</p>
               </>
             )}

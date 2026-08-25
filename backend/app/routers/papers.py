@@ -2,10 +2,11 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -138,7 +139,7 @@ async def get_trending_topics(
     from app.models import TopicTrend
     from datetime import timedelta
 
-    cutoff_date = datetime.now() - timedelta(days=365)
+    cutoff_date = datetime.now() - timedelta(weeks=weeks_back)
 
     result = await db.execute(
         select(TopicTrend)
@@ -171,6 +172,64 @@ async def get_trending_topics(
         week_start=week_start,
         week_end=now
     )
+
+
+@router.get("/trends/explain")
+async def explain_trend(
+    topic: str = Query(..., min_length=1, max_length=100),
+    weeks_back: int = Query(12, ge=1, le=52),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI 解读单个话题的趋势（P2-13b）：一段话说明热度走势、驱动因素与机会。"""
+    from sqlalchemy import select as sa_select, desc as sa_desc
+    from app.models import TopicTrend
+
+    cutoff = datetime.now() - timedelta(weeks=weeks_back)
+    result = await db.execute(
+        sa_select(TopicTrend)
+        .where(TopicTrend.topic == topic.strip(), TopicTrend.week_start >= cutoff)
+        .order_by(sa_desc(TopicTrend.week_start))
+        .limit(12)
+    )
+    rows = result.scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No trend data for this topic")
+
+    series = [
+        {"week": str(t.week_start)[:10], "paper_count": t.paper_count, "growth_rate": t.growth_rate}
+        for t in sorted(rows, key=lambda x: x.week_start)
+    ]
+    total = sum(r.paper_count for r in rows)
+    avg_growth = sum(r.growth_rate or 0 for r in rows) / len(rows)
+
+    # 规则兜底（无 AI 时）
+    direction = "上升" if avg_growth > 0.2 else ("回落" if avg_growth < -0.1 else "平稳")
+    fallback = f"「{topic}」近 {len(rows)} 周共 {total} 篇论文，整体呈{direction}态势（平均周环比 {avg_growth*100:.0f}%）。"
+
+    try:
+        provider, bare_model = _resolve_model_provider(None)
+        client, provider = _get_ai_client(provider)
+        model = bare_model or _get_default_model(provider)
+    except HTTPException:
+        return {"topic": topic, "explanation": fallback, "series": series, "ai_used": False}
+
+    try:
+        import asyncio as _asyncio
+        prompt = f"""这是话题「{topic}」在论文库中近 {len(rows)} 周的热度序列（周/篇数/环比）：
+{chr(10).join(f"{s['week']}: {s['paper_count']} 篇, 环比 {s['growth_rate']*100:.0f}%" for s in series)}
+
+请用中文写 2-3 句话解读这段趋势：热度走向、可能的驱动因素、对研究者是进入还是观望。只输出解读文本，不要标题。"""
+        response = await _asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.3,
+        )
+        explanation = (response.choices[0].message.content or fallback).strip()
+        return {"topic": topic, "explanation": explanation, "series": series, "ai_used": True}
+    except Exception:
+        return {"topic": topic, "explanation": fallback, "series": series, "ai_used": False}
 
 
 CACHE_TTL_HOURS = 6
@@ -257,6 +316,169 @@ async def analyze_paper(
         await PaperAnalysisCRUD.update_analysis(db, analysis_id, f"分析失败: {str(e)}", "failed")
         await db.commit()
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+
+
+class BatchAnalyzeRequest(BaseModel):
+    paper_ids: List[str]
+    model: Optional[str] = None
+
+
+@router.post("/papers/batch-analyze")
+async def batch_analyze_papers(
+    body: BatchAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """批量分析（P1-8）：多选 5-10 篇论文 -> 生成一份领域综述摘要。
+
+    同步返回 markdown 文本；论文数上限 10，超出截断。
+    """
+    ids = [pid for pid in (body.paper_ids or []) if pid][:10]
+    if not ids:
+        raise HTTPException(status_code=400, detail="paper_ids is required")
+
+    papers = []
+    for pid in ids:
+        p = await PaperCRUD.get_paper_by_id(db, pid)
+        if p:
+            papers.append(p)
+    if not papers:
+        raise HTTPException(status_code=404, detail="No valid papers found")
+
+    papers_text = "\n\n".join([
+        f"【{i+1}】《{p.title}》\n"
+        f"- 期刊：{p.journal_name or '未知'} {p.journal_issue or ''}\n"
+        f"- 作者：{', '.join(_parse_json_list(p.authors)) or '未知'}\n"
+        f"- 关键词：{', '.join(_parse_json_list(p.keywords_cn)) or '未知'}\n"
+        f"- 摘要：{(p.abstract or '无')[:300]}"
+        for i, p in enumerate(papers)
+    ])
+
+    system_prompt = (
+        "你是一位严谨的学术综述专家。回答使用中文、清晰的 Markdown 结构，"
+        "引用文献时用【编号】标注，结论必须有文献支撑，不臆造。"
+    )
+    prompt = f"""以下是用户从论文库中挑选的 {len(papers)} 篇论文，请生成一份「领域综述摘要」：
+
+{papers_text}
+
+请按以下结构输出：
+## 共同主题与背景
+这批论文共同关注的问题域及其研究价值
+## 方法图谱
+各篇采用的方法归类对比（可用列表），指出方法上的共性与分歧
+## 核心发现对照
+逐篇一句话核心结论（【编号】标注），并指出相互印证或矛盾之处
+## 研究空白与下一步
+综合来看还有哪些空隙值得研究，给出 2-3 个可行切入点"""
+
+    try:
+        if body.model:
+            provider, bare_model = _resolve_model_provider(body.model)
+            client, provider = _get_ai_client(provider)
+            model = bare_model
+        else:
+            client, provider = _get_ai_client()
+            model = _get_default_model(provider)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=3072,
+            temperature=0.4,
+        )
+        summary = (response.choices[0].message.content or "").strip()
+
+        for p in papers:
+            analysis_id = await PaperAnalysisCRUD.create_pending(db, p.id, model=model)
+            await PaperAnalysisCRUD.update_analysis(db, analysis_id, summary, "success")
+        await db.commit()
+        return {"summary": summary, "model": model, "paper_count": len(papers)}
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Batch analyze failed: {str(e)}")
+
+
+class RelevanceRequest(BaseModel):
+    topic: Optional[str] = None  # 不传则取用户进行中的选题
+
+
+@router.post("/papers/{paper_id}/relevance")
+async def paper_topic_relevance(
+    paper_id: str,
+    body: RelevanceRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """「与我的选题相关性」评分（P1-8c）：LLM 打分 + 关键词重合规则兜底。"""
+    from sqlalchemy import select as sa_select, desc as sa_desc
+    from app.models import TopicProject
+
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    topic = (body.topic or "").strip()
+    if not topic:
+        uid = (x_user_id or "").strip() or "local"
+        result = await db.execute(
+            sa_select(TopicProject.title)
+            .where(TopicProject.user_id == uid, TopicProject.status != "abandoned")
+            .order_by(sa_desc(TopicProject.updated_at))
+            .limit(3)
+        )
+        topics = [r[0] for r in result.all()]
+        topic = "；".join(topics) if topics else ""
+    if not topic:
+        return {"score": None, "reason": "尚未设置研究选题：在选题中心保存一个选题后即可评估相关性。", "ai_used": False}
+
+    paper_kws = _parse_json_list(paper.keywords_cn)
+    overlap = [kw for kw in paper_kws if kw and kw[:6] in topic or (len(kw) > 1 and kw in topic)]
+    rule_score = min(1.0, len(overlap) / max(1, min(5, len(paper_kws) or 1)))
+
+    try:
+        provider, bare_model = _resolve_model_provider(None)
+        client, provider = _get_ai_client(provider)
+        model = bare_model or _get_default_model(provider)
+    except HTTPException:
+        reason = f"关键词重合：{('、'.join(overlap[:5]) or '无')}。" if overlap else "关键词无直接重合。"
+        return {"score": round(rule_score, 2), "reason": reason, "ai_used": False, "overlaps": overlap}
+
+    try:
+        prompt = f"""我的研究选题：{topic}
+
+论文信息：
+- 标题：{paper.title}
+- 摘要：{(paper.abstract or '无')[:500]}
+- 关键词：{', '.join(paper_kws) or '无'}
+
+请评估这篇论文与我的选题的相关性，只输出 JSON（不要其他内容）：
+{{"score": 0到1的小数, "reason": "一句话理由"}}"""
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.2,
+        )
+        import json as _json
+        raw = (response.choices[0].message.content or "").strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = _json.loads(m.group(0)) if m else {}
+        score = float(data.get("score", rule_score))
+        score = max(0.0, min(1.0, score))
+        return {"score": round(score, 2), "reason": str(data.get("reason", ""))[:300], "ai_used": True}
+    except Exception:
+        reason = f"关键词重合：{('、'.join(overlap[:5]) or '无')}。"
+        return {"score": round(rule_score, 2), "reason": reason, "ai_used": False, "overlaps": overlap}
 
 
 @router.get("/papers/{paper_id}/analyses")
@@ -431,6 +653,58 @@ async def get_author_papers(
         "page_size": page_size,
         "has_next": offset + page_size < total,
         "author_name": author_name
+    }
+
+
+@router.get("/authors/{author_name:path}/stats")
+async def get_author_stats(author_name: str, db: AsyncSession = Depends(get_db)):
+    """作者统计聚合（后端算，避免前端拉全量论文自行统计）。"""
+    from sqlalchemy import text as sa_text
+
+    result = await db.execute(
+        sa_text("""
+            SELECT DISTINCT p.id, p.authors, p.published_at, p.journal_name,
+                   p.keywords_cn, p.economics_subfield
+            FROM papers p, json_each(p.authors)
+            WHERE p.authors IS NOT NULL AND json_each.value = :author_name
+        """),
+        {"author_name": author_name}
+    )
+    rows = result.fetchall()
+
+    coauthor_counts: dict = {}
+    year_counts: dict = {}
+    journal_counts: dict = {}
+    keyword_counts: dict = {}
+    subfield_counts: dict = {}
+    first_author_count = 0
+
+    for _id, authors_raw, published_at, journal_name, keywords_raw, subfield in rows:
+        authors = _parse_json_list(authors_raw)
+        if authors and authors[0].strip() == author_name:
+            first_author_count += 1
+        for a in authors:
+            a_clean = a.strip()
+            if a_clean and a_clean != author_name:
+                coauthor_counts[a_clean] = coauthor_counts.get(a_clean, 0) + 1
+        if published_at:
+            year_counts[str(published_at)[:4]] = year_counts.get(str(published_at)[:4], 0) + 1
+        if journal_name:
+            journal_counts[journal_name] = journal_counts.get(journal_name, 0) + 1
+        for kw in _parse_json_list(keywords_raw):
+            keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
+        if subfield:
+            subfield_counts[subfield] = subfield_counts.get(subfield, 0) + 1
+
+    top = lambda d, n=1: sorted(d.items(), key=lambda x: -x[1])[:n]
+    return {
+        "total_papers": len(rows),
+        "first_author_count": first_author_count,
+        "recent_year": (sorted(year_counts, reverse=True) or [None])[0],
+        "top_journal": (top(journal_counts) or [(None,)])[0][0],
+        "top_keywords": [k for k, _ in top(keyword_counts, 5)],
+        "top_subfield": (top(subfield_counts) or [(None,)])[0][0],
+        "coauthors": [{"name": n, "count": c} for n, c in top(coauthor_counts, 10)],
     }
 
 

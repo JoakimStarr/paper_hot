@@ -24,6 +24,67 @@ import re
 logger = logging.getLogger(__name__)
 
 
+# ajcass API（经济研究/中国工业经济等）的列表接口不返回摘要，
+# 详情需调用 SiteWebApi/GetContentInfo（P0-2 补齐空摘要的根因修复）。
+AJCASS_API_BASE = "https://api.ajcass.com/api"
+# journal_id -> (默认 channel 兜底不需要，queryType=4 即可取回 issueContentInfoResult)
+
+
+async def _strip_html(text: str) -> str:
+    """去掉摘要里的 <p> 等 HTML 标签并压缩空白。"""
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)).strip()
+
+
+async def _fetch_ajcass_article_content(
+    journal_id: int,
+    article_id: Any,
+    year: Optional[int] = None,
+    issue: Optional[int] = None,
+    timeout: int = 15,
+) -> Dict[str, Any]:
+    """调用 ajcass GetContentInfo 获取单篇文章摘要/关键词/DOI。
+
+    失败时返回空字典，由调用方决定是否降级为空摘要（不阻断列表爬取主流程）。
+    """
+    if requests is None or not article_id:
+        return {}
+    payload = {
+        "contentId": article_id,
+        "journalId": journal_id,
+        "queryType": 4,
+        "channelId": 0,
+        "dataShowType": 1,
+        "dataSourceType": 3,
+        "issue": issue or 0,
+        "year": year or 0,
+    }
+    try:
+        resp = await asyncio.to_thread(
+            requests.post,
+            f"{AJCASS_API_BASE}/SiteWebApi/GetContentInfo",
+            json=payload,
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        result = ((resp.json() or {}).get("data") or {}).get("issueContentInfoResult") or {}
+        abstract = await _strip_html(result.get("abstract") or "")
+        keywords_raw = result.get("keywords") or ""
+        keywords = [k.strip() for k in re.split(r"[;;，,]", keywords_raw) if k.strip()]
+        doi = (result.get("doi") or "").strip()
+        return {
+            "abstract": abstract,
+            "keywords": keywords,
+            "doi": "" if doi.lower() in ("none", "null") else doi,
+        }
+    except Exception as e:
+        logger.warning(f"Fetch ajcass content failed (journal={journal_id}, id={article_id}): {e}")
+        return {}
+
+
 class ArxivFetcher:
     def __init__(self):
         self.categories = settings.arxiv_categories
@@ -218,7 +279,7 @@ class EconomicsJournalFetcher(ABC):
             "title": title,
             "abstract": abstract,
             "authors": authors,
-            "url": f"https://example.com/{self.journal_name}/{doi or 'unknown'}",
+            "url": f"https://kns.cnki.net/kcms/detail/search.aspx?dbcode=CJFQ&kw={self.journal_name}",
             "source": self.journal_name,
             "venue": self.journal_name,
             "published_at": published_date,
@@ -321,14 +382,22 @@ class JingjiYanjiuFetcher(EconomicsJournalFetcher):
                         
                         # 构建期号信息
                         issue_info = f"{year}年{issue_num:02d}期"
-                        
+
+                        # 列表 API 不返回摘要：调用 GetContentInfo 单独补齐（P0-2）
+                        content = await _fetch_ajcass_article_content(
+                            journal_id=201803050001,
+                            article_id=paper_id,
+                            year=year,
+                            issue=issue_num,
+                        )
+
                         paper_data = {
                             "title": title,
-                            "abstract": "",  # API不返回摘要，需要单独获取
+                            "abstract": content.get("abstract", ""),
                             "authors": authors,
                             "published_date": datetime(year, issue_num, 1),
-                            "doi": "",
-                            "keywords": [],
+                            "doi": content.get("doi", ""),
+                            "keywords": content.get("keywords", []),
                             "issue": issue_info
                         }
                         
@@ -958,17 +1027,25 @@ class ZhongguoGongyeJingjiFetcher(EconomicsJournalFetcher):
                         
                         # 构建论文URL
                         article_url = f"https://ciejournal.ajcass.com/#/article/{paper_id}" if paper_id else self.base_url
-                        
+
                         # 构建期号信息
                         issue_info = f"{year}年{issue_num:02d}期"
-                        
+
+                        # 列表 API 不返回摘要：调用 GetContentInfo 单独补齐（P0-2）
+                        content = await _fetch_ajcass_article_content(
+                            journal_id=self.journal_id,
+                            article_id=paper_id,
+                            year=year,
+                            issue=issue_num,
+                        )
+
                         paper_data = {
                             "title": title,
-                            "abstract": "",  # API不返回摘要，需要单独获取
+                            "abstract": content.get("abstract", ""),
                             "authors": authors,
                             "published_date": datetime(year, issue_num, 1),
-                            "doi": "",
-                            "keywords": [],
+                            "doi": content.get("doi", ""),
+                            "keywords": content.get("keywords", []),
                             "issue": issue_info
                         }
                         

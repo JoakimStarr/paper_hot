@@ -261,7 +261,7 @@ export const translations = {
     },
 
     // 通用
-    appName: 'ApplePaper',
+    appName: 'PaperPulse',
     appDescription: '发现和理解热门研究论文',
     
     // 导航
@@ -668,7 +668,7 @@ export const translations = {
     },
 
     // General
-    appName: 'ApplePaper',
+    appName: 'PaperPulse',
     appDescription: 'Discover and understand trending research papers',
     
     // Navigation

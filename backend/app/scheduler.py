@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any
 from app.config import settings
 import uuid
 import asyncio
+import random
 
 # 注意：爬虫模块（app.fetchers / app.fetchers_cnki）依赖 DrissionPage、bs4 等重型依赖，
 # 仅在爬虫功能真正被调用时惰性导入，避免轻量化服务器（不装爬虫依赖）启动失败。
@@ -95,6 +96,13 @@ class PaperScheduler:
             self.fetch_and_process_economics_journals,
             trigger=CronTrigger(hour=2, minute=0),
             id='fetch_economics_journals',
+            replace_existing=True
+        )
+
+        self.scheduler.add_job(
+            self.backfill_abstracts,
+            trigger=CronTrigger(hour=3, minute=30),
+            id='backfill_abstracts',
             replace_existing=True
         )
         
@@ -208,6 +216,94 @@ class PaperScheduler:
                 
         except Exception as e:
             logger.error(f"Error in update_trend_scores: {e}")
+
+    async def backfill_abstracts(self, batch_size: int = 100) -> Dict[str, int]:
+        """补抓空摘要论文（P0-2）：经济研究/中国工业经济经 ajcass 详情接口回填，
+        成功补齐后触发相似度全量重算。"""
+        from app.fetchers import _fetch_ajcass_article_content
+        import re as _re
+
+        venue_journal_ids = {
+            "经济研究": 201803050001,
+            "中国工业经济": 201606280001,
+        }
+        stats = {"found": 0, "updated": 0, "failed": 0}
+
+        try:
+            async with AsyncSessionLocal() as db:
+                papers = await PaperCRUD.get_papers_missing_abstracts(
+                    db, venues=list(venue_journal_ids.keys()), limit=batch_size
+                )
+                stats["found"] = len(papers)
+
+                for paper in papers:
+                    match = _re.search(r"article/(\d+)", paper.url or "")
+                    if not match:
+                        stats["failed"] += 1
+                        continue
+                    journal_id = venue_journal_ids.get(paper.venue)
+                    if not journal_id:
+                        stats["failed"] += 1
+                        continue
+
+                    content = await _fetch_ajcass_article_content(
+                        journal_id=journal_id,
+                        article_id=match.group(1),
+                    )
+                    if not content.get("abstract"):
+                        stats["failed"] += 1
+                        continue
+
+                    await PaperCRUD.update_paper_abstract(
+                        db,
+                        paper.id,
+                        abstract=content["abstract"],
+                        keywords=content.get("keywords"),
+                        doi=content.get("doi"),
+                    )
+                    stats["updated"] += 1
+                    # 摘要变化后重算该论文的 AI 特征与打分
+                    await self._process_and_score_paper(db, paper, {}, {})
+                    await asyncio.sleep(random.uniform(0.3, 0.8))
+
+                await db.commit()
+
+            if stats["updated"] > 0:
+                from app.routers.crawler import (
+                    _recompute_similarities_background,
+                    _similarity_task_state,
+                )
+                if not _similarity_task_state["running"]:
+                    task = asyncio.create_task(_recompute_similarities_background())
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
+
+            logger.info(f"Abstract backfill finished: {stats}")
+        except Exception as e:
+            logger.error(f"Error in backfill_abstracts: {e}")
+            stats["error"] = str(e)
+        return stats
+
+    async def trigger_manual_backfill(self) -> str:
+        logger.info("Manual abstract backfill triggered")
+        task_id = str(uuid.uuid4())
+        self.active_crawl_tasks[task_id] = {
+            "task_type": "backfill_abstracts",
+            "start_time": datetime.now(),
+            "status": "running",
+        }
+
+        async def run_backfill():
+            stats = await self.backfill_abstracts()
+            info = self.active_crawl_tasks.get(task_id, {})
+            info["status"] = "failed" if stats.get("error") else "completed"
+            info["end_time"] = datetime.now()
+            info["stats"] = stats
+
+        task = asyncio.create_task(run_backfill())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task_id
     
     async def run_initial_fetch(self):
         logger.info("Running initial paper fetch")

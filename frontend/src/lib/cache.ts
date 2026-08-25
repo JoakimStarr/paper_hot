@@ -88,40 +88,91 @@ export function buildCacheKey(params: Record<string, unknown>): string {
 }
 
 const BOOKMARKS_KEY = 'pp_bookmarks';
-let bookmarksCache: string[] | null = null;
 
-function loadBookmarks(): string[] {
-  if (bookmarksCache !== null) return bookmarksCache;
-  try {
-    const raw = localStorage.getItem(BOOKMARKS_KEY);
-    bookmarksCache = raw ? JSON.parse(raw) : [];
-  } catch {
-    bookmarksCache = [];
-  }
-  return bookmarksCache!;
+// —— 收藏：后端持久化（P1-10），localStorage 仅做旧数据一次性迁移 ——
+// 内存 Set 作为同步快照，服务端为事实源；未登录体系，身份由 x-user-id 承载。
+const bookmarkListeners = new Set<() => void>();
+let bookmarksCache: Set<string> = new Set();
+let bookmarksHydrated = false;
+let bookmarksVersion = 0;
+
+function notifyBookmarks() {
+  bookmarksVersion++;
+  bookmarkListeners.forEach((cb) => cb());
 }
 
-function saveBookmarks(bookmarks: string[]) {
-  bookmarksCache = bookmarks;
-  localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarks));
+export function subscribeBookmarks(cb: () => void): () => void {
+  bookmarkListeners.add(cb);
+  return () => bookmarkListeners.delete(cb);
+}
+
+export function getBookmarksVersion(): number {
+  return bookmarksVersion;
+}
+
+/** 应用启动时调用一次：拉取服务端收藏并合并迁移旧的 localStorage 数据。 */
+export async function initBookmarks(): Promise<void> {
+  if (bookmarksHydrated) return;
+  bookmarksHydrated = true;
+  const { personalApi } = await import('./api');
+  try {
+    const res = await personalApi.getFavorites();
+    bookmarksCache = new Set(res.papers.map((p) => p.id));
+  } catch {
+    // 后端不可用时退回本地缓存，保持功能可用
+    try {
+      const raw = localStorage.getItem(BOOKMARKS_KEY);
+      bookmarksCache = new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      bookmarksCache = new Set();
+    }
+  }
+  // 迁移：把旧 localStorage 收藏推送到服务端，然后清掉
+  try {
+    const legacyRaw = localStorage.getItem(BOOKMARKS_KEY);
+    if (legacyRaw) {
+      const legacy: string[] = JSON.parse(legacyRaw);
+      for (const id of legacy) {
+        if (!bookmarksCache.has(id)) {
+          try {
+            const r = await personalApi.toggleFavorite(id);
+            if (r.bookmarked) bookmarksCache.add(id);
+          } catch { /* 单条失败不阻断 */ }
+        }
+      }
+      localStorage.removeItem(BOOKMARKS_KEY);
+    }
+  } catch { /* ignore */ }
+  notifyBookmarks();
 }
 
 export function getBookmarks(): string[] {
-  return loadBookmarks();
-}
-
-export function toggleBookmark(paperId: string): boolean {
-  const bookmarks = loadBookmarks();
-  const idx = bookmarks.indexOf(paperId);
-  if (idx >= 0) {
-    bookmarks.splice(idx, 1);
-    saveBookmarks([...bookmarks]);
-    return false;
-  }
-  saveBookmarks([...bookmarks, paperId]);
-  return true;
+  return Array.from(bookmarksCache);
 }
 
 export function isBookmarked(paperId: string): boolean {
-  return loadBookmarks().includes(paperId);
+  return bookmarksCache.has(paperId);
+}
+
+/** 切换收藏（服务端为事实源），返回切换后的状态。 */
+export async function toggleBookmark(paperId: string): Promise<boolean> {
+  const { personalApi } = await import('./api');
+  // 乐观更新
+  const optimistic = !bookmarksCache.has(paperId);
+  if (optimistic) bookmarksCache.add(paperId);
+  else bookmarksCache.delete(paperId);
+  notifyBookmarks();
+  try {
+    const res = await personalApi.toggleFavorite(paperId);
+    if (res.bookmarked) bookmarksCache.add(paperId);
+    else bookmarksCache.delete(paperId);
+    notifyBookmarks();
+    return res.bookmarked;
+  } catch (e) {
+    // 失败回滚
+    if (optimistic) bookmarksCache.delete(paperId);
+    else bookmarksCache.add(paperId);
+    notifyBookmarks();
+    throw e;
+  }
 }

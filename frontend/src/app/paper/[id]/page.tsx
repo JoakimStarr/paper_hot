@@ -3,13 +3,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { papersApi, getLastModel, rememberModel, streamPaperChat } from '@/lib/api';
+import { papersApi, producerApi, getLastModel, rememberModel, streamPaperChat } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown, FileText, Target, Copy, Check } from 'lucide-react';
 import Link from 'next/link';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { getIssuePeriod, topicColors } from '@/lib/utils';
+import { getIssuePeriod, topicColors, downloadTextFile } from '@/lib/utils';
 
 export default function PaperDetailPage() {
   const { t } = useLanguage();
@@ -22,6 +22,15 @@ export default function PaperDetailPage() {
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  // —— P1-8c：结构化分析卡片 + 与我的选题相关性 ——
+  const [analysisSections, setAnalysisSections] = useState<Array<{ title: string; content: string }>>([]);
+  const [relevance, setRelevance] = useState<{ score: number | null; reason: string; ai_used: boolean } | null>(null);
+  const [relevanceLoading, setRelevanceLoading] = useState(false);
+
+  // —— P2-11a：引用导出 ——
+  const [citationBusy, setCitationBusy] = useState(false);
+  const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
 
   const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [chatInput, setChatInput] = useState('');
@@ -74,6 +83,10 @@ export default function PaperDetailPage() {
   useEffect(() => {
     if (params.id) {
       fetchPaper();
+      // P1-10：上报阅读历史（幂等，失败不影响页面）
+      import('@/lib/api').then(({ personalApi }) =>
+        personalApi.recordReading(params.id as string).catch(() => {})
+      );
     }
   }, [params.id]);
 
@@ -131,6 +144,74 @@ export default function PaperDetailPage() {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [streamContent, chatStreaming]);
+
+  // P1-8c：把 AI 分析文本解析为结构化卡片（背景/方法/发现/意义），解析不出则回退整文渲染
+  useEffect(() => {
+    if (!aiAnalysis) {
+      setAnalysisSections([]);
+      return;
+    }
+    const lines = aiAnalysis.split('\n');
+    const headingIdx: Array<{ idx: number; title: string }> = [];
+    lines.forEach((line, i) => {
+      const m = line.match(/^\s*(?:\d+[.、]\s*)?\*\*(.{2,20})\*\*\s*$/) || line.match(/^#{2,3}\s+(.{2,24})\s*$/);
+      if (m && !line.includes('：') ) headingIdx.push({ idx: i, title: m[1].replace(/^\d+[.、]\s*/, '') });
+    });
+    if (headingIdx.length >= 2) {
+      const sections = headingIdx.map((h, i) => {
+        const end = i + 1 < headingIdx.length ? headingIdx[i + 1].idx : lines.length;
+        return { title: h.title, content: lines.slice(h.idx + 1, end).join('\n').trim() };
+      }).filter((s) => s.content);
+      setAnalysisSections(sections);
+    } else {
+      setAnalysisSections([]);
+    }
+  }, [aiAnalysis]);
+
+  // P1-8c：与我的选题相关性（有选题时自动加载）
+  useEffect(() => {
+    if (!paper) return;
+    let cancelled = false;
+    papersApi.getTopicRelevance(paper.id)
+      .then((res) => { if (!cancelled) setRelevance(res); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [paper]);
+
+  // P2-11a：引用导出（GB/T 7714 / BibTeX）
+  const buildCitationSnapshot = () => ({
+    id: paper!.id,
+    title: paper!.title,
+    authors: paper!.authors || [],
+    journal_name: paper!.journal_name,
+    journal_issue: paper!.journal_issue,
+    published_at: paper!.published_at,
+  });
+
+  const handleExportCitation = async (format: 'gbt7714' | 'bibtex') => {
+    if (!paper || citationBusy) return;
+    setCitationBusy(true);
+    try {
+      const res = await producerApi.exportCitations([buildCitationSnapshot()], format);
+      downloadTextFile(
+        `citation_${format}.${format === 'bibtex' ? 'bib' : 'txt'}`,
+        res.citations.join('\n\n'),
+      );
+    } catch { /* ignore */ }
+    setCitationBusy(false);
+  };
+
+  const handleCopyCitation = async (format: 'gbt7714' | 'bibtex') => {
+    if (!paper || citationBusy) return;
+    setCitationBusy(true);
+    try {
+      const res = await producerApi.exportCitations([buildCitationSnapshot()], format);
+      await navigator.clipboard.writeText(res.citations.join('\n\n'));
+      setCopiedFormat(format);
+      setTimeout(() => setCopiedFormat(null), 1500);
+    } catch { /* ignore */ }
+    setCitationBusy(false);
+  };
 
   const fetchPaper = async () => {
     setLoading(true);
@@ -284,14 +365,35 @@ export default function PaperDetailPage() {
           <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white flex-1">
             {paper.title}
           </h1>
-          <a
-            href={paper.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary-600 hover:text-primary-700 shrink-0"
-          >
-            <ExternalLink className="w-5 h-5 sm:w-6 sm:h-6" />
-          </a>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* P2-11a：引用导出 */}
+            <button
+              onClick={() => handleCopyCitation('bibtex')}
+              disabled={citationBusy}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 transition-colors disabled:opacity-50"
+              title="复制 BibTeX"
+            >
+              {copiedFormat === 'bibtex' ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              <span className="hidden md:inline">BibTeX</span>
+            </button>
+            <button
+              onClick={() => handleExportCitation('gbt7714')}
+              disabled={citationBusy}
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 transition-colors disabled:opacity-50"
+              title="下载 GB/T 7714 引用"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">GB/T 7714</span>
+            </button>
+            <a
+              href={paper.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:text-primary-700"
+            >
+              <ExternalLink className="w-5 h-5 sm:w-6 sm:h-6" />
+            </a>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3 sm:mb-4">
@@ -552,7 +654,50 @@ export default function PaperDetailPage() {
 
         {aiAnalysis && !aiAnalyzing && (
           <div className="text-sm">
-            <MarkdownRenderer content={aiAnalysis} />
+            {/* P1-8c：结构化卡片（背景/方法/发现/意义），解析失败回退整文 */}
+            {analysisSections.length >= 2 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {analysisSections.map((section, i) => (
+                  <div
+                    key={i}
+                    className={`border border-gray-200 dark:border-gray-700 rounded-lg p-4 ${
+                      i === analysisSections.length - 1 ? 'md:col-span-2' : ''
+                    }`}
+                  >
+                    <h4 className="flex items-center gap-1.5 font-semibold text-gray-900 dark:text-white mb-2 text-sm">
+                      <Sparkles className="w-3.5 h-3.5 text-primary-500 shrink-0" />
+                      {section.title}
+                    </h4>
+                    <MarkdownRenderer content={section.content} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <MarkdownRenderer content={aiAnalysis} />
+            )}
+
+            {/* 与我的选题相关性评分（P1-8c） */}
+            {(relevanceLoading || relevance) && (
+              <div className="mt-4 border-t pt-4">
+                {relevanceLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在评估与你的选题的相关性…
+                  </div>
+                ) : relevance?.score !== null && relevance ? (
+                  <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-3 flex items-start gap-3">
+                    <Target className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+                    <div className="text-sm">
+                      <span className="font-semibold text-indigo-700 dark:text-indigo-300">
+                        与我的选题相关性：{(relevance.score! * 100).toFixed(0)}%
+                      </span>
+                      {relevance.reason && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{relevance.reason}</p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         )}
 

@@ -33,12 +33,20 @@ export default function AuthorPage() {
     top_subfield: string | null;
   } | null>(null);
 
-  // 统计数据只依赖作者，翻页/改每页条数时不重复拉取全量列表
+  // 统计由后端聚合（GET /authors/{name}/stats），避免前端拉全量论文自行计算
   const fetchStats = useCallback(async () => {
     if (!authorName) return;
     try {
-      const allPapers = await papersApi.getAuthorPapers(authorName, 1, 200);
-      computeStats(allPapers.papers);
+      const stats = await papersApi.getAuthorStats(authorName);
+      setCoAuthors(stats.coauthors || []);
+      setAuthorStats({
+        total_papers: stats.total_papers,
+        first_author_count: stats.first_author_count,
+        recent_year: stats.recent_year,
+        top_journal: stats.top_journal,
+        top_keywords: stats.top_keywords,
+        top_subfield: stats.top_subfield,
+      });
     } catch (error) {
       console.error('Error fetching author stats:', error);
     }
@@ -75,60 +83,6 @@ export default function AuthorPage() {
       fetchPapers(page);
     }
   }, [page, pageSize, queryKey]);
-
-  const computeStats = (allPapers: PaperCardType[]) => {
-    const coAuthorMap = new Map<string, number>();
-    let firstAuthorCount = 0;
-    const yearCounts: Record<string, number> = {};
-    const journalCounts: Record<string, number> = {};
-    const keywordCounts: Record<string, number> = {};
-    const subfieldCounts: Record<string, number> = {};
-
-    for (const paper of allPapers) {
-      if (paper.authors && paper.authors[0]?.trim() === authorName) {
-        firstAuthorCount++;
-      }
-      for (const a of paper.authors || []) {
-        const aClean = a.trim();
-        if (aClean && aClean !== authorName) {
-          coAuthorMap.set(aClean, (coAuthorMap.get(aClean) || 0) + 1);
-        }
-      }
-      if (paper.published_at) {
-        const year = paper.published_at.substring(0, 4);
-        yearCounts[year] = (yearCounts[year] || 0) + 1;
-      }
-      if (paper.journal_name) {
-        journalCounts[paper.journal_name] = (journalCounts[paper.journal_name] || 0) + 1;
-      }
-      for (const kw of paper.keywords_cn || []) {
-        keywordCounts[kw] = (keywordCounts[kw] || 0) + 1;
-      }
-      if (paper.economics_subfield) {
-        subfieldCounts[paper.economics_subfield] = (subfieldCounts[paper.economics_subfield] || 0) + 1;
-      }
-    }
-
-    const sortedCoAuthors = Array.from(coAuthorMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([name, count]) => ({ name, count }));
-
-    const sortedYears = Object.entries(yearCounts).sort((a, b) => b[0].localeCompare(a[0]));
-    const sortedJournals = Object.entries(journalCounts).sort((a, b) => b[1] - a[1]);
-    const sortedKeywords = Object.entries(keywordCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const sortedSubfields = Object.entries(subfieldCounts).sort((a, b) => b[1] - a[1]);
-
-    setCoAuthors(sortedCoAuthors);
-    setAuthorStats({
-      total_papers: allPapers.length,
-      first_author_count: firstAuthorCount,
-      recent_year: sortedYears[0]?.[0] || null,
-      top_journal: sortedJournals[0]?.[0] || null,
-      top_keywords: sortedKeywords.map(([k]) => k),
-      top_subfield: sortedSubfields[0]?.[0] || null,
-    });
-  };
 
   const handlePageChange = (newPage: number) => {
     if (newPage < 1 || newPage > totalPages) return;

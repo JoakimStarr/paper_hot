@@ -94,3 +94,75 @@ async def get_keyword_gaps(
     return {"gaps": gaps, "total": len(gaps)}
 
 
+@router.get("/network/keyword-map")
+async def get_keyword_research_map(
+    keyword: str = Query(..., min_length=1, max_length=80),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询驱动的研究版图（P2-13）：点一个关键词 -> 动态生成该词的研究版图。
+
+    返回：共现词（含计数）、年度趋势、代表论文（综合评分 top）、期刊分布。
+    """
+    from sqlalchemy import select as sa_select, desc as sa_desc
+    from app.models import Paper as PaperModel, PaperScore
+
+    kw = keyword.strip()
+    result = await db.execute(
+        sa_select(PaperModel)
+        .where(PaperModel.keywords_cn.isnot(None))
+        .order_by(PaperModel.published_at.desc())
+        .limit(4000)
+    )
+    papers = []
+    for p in result.scalars():
+        kws = p.keywords_cn or []
+        if any(kw in (k or "") for k in kws) or kw in (p.title or ""):
+            papers.append(p)
+
+    cooccur: dict = {}
+    yearly: dict = {}
+    journals: dict = {}
+    for p in papers:
+        for other in p.keywords_cn or []:
+            other = (other or "").strip()
+            if other and other != kw and kw not in other:
+                cooccur[other] = cooccur.get(other, 0) + 1
+        if p.published_at:
+            year = str(p.published_at)[:4]
+            yearly[year] = yearly.get(year, 0) + 1
+        j = p.journal_name or p.venue
+        if j:
+            journals[j] = journals.get(j, 0) + 1
+
+    # 代表论文：有评分按评分排，否则按时间倒序
+    try:
+        scored = await db.execute(
+            sa_select(PaperModel.id, PaperModel.title, PaperModel.journal_name, PaperScore.final_score)
+            .join(PaperScore, PaperScore.paper_id == PaperModel.id)
+            .where(PaperModel.id.in_([p.id for p in papers[:600]]))
+            .order_by(sa_desc(PaperScore.final_score))
+            .limit(8)
+        )
+        representative = [
+            {"id": r[0], "title": r[1], "journal_name": r[2], "score": round(float(r[3] or 0), 3)}
+            for r in scored.all()
+        ]
+    except Exception:
+        representative = []
+
+    if not representative and papers:
+        representative = [
+            {"id": p.id, "title": p.title, "journal_name": p.journal_name, "score": None}
+            for p in papers[:8]
+        ]
+
+    return {
+        "keyword": kw,
+        "total_papers": len(papers),
+        "cooccurring_keywords": sorted(cooccur.items(), key=lambda x: x[1], reverse=True)[:15],
+        "yearly_trend": sorted(yearly.items()),
+        "representative_papers": representative,
+        "journal_distribution": sorted(journals.items(), key=lambda x: x[1], reverse=True)[:10],
+    }
+
+

@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Compass, Sparkles, Loader2, Table2, ShieldCheck, RefreshCw, Database, Square, CheckCircle2, ChevronRight, ChevronDown, Brain, Save, Trash2, FolderKanban } from 'lucide-react';
+import { Compass, Sparkles, Loader2, Table2, ShieldCheck, RefreshCw, Database, Square, CheckCircle2, ChevronRight, ChevronDown, Brain, Save, Trash2, FolderKanban, BookMarked, FileText } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { topicsApi, streamValidateTopic } from '@/lib/api';
+import { topicsApi, streamValidateTopic, generateTopicProposal } from '@/lib/api';
+import { downloadTextFile } from '@/lib/utils';
 import type { GapAnalysisResponse, ResearchGap, RetrievedPaper, TopicProject, ValidatorStatus } from '@/types/paper';
+import ProducerLab from './ProducerLab';
 
 // 重组件按需加载：react-markdown 栈独立懒 chunk（与 trends 页同模式）
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -19,7 +21,7 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
 // 后台任务轮询间隔（对齐 trends 页模式，前密后疏）
 const POLL_INTERVALS = [3000, 5000, 8000, 13000, 13000];
 
-type TabKey = 'gaps' | 'validator' | 'library';
+type TabKey = 'gaps' | 'validator' | 'library' | 'producer';
 
 export default function TopicsPage() {
   const { t } = useLanguage();
@@ -48,6 +50,16 @@ export default function TopicsPage() {
   const [savingProject, setSavingProject] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // ---- P2-12b 竞争地图 / P2-12a 立项书 ----
+  const [competition, setCompetition] = useState<{
+    top_authors: Array<{ name: string; count: number }>;
+    journal_distribution: Array<{ journal: string; count: number }>;
+    recent_1y_count: number;
+  } | null>(null);
+  const [proposal, setProposal] = useState<string | null>(null);
+  const [proposalBusy, setProposalBusy] = useState(false);
+  const proposalGeneratedForRef = useRef('');
 
   // ---- 选题库（决策层） ----
   const [projects, setProjects] = useState<TopicProject[]>([]);
@@ -107,6 +119,22 @@ export default function TopicsPage() {
     loadValidatorStatus();
     loadProjects();
   }, [loadGaps, loadGapAnalysis, loadValidatorStatus, loadProjects]);
+
+  // 跨页预填：网络图「转选题」等入口把题目写入 localStorage，这里读取并切到验证 tab
+  useEffect(() => {
+    try {
+      const prefill = localStorage.getItem('pp_topic_prefill');
+      if (prefill) {
+        setTopicInput(prefill);
+        setTab('validator');
+        localStorage.removeItem('pp_topic_prefill');
+      }
+    } catch { /* ignore */ }
+    const tabParam = new URLSearchParams(window.location.search).get('tab');
+    if (tabParam === 'validator' || tabParam === 'library' || tabParam === 'producer') {
+      setTab(tabParam);
+    }
+  }, []);
 
   // 后台任务轮询：running 期间按递增间隔查状态，完成后刷新
   useEffect(() => {
@@ -179,6 +207,9 @@ export default function TopicsPage() {
     setRetrievedPapers([]);
     setRetrievedMode('');
     setSaveMsg(null);
+    setCompetition(null);
+    setProposal(null);
+    proposalGeneratedForRef.current = '';
     const controller = new AbortController();
     abortRef.current = controller;
     await streamValidateTopic(
@@ -188,11 +219,14 @@ export default function TopicsPage() {
         onContent: (text) => setReportContent(text),
         onReasoning: (text) => setReportReasoning(text),
         onMeta: (data) => {
-          // 首条"论文召回"元消息：recall 可见化
+          // 首条"论文召回"元消息：recall 可见化 + 竞争地图（P2-12b）
           if (data && typeof data === 'object' && 'papers' in data) {
             const meta = data as any;
             setRetrievedPapers(Array.isArray(meta.papers) ? meta.papers as RetrievedPaper[] : []);
             setRetrievedMode(typeof meta.mode === 'string' ? meta.mode : '');
+            if (meta.stats?.competition) {
+              setCompetition(meta.stats.competition);
+            }
           }
         },
         onDone: () => setValidating(false),
@@ -204,6 +238,22 @@ export default function TopicsPage() {
       controller.signal,
     );
   };
+
+  // P2-12a：验证完成后自动生成选题立项书（每个题目只自动生成一次，可手动重试）
+  useEffect(() => {
+    const topic = topicInput.trim();
+    if (
+      validating || proposalBusy || !topic || !reportContent || reportError ||
+      proposalGeneratedForRef.current === topic
+    ) return;
+    proposalGeneratedForRef.current = topic;
+    setProposalBusy(true);
+    generateTopicProposal(topic, reportContent.slice(0, 1500))
+      .then((res) => setProposal(res.proposal))
+      .catch(() => { proposalGeneratedForRef.current = ''; })
+      .finally(() => setProposalBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validating, reportContent, reportError]);
 
   const handleAbort = () => {
     abortRef.current?.abort();
@@ -308,6 +358,17 @@ export default function TopicsPage() {
         >
           <FolderKanban className="w-4 h-4" />
           选题库
+        </button>
+        <button
+          onClick={() => setTab('producer')}
+          className={`flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-md transition-colors ${
+            tab === 'producer'
+              ? 'bg-primary-600 text-white'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+          }`}
+        >
+          <BookMarked className="w-4 h-4" />
+          产出工作台
         </button>
       </div>
 
@@ -555,6 +616,50 @@ export default function TopicsPage() {
                 </div>
               )}
 
+              {/* 竞争地图（P2-12b）：谁在做、发到哪、近一年多少篇 */}
+              {competition && (competition.top_authors.length > 0 || competition.journal_distribution.length > 0) && (
+                <div className="mb-5 bg-indigo-50/60 dark:bg-indigo-900/15 border border-indigo-100 dark:border-indigo-800/40 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2.5">
+                    竞争地图
+                    <span className="ml-2 text-xs font-normal text-gray-400">
+                      近一年 {competition.recent_1y_count} 篇
+                    </span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1.5">谁在做（活跃作者）</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {competition.top_authors.map((a) => (
+                          <a
+                            key={a.name}
+                            href={`/author/${encodeURIComponent(a.name)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs px-2 py-1 bg-white dark:bg-gray-700/50 border border-indigo-200 dark:border-indigo-800 rounded-full hover:border-indigo-400 transition-colors"
+                          >
+                            {a.name}
+                            <span className="text-gray-400 ml-1">{a.count}</span>
+                          </a>
+                        ))}
+                        {competition.top_authors.length === 0 && <span className="text-xs text-gray-400">无</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 mb-1.5">发到哪里（期刊分布）</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {competition.journal_distribution.map((j) => (
+                          <span key={j.journal} className="text-xs px-2 py-1 bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-full">
+                            {j.journal}
+                            <span className="text-gray-400 ml-1">{j.count}</span>
+                          </span>
+                        ))}
+                        {competition.journal_distribution.length === 0 && <span className="text-xs text-gray-400">无</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* 思考过程（深度思考）可见化：模型返回 reasoning_content 时展示，可折叠 */}
               {reportReasoning && (
                 <div className="mb-4">
@@ -621,6 +726,44 @@ export default function TopicsPage() {
                       存入选题库
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* 选题立项书（P2-12a）：验证完成后自动生成 */}
+              {(proposalBusy || proposal) && reportContent && !validating && (
+                <div className="mt-5 border-t border-gray-200 dark:border-gray-700 pt-5">
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-green-600" />
+                      选题立项书（自动生成）
+                    </h3>
+                    {proposal && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => downloadTextFile(`立项书_${topicInput.trim().slice(0, 20)}_${Date.now()}.md`, proposal, 'text/markdown;charset=utf-8')}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:border-primary-400 text-gray-700 dark:text-gray-300"
+                        >
+                          下载 Markdown
+                        </button>
+                        <button
+                          onClick={() => setProposal(null)}
+                          disabled={proposalBusy}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-500 disabled:opacity-50"
+                        >
+                          重新生成
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {proposalBusy ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-400 py-3">
+                      <Loader2 className="w-4 h-4 animate-spin" /> 正在生成立项书（数据来源建议 / 方法论 / 研究设计）…
+                    </div>
+                  ) : proposal ? (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <MarkdownRenderer content={proposal} />
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -767,6 +910,9 @@ export default function TopicsPage() {
           )}
         </div>
       )}
+
+      {/* ==================== Tab 4：产出工作台（综述生成 + 期刊适配） ==================== */}
+      {tab === 'producer' && <ProducerLab />}
     </Layout>
   );
 }

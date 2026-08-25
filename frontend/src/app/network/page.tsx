@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi } from '@/lib/api';
 import { NetworkData, NetworkNode } from '@/types/paper';
-import { Loader2, Users, Hash, ChevronRight, ExternalLink } from 'lucide-react';
+import { Loader2, Users, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import type { KeywordMapResponse } from '@/lib/api';
 
 const NetworkGraph = dynamic(() => import('./NetworkGraph'), { ssr: false });
 
@@ -107,6 +108,33 @@ export default function NetworkPage() {
     setHighlightedNodeId(node.id);
     setLinkedFilter('');
   }, []);
+
+  // —— 研究版图（P2-13a）：点关键词节点 -> 动态生成该词的研究版图 ——
+  const [keywordMap, setKeywordMap] = useState<KeywordMapResponse | null>(null);
+  const [mapLoading, setMapLoading] = useState(false);
+
+  useEffect(() => {
+    if (!infoNode || infoNode.group !== 'keyword' || !infoNode.name) {
+      setKeywordMap(null);
+      return;
+    }
+    let cancelled = false;
+    setMapLoading(true);
+    setKeywordMap(null);
+    papersApi.getKeywordMap(infoNode.name)
+      .then((res) => { if (!cancelled) setKeywordMap(res); })
+      .catch(() => { if (!cancelled) setKeywordMap(null); })
+      .finally(() => { if (!cancelled) setMapLoading(false); });
+    return () => { cancelled = true; };
+  }, [infoNode]);
+
+  /** 一键转选题：把关键词带入选题验证器。 */
+  const handleToTopic = (keyword: string) => {
+    try {
+      localStorage.setItem('pp_topic_prefill', keyword);
+    } catch { /* ignore */ }
+    router.push('/topics?tab=validator');
+  };
 
   const handleConnectedNodeClick = (node: ConnectedNode) => {
     setInfoNode({
@@ -285,6 +313,115 @@ export default function NetworkPage() {
                       点击关联节点可切换查看。点击 <ExternalLink className="w-2.5 h-2.5 inline-block text-gray-400" /> 可跳转搜索相关论文。
                     </span>
                   </div>
+
+                  {/* 研究版图（P2-13a）：查询驱动，点关键词即出 */}
+                  {infoNode.group === 'keyword' && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+                      <h4 className="flex items-center gap-1.5 text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                        <MapIcon className="w-4 h-4 text-primary-500" />
+                        研究版图
+                        <button
+                          onClick={() => handleToTopic(infoNode.name)}
+                          className="ml-auto flex items-center gap-1 px-2.5 py-1 text-xs rounded-full bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+                          title={`把「${infoNode.name}」带入选题验证器`}
+                        >
+                          <Target className="w-3 h-3" />
+                          转选题
+                        </button>
+                      </h4>
+
+                      {mapLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在生成研究版图…
+                        </div>
+                      ) : keywordMap ? (
+                        <div className="space-y-3 text-xs">
+                          <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-700/40 rounded-md px-2.5 py-1.5">
+                            <span className="text-gray-500">库内相关论文</span>
+                            <span className="font-semibold text-gray-900 dark:text-white">{keywordMap.total_papers} 篇</span>
+                          </div>
+
+                          {/* 年度趋势迷你柱状 */}
+                          {keywordMap.yearly_trend.length > 0 && (
+                            <div>
+                              <p className="text-gray-400 mb-1">年度发文趋势</p>
+                              <div className="flex items-end gap-1 h-12">
+                                {keywordMap.yearly_trend.slice(-8).map(([year, count]) => {
+                                  const max = Math.max(...keywordMap.yearly_trend.slice(-8).map(([, c]) => c));
+                                  return (
+                                    <div key={year} className="flex flex-col items-center flex-1" title={`${year}: ${count} 篇`}>
+                                      <div
+                                        className="w-full bg-primary-400 rounded-t"
+                                        style={{ height: `${Math.max(8, (count / max) * 100)}%` }}
+                                      />
+                                      <span className="text-[9px] text-gray-400 mt-0.5">{year.slice(2)}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 共现词 */}
+                          {keywordMap.cooccurring_keywords.length > 0 && (
+                            <div>
+                              <p className="text-gray-400 mb-1">共现关键词</p>
+                              <div className="flex flex-wrap gap-1">
+                                {keywordMap.cooccurring_keywords.slice(0, 10).map(([word, count]) => (
+                                  <button
+                                    key={word}
+                                    onClick={() => router.push(`/search?search=${encodeURIComponent(word)}&search_field=keyword`)}
+                                    className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700/60 rounded hover:bg-primary-100 dark:hover:bg-primary-900/40 hover:text-primary-700 transition-colors"
+                                  >
+                                    {word} <span className="text-gray-400">{count}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 期刊分布 */}
+                          {keywordMap.journal_distribution.length > 0 && (
+                            <div>
+                              <p className="text-gray-400 mb-1">期刊分布</p>
+                              <div className="space-y-1">
+                                {keywordMap.journal_distribution.slice(0, 5).map(([journal, count]) => (
+                                  <div key={journal} className="flex items-center gap-1.5">
+                                    <span className="w-24 truncate text-gray-600 dark:text-gray-300" title={journal}>{journal}</span>
+                                    <div className="flex-1 h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-blue-400 rounded-full"
+                                        style={{ width: `${(count / keywordMap.journal_distribution[0][1]) * 100}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-gray-400 w-6 text-right">{count}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 代表论文 */}
+                          {keywordMap.representative_papers.length > 0 && (
+                            <div>
+                              <p className="text-gray-400 mb-1">代表论文</p>
+                              <ul className="space-y-1">
+                                {keywordMap.representative_papers.slice(0, 5).map((p) => (
+                                  <li key={p.id}>
+                                    <a href={`/paper/${p.id}`} target="_blank" rel="noopener noreferrer" className="block text-gray-600 dark:text-gray-300 hover:text-primary-600 line-clamp-1">
+                                      · {p.title}
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400 py-2">暂无该关键词的版图数据</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-6 sm:py-8 text-gray-400 text-sm">

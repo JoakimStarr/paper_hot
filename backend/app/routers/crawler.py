@@ -320,3 +320,22 @@ async def recompute_all_scores(db: AsyncSession = Depends(get_db), token: bool =
         raise HTTPException(status_code=500, detail=f"Internal error ({type(e).__name__})")
 
 
+@router.post("/maintenance/backfill-abstracts")
+async def backfill_abstracts(token: bool = Depends(verify_token)):
+    """手动触发空摘要补抓任务（经济研究/中国工业经济，P0-2）。"""
+    from app.main import scheduler
+    task_id = await scheduler.trigger_manual_backfill()
+    return {"status": "started", "task_id": task_id}
+
+
+@router.get("/maintenance/backfill-abstracts")
+async def backfill_abstracts_status(token: bool = Depends(verify_token)):
+    """查询空摘要补抓任务状态。"""
+    from app.main import scheduler
+    tasks = {
+        tid: info for tid, info in scheduler.active_crawl_tasks.items()
+        if info.get("task_type") == "backfill_abstracts"
+    }
+    return {"tasks": tasks}
+
+

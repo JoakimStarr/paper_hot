@@ -1,4 +1,5 @@
 import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload } from '@/types/paper';
+import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
 
@@ -14,13 +15,22 @@ const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || '';
 const RETRYABLE_METHODS = new Set(['GET', 'HEAD']);
 const RETRY_DELAYS = [600, 1200]; // 重试间隔（ms）
 
+/** 公共请求头：x-api-token 鉴权 + x-user-id 本地身份（P1-10 个人化）。 */
+function buildHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
+  try {
+    headers['x-user-id'] = getUserId();
+  } catch { /* SSR 环境忽略 */ }
+  return headers;
+}
+
 async function request<T>(
   url: string,
   options?: { method?: string; params?: Record<string, unknown>; body?: unknown },
 ): Promise<T> {
   const method = options?.method || 'GET';
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
+  const headers = buildHeaders();
 
   let fullUrl = `${API_BASE_URL}${url}`;
   if (options?.params) {
@@ -88,6 +98,25 @@ export interface AuthorPapersResponse {
   author_name: string;
 }
 
+export interface AuthorStatsResponse {
+  total_papers: number;
+  first_author_count: number;
+  recent_year: string | null;
+  top_journal: string | null;
+  top_keywords: string[];
+  top_subfield: string | null;
+  coauthors: Array<{ name: string; count: number }>;
+}
+
+export interface KeywordMapResponse {
+  keyword: string;
+  total_papers: number;
+  cooccurring_keywords: Array<[string, number]>;
+  yearly_trend: Array<[string, number]>;
+  representative_papers: Array<{ id: string; title: string; journal_name: string | null; score: number | null }>;
+  journal_distribution: Array<[string, number]>;
+}
+
 export interface SearchSuggestion {
   text: string;
   type: 'keyword' | 'title' | 'author';
@@ -130,6 +159,12 @@ export const papersApi = {
 
   getTrendingTopics: async (weeks_back?: number): Promise<TrendingTopicsResponse> =>
     request<TrendingTopicsResponse>('/trending-topics', { params: { weeks_back } }),
+
+  explainTrend: async (topic: string): Promise<{ topic: string; explanation: string; ai_used: boolean; series: Array<{ week: string; paper_count: number; growth_rate: number }> }> =>
+    request('/trends/explain', { params: { topic } }),
+
+  getKeywordMap: async (keyword: string): Promise<KeywordMapResponse> =>
+    request('/network/keyword-map', { params: { keyword } }),
 
   getAIAnalysisV2: async (): Promise<AIAnalysisResponseV2> =>
     request<AIAnalysisResponseV2>('/ai-analysis/v2'),
@@ -185,6 +220,9 @@ export const papersApi = {
   getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> =>
     request(`/papers/${paperId}/analyses/latest`),
 
+  getTopicRelevance: async (paperId: string, topic?: string): Promise<{ score: number | null; reason: string; ai_used: boolean; overlaps?: string[] }> =>
+    request(`/papers/${paperId}/relevance`, { method: 'POST', body: { ...(topic ? { topic } : {}) } }),
+
   getChats: async (paperId: string): Promise<Array<{ role: string; content: string }>> =>
     request(`/papers/${paperId}/chats`),
 
@@ -193,6 +231,9 @@ export const papersApi = {
 
   getAuthorPapers: async (authorName: string, page: number = 1, pageSize: number = 20): Promise<AuthorPapersResponse> =>
     request(`/authors/${encodeURIComponent(authorName)}/papers`, { params: { page, page_size: pageSize } }),
+
+  getAuthorStats: async (authorName: string): Promise<AuthorStatsResponse> =>
+    request(`/authors/${encodeURIComponent(authorName)}/stats`),
 
   getSearchSuggestions: async (q: string, limit: number = 8): Promise<SearchSuggestResponse> =>
     request('/search/suggest', { params: { q, limit } }),
@@ -220,6 +261,82 @@ export const papersApi = {
 
   cleanupData: async (): Promise<MaintenanceResult> =>
     request('/maintenance/cleanup', { method: 'POST' }),
+
+  backfillAbstracts: async (): Promise<{ status: string; task_id: string }> =>
+    request('/maintenance/backfill-abstracts', { method: 'POST' }),
+
+  getBackfillStatus: async (): Promise<{ tasks: Record<string, { status: string; stats?: Record<string, number> }> }> =>
+    request('/maintenance/backfill-abstracts'),
+
+  batchAnalyzePapers: async (paperIds: string[], model?: string): Promise<{ summary: string; model?: string; paper_count: number }> =>
+    request('/papers/batch-analyze', { method: 'POST', body: { paper_ids: paperIds, ...(model ? { model } : {}) } }),
+};
+
+// —— 个人化（P1-10）：收藏 / 阅读历史 / 关注子领域 ——
+export const personalApi = {
+  getMe: async (): Promise<{ user_id: string; followed_subfields: string[]; read_count: number; favorite_count: number }> =>
+    request('/personal/me'),
+
+  getFavorites: async (): Promise<{ papers: PaperCard[]; total: number }> =>
+    request('/personal/favorites'),
+
+  toggleFavorite: async (paperId: string): Promise<{ bookmarked: boolean }> =>
+    request('/personal/favorites/toggle', { method: 'POST', body: { paper_id: paperId } }),
+
+  recordReading: async (paperId: string): Promise<{ recorded: boolean }> =>
+    request('/personal/reading', { method: 'POST', body: { paper_id: paperId } }),
+
+  getReadingHistory: async (): Promise<{ papers: PaperCard[]; total: number }> =>
+    request('/personal/reading-history'),
+
+  getSubfields: async (): Promise<{ subfields: string[] }> =>
+    request('/personal/subfields'),
+
+  setSubfields: async (subfields: string[]): Promise<{ subfields: string[] }> =>
+    request('/personal/subfields', { method: 'PUT', body: { subfields } }),
+};
+
+// —— 研究工作台（P1-7）——
+export interface DashboardData {
+  today_read: PaperCard[];
+  briefing: {
+    topics: Array<{ topic: string; paper_count: number; growth_rate: number; trend: 'rising' | 'declining' | 'stable' }>;
+    ai_note: string | null;
+  };
+  mine: {
+    favorites: PaperCard[];
+    recent_analyses: Array<{ paper_id: string; title: string; status: string | null; created_at: string | null }>;
+    topic_projects: Array<{ id: number; title: string; status: string; novelty: number | null; crowding: number | null }>;
+    latest_report_summary: string | null;
+    latest_report_id: number | null;
+    favorite_count: number;
+    has_followed_subfields: boolean;
+  };
+}
+
+export const dashboardApi = {
+  getDashboard: async (): Promise<DashboardData> => request<DashboardData>('/dashboard'),
+};
+
+// —— 产出环节（P2-11）：综述生成 / 期刊适配 / 引用导出 ——
+export interface ReviewBrief { id: number; topic: string; status: string; model: string | null; created_at: string | null }
+export interface ReviewDetail extends ReviewBrief { content: string | null; papers: Array<Record<string, unknown>> | null }
+
+export const producerApi = {
+  startReview: async (topic: string, model?: string): Promise<{ review_id: number; status: string; topic: string }> =>
+    request('/producer/review', { method: 'POST', body: { topic, ...(model ? { model } : {}) } }),
+
+  getReview: async (reviewId: number): Promise<ReviewDetail> =>
+    request(`/producer/review/${reviewId}`),
+
+  listReviews: async (limit = 10): Promise<ReviewBrief[]> =>
+    request('/producer/reviews', { params: { limit } }),
+
+  suggestJournal: async (topic: string, abstract?: string, model?: string): Promise<{ topic: string; recommendations: string; suggestions: Array<{ journal: string; reason: string }>; ai_used: boolean }> =>
+    request('/producer/journal', { method: 'POST', body: { topic, abstract, ...(model ? { model } : {}) } }),
+
+  exportCitations: async (papers: Array<Record<string, unknown>>, format: 'gbt7714' | 'bibtex'): Promise<{ format: string; citations: string[]; total: number }> =>
+    request('/producer/citations', { method: 'POST', body: { papers, format } }),
 };
 
 // —— 选题中心：研究空白发现（P1）+ 选题验证器（P2）——
@@ -265,6 +382,16 @@ export function streamValidateTopic(
 ): Promise<void> {
   return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal, { topic });
 }
+
+/** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */
+export const generateTopicProposal = async (
+  topic: string,
+  validationReport?: string,
+): Promise<{ topic: string; proposal: string; model: string }> =>
+  request('/topic-validator/proposal', {
+    method: 'POST',
+    body: { topic, ...(validationReport ? { validation_report: validationReport } : {}) },
+  });
 
 export { API_BASE_URL };
 
@@ -314,8 +441,7 @@ export async function streamChat(
   signal?: AbortSignal,
   extraBody?: Record<string, unknown>,
 ): Promise<void> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (API_TOKEN) headers['x-api-token'] = API_TOKEN;
+  const headers = buildHeaders();
 
   let response: Response;
   try {

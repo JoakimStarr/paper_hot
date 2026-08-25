@@ -82,7 +82,7 @@ kill_project_pids() {
 }
 
 stop_services() {
-    echo "🛑 Stopping ApplePaper..."
+    echo "🛑 Stopping PaperPulse..."
     load_ports
     load_runtime_ports
 
@@ -98,7 +98,7 @@ stop_services() {
 
     rm -f "$RUNTIME_PORTS_FILE"
     echo ""
-    echo "✅ ApplePaper has been stopped"
+    echo "✅ PaperPulse has been stopped"
 }
 
 # ───────── 启动前自动清理本项目的旧实例 ─────────
@@ -127,7 +127,7 @@ stop_stale_instance() {
 
 # ───────────────────────── 查看状态 ─────────────────────────
 status_services() {
-    echo "📊 ApplePaper service status:"
+    echo "📊 PaperPulse service status:"
     load_ports
     load_runtime_ports
     local mode
@@ -149,7 +149,7 @@ status_services() {
 
 # ───────────────────────── 生产模式 ─────────────────────────
 start_production() {
-    echo -e "🚀 Starting ApplePaper (${GREEN}Production${NC} Mode)..."
+    echo -e "🚀 Starting PaperPulse (${GREEN}Production${NC} Mode)..."
     echo ""
 
     stop_stale_instance
@@ -194,7 +194,7 @@ start_production() {
 
 # ───────────────────────── 开发模式 ─────────────────────────
 start_dev() {
-    echo -e "🚀 Starting ApplePaper (${YELLOW}Development${NC} Mode)..."
+    echo -e "🚀 Starting PaperPulse (${YELLOW}Development${NC} Mode)..."
     echo -e "${YELLOW}⚠️  DEV MODE: Hot reload enabled, not for production use${NC}"
     echo ""
 
@@ -407,7 +407,7 @@ print_urls() {
     MODE=$1
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "✅ ApplePaper ${MODE} is running!"
+    echo -e "✅ PaperPulse ${MODE} is running!"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "📱 Frontend:  http://localhost:${FRONTEND_PORT}"

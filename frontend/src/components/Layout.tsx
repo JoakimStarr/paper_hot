@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu, Compass } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu, Compass, LayoutDashboard } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { papersApi, SearchSuggestion } from '@/lib/api';
+import { initBookmarks } from '@/lib/cache';
 import LanguageSwitcher from './LanguageSwitcher';
 
 interface LayoutProps {
@@ -86,6 +87,8 @@ export default function Layout({ children }: LayoutProps) {
   }, []);
 
   useEffect(() => {
+    // 启动即拉取服务端收藏（P1-10），并迁移旧 localStorage 数据
+    initBookmarks().catch(() => {});
     const checkBackend = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
@@ -113,6 +116,10 @@ export default function Layout({ children }: LayoutProps) {
             
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center gap-3">
+              <Link href="/dashboard" className={navLinkClass('/dashboard')}>
+                <LayoutDashboard className="w-4 h-4" />
+                <span>工作台</span>
+              </Link>
               <Link href="/" className={navLinkClass('/')}>
                 <Home className="w-4 h-4" />
                 <span>{t('nav.home')}</span>
@@ -236,6 +243,14 @@ export default function Layout({ children }: LayoutProps) {
         {mobileMenuOpen && (
           <div ref={mobileMenuRef} className="md:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
             <nav className="px-4 py-3 space-y-2">
+              <Link
+                href="/dashboard"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+              >
+                <LayoutDashboard className="w-5 h-5" />
+                <span>工作台</span>
+              </Link>
               <Link
                 href="/"
                 onClick={() => setMobileMenuOpen(false)}

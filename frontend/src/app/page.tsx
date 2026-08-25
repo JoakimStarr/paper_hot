@@ -7,10 +7,14 @@ import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
 import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
-import { Loader2, Search } from 'lucide-react';
+import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { Loader2, Search, X, Sparkles, FileDown } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
+import { papersApi, producerApi } from '@/lib/api';
+import type { PaperCard as PaperCardType } from '@/types/paper';
+import { downloadTextFile } from '@/lib/utils';
 
 export default function HomePage() {
   return (
@@ -40,10 +44,25 @@ function HomePageInner() {
   const [sortOrder, setSortOrder] = useState('desc');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // —— 批量操作（P1-8 / P2-11）：多选 -> AI 综述摘要 / 引用导出 ——
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState<'review' | 'cite' | null>(null);
+  const [batchSummary, setBatchSummary] = useState<string | null>(null);
+
   useEffect(() => {
     const journal = searchParams.get('journal');
     if (journal) setSelectedJournal([journal]);
   }, [searchParams]);
+
+  const toggleSelect = useCallback((paperId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(paperId)) next.delete(paperId);
+      else next.add(paperId);
+      return next;
+    });
+  }, []);
 
   const buildParams = useCallback((p: number, pageSize: number) => ({
     page: p,
@@ -72,6 +91,38 @@ function HomePageInner() {
     if (q) {
       // 搜索页读取的参数名是 search（q 会导致搜索框跳转后显示空闲状态）
       router.push(`/search?search=${encodeURIComponent(q)}`);
+    }
+  };
+
+  const selectedPapers = papers.filter((p) => selectedIds.has(p.id));
+
+  const handleBatchReview = async () => {
+    if (selectedIds.size === 0 || batchBusy) return;
+    setBatchBusy('review');
+    try {
+      const res = await papersApi.batchAnalyzePapers(Array.from(selectedIds).slice(0, 10));
+      setBatchSummary(res.summary);
+    } catch (e) {
+      alert(`批量分析失败：${e instanceof Error ? e.message : '未知错误'}`);
+    } finally {
+      setBatchBusy(null);
+    }
+  };
+
+  const exportCitations = async (format: 'gbt7714' | 'bibtex') => {
+    if (selectedIds.size === 0 || batchBusy) return;
+    setBatchBusy('cite');
+    try {
+      const snapshots = selectedPapers.map(toCitationSnapshot);
+      const res = await producerApi.exportCitations(snapshots, format);
+      downloadTextFile(
+        `citations_${format}_${Date.now()}.${format === 'bibtex' ? 'bib' : 'txt'}`,
+        res.citations.join('\n\n'),
+      );
+    } catch (e) {
+      alert(`导出失败：${e instanceof Error ? e.message : '未知错误'}`);
+    } finally {
+      setBatchBusy(null);
     }
   };
 
@@ -121,6 +172,52 @@ function HomePageInner() {
         onBookmarksChange={(v) => setShowBookmarksOnly(v)}
       />
 
+      {/* 批量操作工具条（P1-8 / P2-11） */}
+      <div className="my-3 flex flex-wrap items-center gap-2 text-sm">
+        <button
+          onClick={() => {
+            setSelectionMode((s) => !s);
+            setSelectedIds(new Set());
+          }}
+          className={`px-3 py-1.5 rounded-lg border transition-colors ${
+            selectionMode
+              ? 'bg-primary-600 text-white border-primary-600'
+              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-primary-400'
+          }`}
+        >
+          {selectionMode ? '退出多选' : '批量操作'}
+        </button>
+        {selectionMode && (
+          <>
+            <span className="text-xs text-gray-500">已选 {selectedIds.size} 篇（最多 10 篇）</span>
+            <button
+              onClick={handleBatchReview}
+              disabled={selectedIds.size === 0 || !!batchBusy}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-600 text-white disabled:opacity-50 hover:bg-purple-700 transition-colors"
+            >
+              {batchBusy === 'review' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              AI 领域综述摘要
+            </button>
+            <button
+              onClick={() => exportCitations('bibtex')}
+              disabled={selectedIds.size === 0 || !!batchBusy}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 hover:border-primary-400 transition-colors"
+            >
+              {batchBusy === 'cite' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+              导出 BibTeX
+            </button>
+            <button
+              onClick={() => exportCitations('gbt7714')}
+              disabled={selectedIds.size === 0 || !!batchBusy}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 hover:border-primary-400 transition-colors"
+            >
+              <FileDown className="w-4 h-4" />
+              导出 GB/T 7714
+            </button>
+          </>
+        )}
+      </div>
+
       {loading ? (
         <div className="grid grid-cols-1 gap-6">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -131,7 +228,13 @@ function HomePageInner() {
         <>
           <div className="grid grid-cols-1 gap-6">
             {displayedPapers.map((paper) => (
-              <PaperCard key={paper.id} paper={paper} />
+              <PaperCard
+                key={paper.id}
+                paper={paper}
+                selectable={selectionMode}
+                selected={selectedIds.has(paper.id)}
+                onToggleSelect={toggleSelect}
+              />
             ))}
           </div>
 
@@ -153,6 +256,44 @@ function HomePageInner() {
           )}
         </>
       )}
+
+      {/* 批量综述结果弹窗 */}
+      {batchSummary && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setBatchSummary(null)}>
+          <div
+            className="bg-white dark:bg-gray-800 rounded-xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">AI 领域综述摘要</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => downloadTextFile(`领域综述_${Date.now()}.md`, batchSummary, 'text/markdown;charset=utf-8')}
+                  className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 hover:border-primary-400 text-gray-700 dark:text-gray-300"
+                >
+                  下载 Markdown
+                </button>
+                <button onClick={() => setBatchSummary(null)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+            </div>
+            <MarkdownRenderer content={batchSummary} />
+          </div>
+        </div>
+      )}
     </Layout>
   );
+}
+
+/** 论文卡片 -> 引用导出快照（producer/citations 需要的最小字段集）。 */
+function toCitationSnapshot(p: PaperCardType): Record<string, unknown> {
+  return {
+    id: p.id,
+    title: p.title,
+    authors: p.authors || [],
+    journal_name: p.journal_name,
+    journal_issue: p.journal_issue,
+    published_at: p.published_at,
+  };
 }

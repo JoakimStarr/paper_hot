@@ -47,7 +47,7 @@ async def get_dashboard(
     return {
         "today_read": await _today_read(db, followed_subfields),
         "briefing": await _briefing(db),
-        "mine": await _mine(db, uid),
+        "mine": await _mine(db, uid, has_followed=bool(followed_subfields)),
     }
 
 
@@ -114,7 +114,7 @@ async def _briefing(db: AsyncSession) -> dict:
     return {"topics": topics, "ai_note": None}
 
 
-async def _mine(db: AsyncSession, uid: str) -> dict:
+async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
     """我的研究栈：最近分析 + 最近验证选题 + 收藏数/已读数。"""
     fav_ids = []
     for model in (Favorite, ReadingHistory):
@@ -190,5 +190,5 @@ async def _mine(db: AsyncSession, uid: str) -> dict:
         "latest_report_summary": report.summary if report else None,
         "latest_report_id": report.id if report else None,
         "favorite_count": len(fav_papers),
-        "has_followed_subfields": True,
+        "has_followed_subfields": has_followed,
     }

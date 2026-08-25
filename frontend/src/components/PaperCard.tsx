@@ -4,13 +4,18 @@ import React, { useState, memo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
-import { ExternalLink, Calendar, TrendingUp, Award, Bookmark } from 'lucide-react';
+import { ExternalLink, Calendar, TrendingUp, Award, Bookmark, Sparkles, Check, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
-import { toggleBookmark, isBookmarked as checkBookmarked } from '@/lib/cache';
+import { useBookmarks } from '@/lib/useBookmarks';
+import { papersApi } from '@/lib/api';
 
 interface PaperCardProps {
   paper: PaperCardType;
+  /** 多选模式（批量分析/批量导出），由列表页开启 */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (paperId: string) => void;
 }
 
 const subfieldColors: Record<string, string> = {
@@ -23,18 +28,49 @@ const subfieldColors: Record<string, string> = {
   '国际经济学': 'bg-pink-100 text-pink-800',
 };
 
-function PaperCardInner({ paper }: PaperCardProps) {
+function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCardProps) {
   const { t } = useLanguage();
   const router = useRouter();
   const score = paper.final_score;
   const isHighScore = score >= 0.7;
   const isTrending = paper.trend_score >= 0.6;
-  const [bookmarked, setBookmarked] = useState(checkBookmarked(paper.id));
+  const { has: isBookmarkedNow, toggle: toggleBookmarkState } = useBookmarks();
+  const bookmarked = isBookmarkedNow(paper.id);
+
+  // 列表页 AI 分析快捷状态：idle | loading | done | error
+  const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+
+  const handleQuickAnalyze = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (aiStatus === 'loading') return;
+    if (aiStatus === 'done') {
+      router.push(`/paper/${paper.id}#analysis`);
+      return;
+    }
+    setAiStatus('loading');
+    try {
+      const res = await papersApi.analyzePaper(paper.id);
+      setAiStatus(res.analysis || res.status === 'success' ? 'done' : 'error');
+    } catch {
+      setAiStatus('error');
+    }
+  };
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 p-4 sm:p-6 border border-gray-200 dark:border-gray-700">
       <div className="flex justify-between items-start gap-2 mb-2 sm:mb-3">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex items-start gap-2">
+          {selectable && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={() => onToggleSelect?.(paper.id)}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-1.5 w-4 h-4 accent-primary-600 cursor-pointer shrink-0"
+              aria-label="选择这篇论文"
+            />
+          )}
           <Link href={`/paper/${paper.id}`}>
             <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer line-clamp-2">
               {paper.title}
@@ -42,11 +78,33 @@ function PaperCardInner({ paper }: PaperCardProps) {
           </Link>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* AI 分析快捷入口（P1-8）：列表页直接触发，完成后跳详情 */}
+          <button
+            onClick={handleQuickAnalyze}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors ${
+              aiStatus === 'done'
+                ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
+                : aiStatus === 'error'
+                  ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'
+                  : 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50'
+            }`}
+            title={aiStatus === 'done' ? '查看分析结果' : 'AI 分析这篇论文'}
+          >
+            {aiStatus === 'loading' ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : aiStatus === 'done' ? (
+              <Check className="w-3.5 h-3.5" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">
+              {aiStatus === 'loading' ? '分析中…' : aiStatus === 'done' ? '已分析' : aiStatus === 'error' ? '失败重试' : 'AI 分析'}
+            </span>
+          </button>
           <button
             onClick={(e) => {
               e.preventDefault();
-              const added = toggleBookmark(paper.id);
-              setBookmarked(added);
+              toggleBookmarkState(paper.id).catch(() => {});
             }}
             className="text-gray-400 dark:text-gray-500 hover:text-yellow-500 transition-colors p-1"
             title={bookmarked ? '取消收藏' : '收藏'}

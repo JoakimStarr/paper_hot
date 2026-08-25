@@ -19,6 +19,102 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 研究级检索（P1-9）：触发高级语法解析的标记
+_ADVANCED_SEARCH_RE = re.compile(r'"|author:\S|\bAND\b|\bOR\b|\bNOT\b')
+
+
+def _tokenize_advanced_search(search: str) -> List[str]:
+    """切词：保留 "引号短语" 与 author: 前缀，大写 AND/OR/NOT 作为运算符。"""
+    return re.findall(r'"([^"]+)"|(author:\S+)|(\S+)', search)
+
+
+def _build_advanced_search_condition(search: str):
+    """把高级检索语法编译成 SQLAlchemy 条件。
+
+    语法：默认多词 AND；大写 OR 分组；NOT/- 排除下一词；"短语" 精确子串；
+    author:xxx 按作者精确匹配。返回 None 表示没有可用的检索词。
+    """
+    raw_tokens = []
+    for phrase, author, word in _tokenize_advanced_search(search):
+        if phrase:
+            raw_tokens.append(("phrase", phrase))
+        elif author:
+            raw_tokens.append(("author", author[len("author:"):]))
+        elif word:
+            if word.upper() in ("AND", "OR", "NOT"):
+                raw_tokens.append((word.upper(), None))
+            elif word.startswith('"') and word.endswith('"') and len(word) > 2:
+                raw_tokens.append(("phrase", word[1:-1]))
+            elif word.startswith('-') and len(word) > 1:
+                raw_tokens.append(("NOT", None))
+                raw_tokens.append(("term", word[1:]))
+            else:
+                raw_tokens.append(("term", word))
+
+    # 按 OR 切分成若干组，组内 AND
+    groups: List[List[tuple]] = [[]]
+    for kind, value in raw_tokens:
+        if kind == "OR":
+            if groups[-1]:
+                groups.append([])
+        else:
+            groups[-1].append((kind, value))
+
+    def _like_term(word: str):
+        pattern = f"%{word}%"
+        kw_subq = select(text("p.id")).select_from(
+            text("papers p, json_each(p.keywords_cn)")
+        ).where(
+            text("json_each.value LIKE :kw_pattern").bindparams(kw_pattern=pattern)
+        )
+        # ilike 的字符串参数由 SQLAlchemy 自动绑定（防注入）
+        cond = Paper.title.ilike(pattern) | Paper.abstract.ilike(pattern) | Paper.id.in_(kw_subq)
+        return cond
+
+    def _phrase(phrase: str):
+        pattern = f"%{phrase}%"
+        return Paper.title.ilike(pattern) | Paper.abstract.ilike(pattern)
+
+    def _author(name: str):
+        subq = select(text("p.id")).select_from(
+            text("papers p, json_each(p.authors)")
+        ).where(
+            text("json_each.value = :author_name").bindparams(author_name=name)
+        )
+        return Paper.id.in_(subq)
+
+    def _atom(kind: str, value):
+        if kind == "term":
+            return _like_term(value)
+        if kind == "phrase":
+            return _phrase(value)
+        if kind == "author":
+            return _author(value)
+        return None
+
+    group_conditions = []
+    for group in groups:
+        positive = True
+        group_cond = None
+        has_atom = False
+        for kind, value in group:
+            if kind == "NOT":
+                positive = False
+                continue
+            cond = _atom(kind, value)
+            if cond is None:
+                continue
+            has_atom = True
+            wrapped = cond if positive else ~cond
+            group_cond = wrapped if group_cond is None else and_(group_cond, wrapped)
+            positive = True
+        if has_atom and group_cond is not None:
+            group_conditions.append(group_cond)
+
+    if not group_conditions:
+        return None
+    return or_(*group_conditions) if len(group_conditions) > 1 else group_conditions[0]
+
 
 class PaperCRUD:
     @staticmethod
@@ -58,6 +154,47 @@ class PaperCRUD:
             .where(Paper.id == paper_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_papers_missing_abstracts(
+        db: AsyncSession,
+        venues: Optional[List[str]] = None,
+        limit: int = 100,
+    ) -> List[Paper]:
+        """查找摘要为空/过短的论文（P0-2 backfill_abstracts 用）。"""
+        query = (
+            select(Paper)
+            .where(
+                or_(
+                    Paper.abstract.is_(None),
+                    func.length(func.trim(Paper.abstract)) < 30,
+                )
+            )
+        )
+        if venues:
+            query = query.where(Paper.venue.in_(venues))
+        query = query.order_by(Paper.created_at.desc()).limit(limit)
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def update_paper_abstract(
+        db: AsyncSession,
+        paper_id: str,
+        abstract: str,
+        keywords: Optional[List[str]] = None,
+        doi: Optional[str] = None,
+    ) -> bool:
+        """回填论文摘要（可选顺带更新关键词与 DOI），返回是否更新。"""
+        values: dict = {"abstract": abstract, "updated_at": datetime.now()}
+        if keywords:
+            values["keywords_cn"] = keywords
+        if doi:
+            values["doi"] = doi
+        result = await db.execute(
+            update(Paper).where(Paper.id == paper_id).values(**values)
+        )
+        return result.rowcount > 0
     
     @staticmethod
     async def get_papers(
@@ -83,29 +220,36 @@ class PaperCRUD:
         )
         
         if search:
-            keyword = f"%{search}%"
-            if search_field == "title":
-                query = query.where(Paper.title.ilike(keyword))
-            elif search_field == "author":
-                author_subq = select(text("p.id")).select_from(
-                    text("papers p, json_each(p.authors)")
-                ).where(
-                    text("json_each.value = :author_name")
-                )
-                query = query.where(Paper.id.in_(author_subq)).params(author_name=search)
-            elif search_field == "keyword":
-                kw_subq = select(text("p.id")).select_from(
-                    text("papers p, json_each(p.keywords_cn)")
-                ).where(
-                    text("json_each.value LIKE :kw_pattern")
-                )
-                query = query.where(Paper.id.in_(kw_subq)).params(kw_pattern=keyword)
-            elif search_field == "abstract":
-                query = query.where(Paper.abstract.ilike(keyword))
+            # 研究级检索（P1-9）：含高级语法标记时走解析器，
+            # 支持 AND/OR/NOT、"引号短语"、author:xxx；默认多词 AND。
+            if search_field in (None, "", "all") and _ADVANCED_SEARCH_RE.search(search):
+                condition = _build_advanced_search_condition(search)
+                if condition is not None:
+                    query = query.where(condition)
             else:
-                query = query.where(
-                    Paper.title.ilike(keyword) | Paper.abstract.ilike(keyword)
-                )
+                keyword = f"%{search}%"
+                if search_field == "title":
+                    query = query.where(Paper.title.ilike(keyword))
+                elif search_field == "author":
+                    author_subq = select(text("p.id")).select_from(
+                        text("papers p, json_each(p.authors)")
+                    ).where(
+                        text("json_each.value = :author_name")
+                    )
+                    query = query.where(Paper.id.in_(author_subq)).params(author_name=search)
+                elif search_field == "keyword":
+                    kw_subq = select(text("p.id")).select_from(
+                        text("papers p, json_each(p.keywords_cn)")
+                    ).where(
+                        text("json_each.value LIKE :kw_pattern")
+                    )
+                    query = query.where(Paper.id.in_(kw_subq)).params(kw_pattern=keyword)
+                elif search_field == "abstract":
+                    query = query.where(Paper.abstract.ilike(keyword))
+                else:
+                    query = query.where(
+                        Paper.title.ilike(keyword) | Paper.abstract.ilike(keyword)
+                    )
         
         if topic:
             query = query.join(PaperFeatures).where(PaperFeatures.topic == topic)

@@ -481,6 +481,55 @@ def _crowding_stats(papers: list) -> dict:
     }
 
 
+async def _competition_map(db: AsyncSession, paper_ids: list) -> dict:
+    """竞争地图（P2-12b）：这个话题谁在做、发到哪、近一年多少篇。
+
+    基于召回论文 id 反查 authors / venue / journal_name，聚合作者与期刊分布。
+    """
+    if not paper_ids:
+        return {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    from sqlalchemy import select as sa_select
+    from app.models import Paper
+
+    result = await db.execute(
+        sa_select(Paper.authors, Paper.venue, Paper.journal_name, Paper.published_at)
+        .where(Paper.id.in_(list(paper_ids)[:60]))
+    )
+    author_counts: dict = {}
+    journal_counts: dict = {}
+    recent_1y = 0
+    from datetime import datetime, timedelta, timezone
+
+    one_year_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=365)
+    for authors_raw, venue, journal_name, published_at in result.all():
+        authors = authors_raw if isinstance(authors_raw, list) else []
+        for a in authors or []:
+            a = (a or "").strip()
+            if a:
+                author_counts[a] = author_counts.get(a, 0) + 1
+        j = journal_name or venue
+        if j:
+            journal_counts[j] = journal_counts.get(j, 0) + 1
+        if published_at:
+            try:
+                dt = published_at if isinstance(published_at, datetime) else datetime.fromisoformat(str(published_at))
+                if dt.tzinfo:
+                    dt = dt.replace(tzinfo=None)
+                if dt >= one_year_ago:
+                    recent_1y += 1
+            except (ValueError, TypeError):
+                pass
+
+    top_authors = sorted(author_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+    journals = sorted(journal_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+    return {
+        "top_authors": [{"name": n, "count": c} for n, c in top_authors],
+        "journal_distribution": [{"journal": j, "count": c} for j, c in journals],
+        "recent_1y_count": recent_1y,
+    }
+
+
 # ---------------------------------------------------------------------------
 # P6：选题库（决策层）——把「验证过的选题」沉淀为可跟踪项目
 # ---------------------------------------------------------------------------
@@ -628,6 +677,13 @@ async def validate_topic(
 
     papers, mode = await _retrieve_similar_papers(db, topic, k=30)
     stats = _crowding_stats(papers)
+    # P2-12b：竞争地图（谁在做 / 发到哪 / 近一年多少篇）
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception as comp_err:
+        logger.warning(f"competition map failed: {comp_err}")
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+    stats["competition"] = competition
 
     papers_text = "\n".join([
         f"- [{p['similarity']:.3f}] {p['title']} ({p['source']}, {p['published_at'][:10] if p['published_at'] else '?'})"
@@ -640,7 +696,10 @@ async def validate_topic(
         f"Top30 平均相似度: {stats['top30_avg_similarity']}\n"
         f"最高相似度: {stats.get('max_similarity', 0)}\n"
         f"近似论文中近 3 个月发表: {stats['recent_3m_count']} 篇\n"
-        f"近似论文高频关键词: {', '.join([k['keyword'] for k in stats['keyword_overlap'][:8]]) or '无'}"
+        f"近似论文高频关键词: {', '.join([k['keyword'] for k in stats['keyword_overlap'][:8]]) or '无'}\n"
+        f"竞争地图——活跃作者: {', '.join(a['name'] for a in competition['top_authors']) or '无'}\n"
+        f"竞争地图——期刊分布: {', '.join(j['journal'] for j in competition['journal_distribution']) or '无'}\n"
+        f"竞争地图——近一年发表: {competition['recent_1y_count']} 篇"
     )
 
     system_prompt = f"""你是一位严格的学术选题评审专家。用户提出了一个候选研究选题，你需要基于论文库的检索证据评估它。
@@ -704,3 +763,92 @@ async def validate_topic(
             yield chunk
 
     return StreamingResponse(composed_stream(), media_type="text/event-stream")
+
+
+class ProposalRequest(BaseModel):
+    topic: str
+    validation_report: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/topic-validator/proposal")
+async def generate_proposal(
+    body: ProposalRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """选题立项书（P2-12a）：验证通过后一键/自动生成一页立项书。
+
+    包含：研究问题、数据来源建议、可用数据、方法论、研究设计与预期贡献。
+    """
+    import asyncio as _asyncio
+
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+
+    papers, _mode = await _retrieve_similar_papers(db, topic, k=15)
+
+    # 库内数据线索：相关论文用到的关键词与期刊分布，供"可用数据"部分参考
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception:
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    related_text = "\n".join([
+        f"- {p['title']} ({p['source']}, {p['published_at'][:10] if p['published_at'] else '?'})"
+        for p in papers[:15]
+    ]) or "（库内无强相关论文）"
+
+    system_prompt = f"""你是严谨的学术研究计划顾问。请为以下选题生成一页「选题立项书」（markdown）。
+
+选题：{topic}
+
+{'验证报告摘要（供参考）：' + body.validation_report[:1500] if body.validation_report else ''}
+{'竞争情报——活跃作者: ' + ', '.join(a['name'] for a in competition['top_authors']) + '；主要发表期刊: ' + ', '.join(j['journal'] for j in competition['journal_distribution']) if competition['top_authors'] else ''}
+
+库内最相关论文：
+{related_text}
+
+请严格按以下结构输出：
+# 选题立项书：{topic}
+## 一、研究问题与假设
+核心研究问题（1-3 个）、理论假说或待检验命题
+## 二、数据来源建议
+具体到可获得的数据库/统计年鉴/调查数据（如 CFPS/CHFS/上市公司数据库等），说明匹配的样本与变量
+## 三、可用数据评估
+结合论文库中相似研究使用的数据，判断该选题的数据可得性与获取成本（高/中/低）
+## 四、方法论设计
+推荐 1-2 种识别策略/模型（如 DID、IV、RDD、面板固定效应等），说明理由与关键设定
+## 五、研究步骤与时间安排
+4-6 步的研究路线图
+## 六、预期贡献与创新点
+理论贡献与实践贡献各 1-2 条
+
+要求：具体、可执行，不写空话。"""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"请为选题「{topic}」生成立项书。"},
+    ]
+
+    try:
+        provider, bare_model = _resolve_model_provider(body.model)
+        client, provider = _get_ai_client(provider)
+        if not bare_model:
+            from app.routers.deps import _get_default_model
+            bare_model = _get_default_model(provider)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    try:
+        response = await _asyncio.to_thread(
+            client.chat.completions.create,
+            model=bare_model,
+            messages=messages,
+            max_tokens=3072,
+            temperature=0.4,
+        )
+        content = (response.choices[0].message.content or "").strip()
+        return {"topic": topic, "proposal": content, "model": bare_model}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Proposal generation failed: {str(e)}")

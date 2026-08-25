@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useCallback, Suspense } from 'react';
+import React, { useCallback, Suspense, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import SearchBar from '@/components/SearchBar';
+import Filters from '@/components/Filters';
 import PaperCard from '@/components/PaperCard';
 import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
@@ -31,19 +32,35 @@ function SearchPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  // 与首页同套筛选器（P1-9）：评分/子领域/专题/期刊/排序
+  const [minScore, setMinScore] = useState<number | null>(null);
+  const [selectedSubfield, setSelectedSubfield] = useState<string[]>([]);
+  const [selectedCnkiSubject, setSelectedCnkiSubject] = useState<string[]>([]);
+  const [selectedJournal, setSelectedJournal] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState('date');
+  const [sortOrder, setSortOrder] = useState('desc');
+
   const currentSearch = searchParams.get('search') || '';
-  const currentField = searchParams.get('search_field') || 'keyword';
-  const currentJournal = searchParams.get('journal') || '';
+  const currentFieldParam = searchParams.get('search_field');
+  const urlJournal = searchParams.get('journal') || '';
+  const currentField = currentFieldParam || 'all';
+
+  const activeJournals = selectedJournal.length > 0
+    ? selectedJournal
+    : urlJournal ? [urlJournal] : [];
 
   const buildParams = useCallback((p: number, pageSize: number) => ({
     page: p,
     page_size: pageSize,
     search: currentSearch || undefined,
     search_field: currentField || undefined,
-    journal_name: currentJournal || undefined,
-    sort_by: 'date',
-    sort_order: 'desc',
-  }), [currentSearch, currentField, currentJournal]);
+    journal_name: activeJournals.length > 0 ? activeJournals.join(',') : undefined,
+    min_score: minScore || undefined,
+    economics_subfield: selectedSubfield.length > 0 ? selectedSubfield.join(',') : undefined,
+    cnki_subject: selectedCnkiSubject.length > 0 ? selectedCnkiSubject.join(',') : undefined,
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  }), [currentSearch, currentField, activeJournals, minScore, selectedSubfield, selectedCnkiSubject, sortBy, sortOrder]);
 
   // 数据流收敛在 lib/usePapersPage.ts（与首页共用）；无搜索词/期刊时禁用请求
   const {
@@ -51,18 +68,18 @@ function SearchPageInner() {
     page, pageSize, handlePageChange, handlePageSizeChange,
   } = usePapersPage({
     buildParams,
-    deps: [currentSearch, currentField, currentJournal],
-    enabled: !!(currentSearch || currentJournal),
+    deps: [currentSearch, currentField, activeJournals, minScore, selectedSubfield, selectedCnkiSubject, sortBy, sortOrder],
+    enabled: !!(currentSearch || activeJournals.length > 0),
   });
 
   const handleSearch = (query: string, field: string) => {
     const params = new URLSearchParams();
     params.set('search', query);
-    params.set('search_field', field);
+    if (field && field !== 'all') params.set('search_field', field);
     router.push(`/search?${params.toString()}`);
   };
 
-  const hasParams = currentSearch || currentJournal;
+  const hasParams = currentSearch || activeJournals.length > 0;
 
   return (
     <Layout>
@@ -72,7 +89,7 @@ function SearchPageInner() {
           <span className="text-sm sm:text-base">{t('home.previous')}</span>
         </Link>
 
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3 sm:mb-4">搜索论文</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3 sm:mb-4">研究级检索</h1>
 
         <SearchBar
           initialQuery={currentSearch}
@@ -80,11 +97,19 @@ function SearchPageInner() {
           onSearch={handleSearch}
         />
 
-        {currentJournal && (
+        {/* 高级语法提示（P1-9） */}
+        <p className="mt-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+          高级语法：多词默认 AND；<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">OR</code> 连接可选词；
+          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded mx-0.5">NOT</code> 排除；
+          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">"精确短语"</code> 匹配标题/摘要；
+          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded ml-0.5">author:姓名</code> 按作者检索（字段选"全部"时生效）
+        </p>
+
+        {activeJournals.length > 0 && !selectedJournal.length && (
           <div className="mt-2 sm:mt-3 flex items-center gap-2">
             <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">期刊筛选：</span>
             <span className="bg-blue-50 dark:bg-blue-900/30 text-blue-700 px-2 py-1 rounded text-xs truncate max-w-[150px] sm:max-w-none">
-              {currentJournal}
+              {activeJournals[0]}
             </span>
             <button
               onClick={() => router.push('/search')}
@@ -95,6 +120,26 @@ function SearchPageInner() {
           </div>
         )}
       </div>
+
+      <Filters
+        minScore={minScore}
+        selectedSubfield={selectedSubfield}
+        selectedCnkiSubject={selectedCnkiSubject}
+        selectedJournal={selectedJournal}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        showBookmarksOnly={false}
+        onMinScoreChange={(v) => setMinScore(v)}
+        onSubfieldChange={(v) => setSelectedSubfield(v)}
+        onCnkiSubjectChange={(v) => setSelectedCnkiSubject(v)}
+        onJournalChange={(v) => {
+          setSelectedJournal(v);
+          if (urlJournal && v.length === 0) router.push('/search');
+        }}
+        onSortByChange={(v) => setSortBy(v)}
+        onSortOrderToggle={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+        onBookmarksChange={() => {}}
+      />
 
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:gap-6">
@@ -139,7 +184,7 @@ function SearchPageInner() {
         <div className="text-center py-8 sm:py-12">
           <Search className="w-12 h-12 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-3 sm:mb-4" />
           <p className="text-gray-500 dark:text-gray-400 text-base sm:text-lg mb-2">输入关键词开始搜索</p>
-          <p className="text-gray-400 text-xs sm:text-sm">支持按关键词、标题搜索，也支持期刊筛选</p>
+          <p className="text-gray-400 text-xs sm:text-sm">支持高级语法、按相关度排序，也可用下方筛选器缩小范围</p>
         </div>
       )}
     </Layout>

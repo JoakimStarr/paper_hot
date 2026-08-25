@@ -34,3 +34,25 @@ export const topicColors: Record<string, string> = {
   NLP: 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300',
   Generative: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300',
 };
+/** 下载文本文件（Markdown / 引用 / BibTeX 等导出共用）。 */
+export function downloadTextFile(filename: string, content: string, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** 导出 Word：以 HTML 包裹后按 .doc 下载（无需额外依赖，Word/WPS 可直接打开）。 */
+export function downloadAsWord(filename: string, title: string, markdownContent: string) {
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head>
+<body><h1>${title}</h1>${markdownContent
+    .split(/\n{2,}/)
+    .map((p) => (p.startsWith('#') ? `<h2>${p.replace(/^#+\s*/, '')}</h2>` : `<p>${p.replace(/\n/g, '<br/>')}</p>`))
+    .join('\n')}</body></html>`;
+  downloadTextFile(filename, html, 'application/msword');
+}
