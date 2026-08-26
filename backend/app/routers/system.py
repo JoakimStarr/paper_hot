@@ -119,6 +119,14 @@ def _mask_api_key(key: Optional[str]) -> str:
 @router.get("/settings")
 async def get_settings_endpoint(token: bool = Depends(verify_token)):
     from app.config import Settings
+    # 手动编辑 .env 后无需重启：每次读取前从 .env 重新同步运行时配置
+    # （update_setting 写入的键同样在 .env 中，重读不会丢失；环境变量优先级高于 .env，行为不变）
+    try:
+        fresh = Settings()
+        for _k, _v in fresh.model_dump().items():
+            setattr(settings, _k, _v)
+    except Exception as e:  # 同步失败时退回内存配置，保证接口可用
+        logger.warning(f"refresh settings from .env failed: {e}")
     api_keys = {
         "zhipu": {
             "configured": bool(settings.zhipu_api_key),
