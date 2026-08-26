@@ -60,11 +60,13 @@ export default function PaperDetailPage() {
   useEffect(() => {
     papersApi.getAIAnalysisModels()
       .then(res => {
-        const list = res.models.map(m => ({
-          id: m.name,
-          label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
-          available: m.available,
-        }));
+        const list = res.models
+          .filter(m => m.available)
+          .map(m => ({
+            id: m.name,
+            label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
+            available: m.available,
+          }));
         setAvailableModels(list);
         const lastAnalysis = getLastModel('paper_analysis');
         const lastChat = getLastModel('paper_chat');
@@ -313,8 +315,20 @@ export default function PaperDetailPage() {
   if (loading) {
     return (
       <Layout>
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="mb-4 h-5 w-24 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-8 mb-4 sm:mb-6 animate-pulse">
+          <div className="h-7 sm:h-8 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-3" />
+          <div className="flex gap-2 mb-4">
+            <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-16" />
+            <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-20" />
+            <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-24" />
+          </div>
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-5/6 mb-2" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3 mb-6" />
+          <div className="h-40 bg-gray-100 dark:bg-gray-700/50 rounded-lg mb-4" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2" />
         </div>
       </Layout>
     );

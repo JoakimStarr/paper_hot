@@ -65,6 +65,7 @@ trash/
 # 运行时数据（爬虫历史/Db/登录态/结果），不入版本库
 backend/data/
 cnki_state.json
+cnki_state_collect_*.json
 urls.txt
 debug_page1.html
 frontend/tsconfig.tsbuildinfo

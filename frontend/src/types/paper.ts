@@ -201,10 +201,12 @@ export interface CNKISearchRequest {
   years?: string;
   max_pages?: number;
   detail_workers?: number;
+  show_browser?: boolean;  // 显示浏览器窗口（无头模式验证码只能自动解；勾选后可人工处理）
 }
 
 export interface CNKISearchInfo {
   running: boolean;
+  paused?: boolean;
   keyword: string | null;
   started_at: string | null;
   finished_at: string | null;

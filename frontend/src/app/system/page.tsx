@@ -45,7 +45,7 @@ export default function SystemPage() {
   // 关键词检索爬取
   const [kwInfo, setKwInfo] = useState<CNKISearchInfo | null>(null);
   const [kwStarting, setKwStarting] = useState(false);
-  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '' });
+  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', show_browser: false });
   const kwPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadKwStatus = async () => {
@@ -67,6 +67,7 @@ export default function SystemPage() {
         search_field: kwForm.search_field || '主题',
         years: kwForm.years.trim() || undefined,
         max_pages: kwForm.max_pages ? Number(kwForm.max_pages) : undefined,
+        show_browser: kwForm.show_browser,
       });
       setMessage(t('sys.kwStarted'));
       if (kwPollRef.current) clearInterval(kwPollRef.current);
@@ -85,6 +86,24 @@ export default function SystemPage() {
     } catch (error: any) {
       setMessage(error.response?.data?.detail || t('sys.kwStartFailed'));
       setKwStarting(false);
+    }
+  };
+
+  const handlePauseKeywordCrawl = async () => {
+    try {
+      const res = await papersApi.pauseCNKISearch();
+      setMessage(res.status === 'paused' ? t('sys.kwPaused') : t('sys.kwPauseFailed'));
+    } catch (error: any) {
+      setMessage(error.response?.data?.detail || t('sys.kwPauseFailed'));
+    }
+  };
+
+  const handleResumeKeywordCrawl = async () => {
+    try {
+      await papersApi.resumeCNKISearch();
+      setMessage(t('sys.kwResumed'));
+    } catch (error: any) {
+      setMessage(error.response?.data?.detail || t('sys.kwResumeFailed'));
     }
   };
 
@@ -588,6 +607,8 @@ export default function SystemPage() {
             kwForm={kwForm}
             setKwForm={setKwForm}
             onStartKeywordCrawl={handleStartKeywordCrawl}
+            onPauseKeywordCrawl={handlePauseKeywordCrawl}
+            onResumeKeywordCrawl={handleResumeKeywordCrawl}
           />
         );
       case 'data':

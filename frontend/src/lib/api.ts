@@ -216,6 +216,10 @@ export const papersApi = {
     request('/crawl/cnki/search/start', { method: 'POST', body: opts }),
   getCNKISearchStatus: async (): Promise<CNKISearchInfo> =>
     request('/crawl/cnki/search/status'),
+  pauseCNKISearch: async (): Promise<{ status: string }> =>
+    request('/crawl/cnki/search/pause', { method: 'POST' }),
+  resumeCNKISearch: async (): Promise<{ status: string }> =>
+    request('/crawl/cnki/search/resume', { method: 'POST' }),
 
   getKeywordNetwork: async (): Promise<NetworkData> =>
     request('/network/keywords'),

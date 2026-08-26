@@ -1,6 +1,8 @@
 """爬虫、调度器、相似度重算与数据维护接口。"""
 import asyncio
 import logging
+import os
+import signal
 import sys
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -113,37 +115,47 @@ class CNKISearchRequest(BaseModel):
     years: Optional[str] = None     # 年份区间，如 2024-2026
     max_pages: Optional[int] = None  # 最大翻页数，默认翻到最后一页
     detail_workers: int = 3          # 详情页并发抓取数
+    show_browser: bool = False       # 是否显示浏览器窗口（无头模式遇验证码只能自动解，显示窗口可人工处理）
 
 
 # 关键词爬取任务状态（内存态；进程重启后归零。结果见 crawl_logs 与脚本 stdout 尾部）
 _cnki_search_state = {
     "running": False,
+    "paused": False,
     "keyword": None,
     "started_at": None,
     "finished_at": None,
     "message": None,
 }
+# 子进程句柄单独存（不进 state，避免 /status 序列化失败）
+_cnki_search_proc: Optional[asyncio.subprocess.Process] = None
 
 
 async def _run_cnki_search_background(keyword: str, search_field: str, years: Optional[str],
-                                      max_pages: Optional[int], detail_workers: int):
+                                      max_pages: Optional[int], detail_workers: int,
+                                      show_browser: bool = False):
     """以后端子进程方式复用 cnki_paper_captcha.py --search 检索模式抓取并入库。
 
     该脚本内置通过 app.crud 写入 paperpulse.db 并记录 CrawlLog（详见其 main / run_search），
     这里只负责用当前 venv 的 python 拉起子进程，等待其结束后记录简要结果。
+    show_browser=True 时以 --show-browser 打开浏览器窗口，遇验证码可人工处理。
     """
     import asyncio
+    global _cnki_search_proc
     _cnki_search_state["running"] = True
+    _cnki_search_state["paused"] = False
     _cnki_search_state["keyword"] = keyword
     _cnki_search_state["started_at"] = datetime.now(timezone.utc).isoformat()
     _cnki_search_state["finished_at"] = None
-    _cnki_search_state["message"] = "启动中…"
+    _cnki_search_state["message"] = "浏览器窗口模式，遇验证码请在弹出窗口中人工处理" if show_browser else "启动中…"
 
     script = BASE_DIR.parent / "cnki_paper_captcha.py"
     cmd = [
         sys.executable, str(script), "--search", keyword,
         "--search-field", search_field, "--detail-workers", str(max(1, detail_workers)),
     ]
+    if show_browser:
+        cmd += ["--show-browser"]
     if years:
         cmd += ["--years", years]
     if max_pages:
@@ -155,7 +167,9 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
             cwd=str(BASE_DIR.parent),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,  # 独立进程组：暂停/继续用 os.killpg 连浏览器一起停
         )
+        _cnki_search_proc = proc
         output, _ = await proc.communicate()
         tail = (output.decode("utf-8", errors="replace") or "").strip()
         tail = tail[-600:] if tail else ""
@@ -167,6 +181,8 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
         logger.error(f"CNKI keyword search subprocess failed: {e}")
         _cnki_search_state["message"] = f"启动失败：{e}"
     finally:
+        _cnki_search_proc = None
+        _cnki_search_state["paused"] = False
         _cnki_search_state["finished_at"] = datetime.now(timezone.utc).isoformat()
         _cnki_search_state["running"] = False
 
@@ -186,14 +202,50 @@ async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verif
         years=body.years,
         max_pages=body.max_pages,
         detail_workers=body.detail_workers,
+        show_browser=body.show_browser,
     ))
     return {"status": "started", "keyword": keyword}
 
 
 @router.get("/crawl/cnki/search/status")
 async def cnki_search_status(token: bool = Depends(verify_token)):
-    """关键词爬取任务状态（运行中 / 最近结果）。"""
+    """关键词爬取任务状态（运行中 / 暂停 / 最近结果）。"""
     return dict(_cnki_search_state)
+
+
+def _cnki_search_signal(sig: signal.Signals):
+    """对关键词爬取子进程进程组发送信号（连 Playwright 浏览器一起停/续）。"""
+    if not hasattr(signal, "SIGSTOP"):
+        raise HTTPException(status_code=400, detail="当前平台不支持暂停/继续")
+    proc = _cnki_search_proc
+    if not proc or proc.returncode is not None:
+        raise HTTPException(status_code=400, detail="当前没有运行中的爬取任务")
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        raise HTTPException(status_code=400, detail="爬取任务已结束")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"发送信号失败：{e}")
+
+
+@router.post("/crawl/cnki/search/pause")
+async def pause_cnki_search(token: bool = Depends(verify_token)):
+    """暂停关键词爬取（SIGSTOP 整个进程组；暂停期间进度冻结，可随时继续）。"""
+    _cnki_search_signal(signal.SIGSTOP)
+    _cnki_search_state["paused"] = True
+    _cnki_search_state["message"] = "已暂停（可随时继续）"
+    return {"status": "paused"}
+
+
+@router.post("/crawl/cnki/search/resume")
+async def resume_cnki_search(token: bool = Depends(verify_token)):
+    """继续已暂停的关键词爬取（SIGCONT）。"""
+    if not _cnki_search_state.get("paused"):
+        raise HTTPException(status_code=400, detail="任务未处于暂停状态")
+    _cnki_search_signal(signal.SIGCONT)
+    _cnki_search_state["paused"] = False
+    _cnki_search_state["message"] = "已恢复"
+    return {"status": "running"}
 
 
 @router.get("/crawl/status", response_model=CrawlLogListResponse)

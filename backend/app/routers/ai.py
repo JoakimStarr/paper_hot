@@ -228,7 +228,10 @@ async def get_ai_analysis_v2(
 
 @router.get("/ai-analysis/models")
 async def get_ai_analysis_models():
-    """获取可选用的 AI 模型列表（格式 provider/model），供前端选择器使用"""
+    """获取可选用的 AI 模型列表（格式 provider/model），供前端选择器使用。
+
+    只返回已配置（有 API key）provider 的、且用户在设置页显式配置过的模型。
+    """
     return {"models": ai_trend_service.get_model_status()}
 
 

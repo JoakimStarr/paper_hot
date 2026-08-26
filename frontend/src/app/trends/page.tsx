@@ -112,12 +112,14 @@ export default function TrendsPage() {
   useEffect(() => {
     papersApi.getAIAnalysisModels()
       .then(res => {
-        const list = res.models.map(m => ({
-          id: m.name,
-          label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
-          provider: m.provider,
-          available: m.available,
-        }));
+        const list = res.models
+          .filter(m => m.available)
+          .map(m => ({
+            id: m.name,
+            label: `${providerLabel(m.provider)} ${bareModelName(m.name)}`,
+            provider: m.provider,
+            available: m.available,
+          }));
         setAvailableModels(list);
         // 恢复上次选择的模型（若仍可用）
         const lastAnalysis = getLastModel('trends_analysis');

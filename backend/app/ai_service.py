@@ -32,12 +32,17 @@ BUILTIN_PROVIDERS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# 各内置 provider 的默认模型优先级（可通过设置页排序并持久化到 .env）
-DEFAULT_MODELS: Dict[str, List[str]] = {
-    "zhipu": ["glm-4.7", "glm-4.5-air", "glm-4.7-flash"],
-    "siliconflow": ["Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "Qwen/Qwen3.5-4B"],
-    "openai": ["gpt-4o", "gpt-4o-mini"],
-}
+
+# /models / 配置里区分：LLM 选择器只显示对话模型，排除 embedding/rerank/图片/音频等
+_NON_CHAT_MODEL_HINTS = (
+    "embedding", "text-embed", "bge-", "rerank", "moderation",
+    "whisper", "tts", "speech", "image", "dall-e", "transcribe",
+)
+
+
+def _is_non_chat_model(model_id: str) -> bool:
+    low = model_id.lower()
+    return any(h in low for h in _NON_CHAT_MODEL_HINTS)
 
 
 def _build_openai_client(api_key: str, base_url: Optional[str] = None):
@@ -118,16 +123,18 @@ class AITrendService:
                 logger.error(f"Failed to initialize custom provider '{name}': {e}")
 
     def _load_model_order(self):
-        """加载各 provider 的模型优先级；内置 provider 未配置时使用默认列表。"""
+        """加载各 provider 的模型优先级：严格等于用户显式配置的模型，
+        并过滤掉 embedding 等非 LLM 模型（LLM 选择器不显示它们）。"""
         self.models = {}
         for name in BUILTIN_PROVIDERS:
             raw = getattr(settings, f"{name}_models", None)
-            models = settings.get_json_list(raw) or DEFAULT_MODELS[name]
-            self.models[name] = list(models)
+            self.models[name] = [m for m in settings.get_json_list(raw) if not _is_non_chat_model(m)]
         for provider in settings.get_custom_providers():
             name = provider.get("name", "")
             if name:
-                self.models[name] = list(provider.get("models", []) or [])
+                self.models[name] = [
+                    m for m in (provider.get("models", []) or []) if not _is_non_chat_model(m)
+                ]
 
     def is_available(self) -> bool:
         return bool(self.clients)
@@ -160,16 +167,19 @@ class AITrendService:
         raise KeyError(None)
 
     def get_model_status(self) -> List[Dict]:
+        """当前可选模型列表：只包含「已配置 API key」的 provider（self.clients 内）。
+
+        未配置的 provider（无 key）不返回任何模型；对应前端「模型选择」只显示已配置项。
+        """
         result = []
         priority = 0
-        for provider in self.provider_order():
-            available = provider in self.clients
+        for provider in self.clients:
             for model in self.models.get(provider, []):
                 priority += 1
                 result.append({
                     "name": f"{provider}/{model}",
                     "priority": priority,
-                    "available": available,
+                    "available": True,
                     "provider": provider,
                 })
         return result

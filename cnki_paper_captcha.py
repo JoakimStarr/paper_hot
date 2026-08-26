@@ -14,6 +14,7 @@
 
 import json
 import re
+import sys
 import time
 import random
 import asyncio
@@ -24,7 +25,6 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, Page
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Tuple
 import io
 
@@ -63,11 +63,125 @@ TARGET_YEARS = ['2025', '2026']
 JOURNAL_CACHE_DAYS = 7
 PAPER_CACHE_DAYS = 30
 
+# —— 防检测 / 网络相关可调参数（集中在此，避免散落的魔数）——
+# 详情页 goto 后的等待：事件驱动为主，以下仅作「确认内容已渲染」后的随机小延迟（防检测）
+MIN_DETAIL_DELAY = 0.5
+MAX_DETAIL_DELAY = 1.5
+# 翻页 / 期次切换后等待目录容器出现的最长时长
+PAGE_STABLE_TIMEOUT = 30
+# 详情页抓取失败重试次数与退避间隔（秒）
+DETAIL_MAX_RETRIES = 2
+DETAIL_RETRY_BACKOFF = [3.0, 8.0]
+# 验证码自动解决最大尝试次数（点选验证码每次刷新都是一次风控交互，不宜过高）
+CLICK_CAPTCHA_MAX_RETRIES = 5
+SLIDER_CAPTCHA_MAX_RETRIES = 3
+
+# —— 全局请求节流 + 验证码熔断（跨浏览器 / 跨 tab 共享，进程内单例）——
+# 核心思想：无论开多少个浏览器/tab，全局「导航」速率被令牌桶锁死，
+# 避免聚合请求率过高触发知网风控；验证码连续出现时熔断翻倍并短暂停顿。
+PACING_BASE_INTERVAL = 1.5       # 全局最小导航间隔（秒）
+PACING_MAX_INTERVAL = 8.0        # 熔断后间隔上限
+CIRCUIT_BREAKER_WINDOW = 60      # 熔断计数窗口（秒）
+CIRCUIT_BREAKER_THRESHOLD = 2    # 窗口内出现几次验证码即熔断
+CIRCUIT_BREAKER_COOLDOWN = 15    # 熔断时额外停顿（秒）
+PACING_DECAY_FACTOR = 0.5        # 安静期后间隔衰减系数
+PACING_DECAY_AFTER = 180         # 多久无验证码后开始衰减（秒）
+
+_pacing = {
+    'interval': PACING_BASE_INTERVAL,
+    'next_token': 0.0,            # time.monotonic() 时间戳
+    'cooldown_until': 0.0,
+    'captcha_times': [],          # 窗口内验证码时间戳（time.monotonic()）
+}
+
+
+async def _pacing_wait():
+    """全局导航闸：单事件循环内同步 check-and-set，保证全局导航间隔。"""
+    loop = asyncio.get_event_loop()
+    # 静默期衰减（间隔向基础值回落）
+    if _pacing['captcha_times']:
+        latest = max(_pacing['captcha_times'])
+        if time.monotonic() - latest > PACING_DECAY_AFTER and _pacing['interval'] > PACING_BASE_INTERVAL:
+            _pacing['interval'] = max(PACING_BASE_INTERVAL, _pacing['interval'] * PACING_DECAY_FACTOR)
+    while True:
+        now = time.monotonic()
+        # 熔断冷却：额外停顿
+        if now < _pacing['cooldown_until']:
+            await asyncio.sleep(_pacing['cooldown_until'] - now)
+            continue
+        if now >= _pacing['next_token']:
+            _pacing['next_token'] = now + _pacing['interval']
+            return
+        await asyncio.sleep(_pacing['next_token'] - now)
+
+
+def _report_captcha(tag: str = ""):
+    """记录一次验证码事件；窗口内达到阈值则熔断（间隔翻倍 + 冷却）。"""
+    now = time.monotonic()
+    _pacing['captcha_times'] = [t for t in _pacing['captcha_times'] if now - t < CIRCUIT_BREAKER_WINDOW]
+    _pacing['captcha_times'].append(now)
+    if len(_pacing['captcha_times']) >= CIRCUIT_BREAKER_THRESHOLD:
+        new_int = min(_pacing['interval'] * 2, PACING_MAX_INTERVAL)
+        if new_int != _pacing['interval']:
+            print(f"  [熔断{tag}] {CIRCUIT_BREAKER_WINDOW}s 内 {len(_pacing['captcha_times'])} 次验证码，"
+                  f"全局导航间隔 {_pacing['interval']}s -> {new_int}s")
+            _pacing['interval'] = new_int
+        _pacing['captcha_times'] = []
+        _pacing['cooldown_until'] = now + CIRCUIT_BREAKER_COOLDOWN
+        print(f"  [熔断{tag}] 全部爬取暂停 {CIRCUIT_BREAKER_COOLDOWN}s 冷却")
+
+# 会话态文件：期刊收集各浏览器独立一份，详情浏览器复用 cnki_state.json
+CNKI_STATE_FILE = Path(__file__).resolve().parent / 'cnki_state.json'
+
+
+def _collect_state_file(index: int) -> Path:
+    return Path(__file__).resolve().parent / f'cnki_state_collect_{index}.json'
+
+
+
 # 文件路径
-BACKEND_DIR = Path('backend')
+BACKEND_DIR = Path(__file__).resolve().parent / 'backend'
 DATA_DIR = BACKEND_DIR / 'data'
 JOURNALS_HISTORY_FILE = DATA_DIR / 'journals_history.json'
 PAPERS_HISTORY_FILE = DATA_DIR / 'papers_history.json'
+
+# 脚本需要复用后端 app 包（PaperCRUD / AsyncSessionLocal）入库；
+# 一次性把 backend/ 放入 sys.path，替代原先在每个函数里重复 sys.path.insert
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+# OCR 引擎进程级共享 + 串行锁：
+# 单事件循环下多 tab 并发，OCR 推理是同步阻塞调用，统一丢到 to_thread 并由
+# threading.Lock 串行化，避免阻塞事件循环、也避免共享引擎实例的并发不安全。
+_OCR_THREAD_LOCK = threading.Lock()
+_ENGINE_LOCK = threading.Lock()
+_slider_ocr_shared: Optional['ddddocr.DdddOcr'] = None
+_det_ocr_shared: Optional['ddddocr.DdddOcr'] = None
+_text_ocr_shared: Optional['ddddocr.DdddOcr'] = None
+_paddle_ocr_shared: Optional['PaddleOCR'] = None
+
+
+def _launch_kwargs(headless: bool) -> dict:
+    """统一的浏览器启动参数（三处启动点共用）。
+
+    移除了 --disable-web-security / --disable-features=IsolateOrigins 等
+    非必需且可能被检测的 flag，仅保留稳定性必需的参数。
+    """
+    kwargs = {
+        'headless': headless,
+        'args': [
+            '--no-sandbox',
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+        ]
+    }
+    # 优先复用系统已安装的浏览器（Windows 用 Edge，Linux 用 Chrome），避免下载自带内核
+    channel = detect_browser_channel()
+    if channel:
+        kwargs['channel'] = channel
+    return kwargs
+
 
 
 def detect_browser_channel():
@@ -100,46 +214,65 @@ def detect_browser_channel():
 
 
 class CaptchaSolver:
-    """验证码解决器 - 使用 ddddocr 和 PaddleOCR 自动识别和解决验证码"""
+    """验证码解决器 - 使用 ddddocr 和 PaddleOCR 自动识别和解决验证码
+
+    OCR 引擎按需惰性初始化（首次遇到验证码才加载），进程级共享单例；
+    推理统一经 _ocr_call 丢到后台线程并串行化，避免阻塞事件循环。
+    """
 
     def __init__(self, thread_id: int = 0):
         self.thread_id = thread_id
-        self._slider_ocr: Optional[ddddocr.DdddOcr] = None
-        self._det_ocr: Optional[ddddocr.DdddOcr] = None
-        self._text_ocr: Optional[ddddocr.DdddOcr] = None
-        self._paddle_ocr: Optional[PaddleOCR] = None
-        self._init_ocr()
+        self._slider_ocr = None
+        self._det_ocr = None
+        self._text_ocr = None
+        self._paddle_ocr = None
 
-    def _init_ocr(self):
-        """初始化 OCR 实例"""
-        # 初始化 ddddocr
-        if DDDDOCR_AVAILABLE:
-            try:
-                # 滑块识别专用（关闭 OCR 和目标检测）
-                self._slider_ocr = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
-                # 目标检测专用（用于点选验证码定位文字位置）
-                self._det_ocr = ddddocr.DdddOcr(det=True, ocr=False, show_ad=False)
-                # 文字识别专用（备用）
-                self._text_ocr = ddddocr.DdddOcr(det=False, ocr=True, show_ad=False)
-                print(f"  [线程{self.thread_id}] ddddocr 初始化完成")
-            except Exception as e:
-                print(f"  [线程{self.thread_id}] ddddocr 初始化失败: {e}")
-
-        # 初始化 PaddleOCR（主要文字识别引擎）
-        if PADDLEOCR_AVAILABLE:
-            try:
-                # 使用最简参数初始化
-                self._paddle_ocr = PaddleOCR(lang='ch')
-                print(f"  [线程{self.thread_id}] PaddleOCR 初始化完成")
-            except Exception as e:
-                print(f"  [线程{self.thread_id}] PaddleOCR 初始化失败: {e}")
-                self._paddle_ocr = None
+    def _ensure_engines(self):
+        """惰性初始化 OCR 引擎（进程级共享单例，线程安全）。"""
+        global _slider_ocr_shared, _det_ocr_shared, _text_ocr_shared, _paddle_ocr_shared
+        with _ENGINE_LOCK:
+            if DDDDOCR_AVAILABLE:
+                if _slider_ocr_shared is None:
+                    try:
+                        _slider_ocr_shared = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
+                        print(f"  [线程{self.thread_id}] ddddocr 滑块引擎初始化完成")
+                    except Exception as e:
+                        print(f"  [线程{self.thread_id}] ddddocr 滑块引擎初始化失败: {e}")
+                if _det_ocr_shared is None:
+                    try:
+                        _det_ocr_shared = ddddocr.DdddOcr(det=True, ocr=False, show_ad=False)
+                        print(f"  [线程{self.thread_id}] ddddocr 检测引擎初始化完成")
+                    except Exception as e:
+                        print(f"  [线程{self.thread_id}] ddddocr 检测引擎初始化失败: {e}")
+                if _text_ocr_shared is None:
+                    try:
+                        _text_ocr_shared = ddddocr.DdddOcr(det=False, ocr=True, show_ad=False)
+                        print(f"  [线程{self.thread_id}] ddddocr 文字引擎初始化完成")
+                    except Exception as e:
+                        print(f"  [线程{self.thread_id}] ddddocr 文字引擎初始化失败: {e}")
+            # PaddleOCR（主要文字识别引擎）
+            if PADDLEOCR_AVAILABLE and _paddle_ocr_shared is None:
+                try:
+                    _paddle_ocr_shared = PaddleOCR(lang='ch')
+                    print(f"  [线程{self.thread_id}] PaddleOCR 初始化完成")
+                except Exception as e:
+                    print(f"  [线程{self.thread_id}] PaddleOCR 初始化失败: {e}")
+                    _paddle_ocr_shared = None
+            self._slider_ocr = _slider_ocr_shared
+            self._det_ocr = _det_ocr_shared
+            self._text_ocr = _text_ocr_shared
+            self._paddle_ocr = _paddle_ocr_shared
 
     def is_available(self) -> bool:
-        """检查验证码解决器是否可用"""
-        has_ddddocr = DDDDOCR_AVAILABLE and self._slider_ocr is not None
-        has_paddle = PADDLEOCR_AVAILABLE and self._paddle_ocr is not None
-        return has_ddddocr or has_paddle
+        """检查验证码解决器是否可用（按库可用性判断，不触发初始化）"""
+        return DDDDOCR_AVAILABLE or PADDLEOCR_AVAILABLE
+
+    async def _ocr_call(self, fn, *args):
+        """把同步 OCR 推理丢到后台线程，并用全局锁串行化。"""
+        def _run():
+            with _OCR_THREAD_LOCK:
+                return fn(*args)
+        return await asyncio.to_thread(_run)
 
     def _preprocess_char_image(self, char_img_bytes: bytes) -> bytes:
         """
@@ -187,7 +320,7 @@ class CaptchaSolver:
             print(f"    [线程{self.thread_id}] 图像预处理失败: {e}")
             return char_img_bytes
 
-    def _recognize_char_fusion(self, char_img_bytes: bytes) -> list:
+    async def _recognize_char_fusion(self, char_img_bytes: bytes) -> list:
         """
         多引擎融合识别单个文字
         返回: 识别到的所有可能文字列表（去重后）
@@ -204,7 +337,7 @@ class CaptchaSolver:
                 nparr = np.frombuffer(char_img_bytes, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                 if img is not None:
-                    result = self._paddle_ocr.ocr(img, det=False, cls=False)
+                    result = await self._ocr_call(self._paddle_ocr.ocr, img, det=False, cls=False)
                     if result and result[0]:
                         text = result[0][0][0] if isinstance(result[0][0], tuple) else result[0][0]
                         if text and text.strip():
@@ -219,7 +352,7 @@ class CaptchaSolver:
         if CV2_AVAILABLE and self._text_ocr is not None:
             try:
                 processed_bytes = self._preprocess_char_image(char_img_bytes)
-                result = self._text_ocr.classification(processed_bytes)
+                result = await self._ocr_call(self._text_ocr.classification, processed_bytes)
                 if result and result.strip():
                     cleaned = self._clean_ocr_result(result.strip())
                     if cleaned:
@@ -230,7 +363,7 @@ class CaptchaSolver:
         # 策略3：使用原图 + ddddocr
         if self._text_ocr is not None:
             try:
-                result = self._text_ocr.classification(char_img_bytes)
+                result = await self._ocr_call(self._text_ocr.classification, char_img_bytes)
                 if result and result.strip():
                     cleaned = self._clean_ocr_result(result.strip())
                     if cleaned:
@@ -247,7 +380,7 @@ class CaptchaSolver:
                     height, width = img.shape[:2]
                     resized = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
                     _, buffer = cv2.imencode('.png', resized)
-                    result = self._text_ocr.classification(buffer.tobytes())
+                    result = await self._ocr_call(self._text_ocr.classification, buffer.tobytes())
                     if result and result.strip():
                         cleaned = self._clean_ocr_result(result.strip())
                         if cleaned:
@@ -363,7 +496,7 @@ class CaptchaSolver:
             print(f"    [线程{self.thread_id}] 检测验证码类型失败: {e}")
             return 'click'  # 默认返回点选类型（论文详情页更常见）
 
-    async def solve_slider_captcha(self, page: Page, max_retries: int = 3) -> bool:
+    async def solve_slider_captcha(self, page: Page, max_retries: int = SLIDER_CAPTCHA_MAX_RETRIES) -> bool:
         """
         解决滑块验证码
         使用 ddddocr 的 slide_match 计算滑动距离并模拟拖动
@@ -371,6 +504,7 @@ class CaptchaSolver:
         if not self.is_available():
             print(f"    [线程{self.thread_id}] ddddocr 不可用，无法自动解决滑块验证码")
             return False
+        await asyncio.to_thread(self._ensure_engines)
 
         for attempt in range(max_retries):
             try:
@@ -449,10 +583,11 @@ class CaptchaSolver:
                     continue
 
                 # 使用 ddddocr 计算滑动距离
-                result = self._slider_ocr.slide_match(
+                result = await self._ocr_call(
+                    self._slider_ocr.slide_match,
                     target_bytes,
                     background_bytes,
-                    simple_target=True
+                    simple_target=True,
                 )
 
                 if not result or 'target' not in result:
@@ -483,6 +618,7 @@ class CaptchaSolver:
                 await asyncio.sleep(1)
 
         print(f"    [线程{self.thread_id}] 滑块验证码解决失败，已达到最大重试次数")
+        _report_captcha(tag=f"[线程{self.thread_id}]")
         return False
 
     async def _human_drag(self, page: Page, distance: float):
@@ -566,7 +702,7 @@ class CaptchaSolver:
 
         return track
 
-    async def solve_click_captcha(self, page: Page, max_retries: int = 20) -> bool:
+    async def solve_click_captcha(self, page: Page, max_retries: int = CLICK_CAPTCHA_MAX_RETRIES) -> bool:
         """
         解决文字点选验证码
         根据知网验证码结构：
@@ -583,6 +719,7 @@ class CaptchaSolver:
         if not self.is_available():
             print(f"    [线程{self.thread_id}] ddddocr 不可用，无法自动解决点选验证码")
             return False
+        await asyncio.to_thread(self._ensure_engines)
 
         for attempt in range(max_retries):
             try:
@@ -658,7 +795,7 @@ class CaptchaSolver:
                 print(f"    [线程{self.thread_id}] 验证码图片已截取，开始识别文字位置和文字内容...")
 
                 # 使用目标检测获取所有文字位置
-                bboxes = self._det_ocr.detection(captcha_bytes)
+                bboxes = await self._ocr_call(self._det_ocr.detection, captcha_bytes)
 
                 if not bboxes:
                     print(f"    [线程{self.thread_id}] 未检测到文字位置，点击刷新...")
@@ -690,7 +827,7 @@ class CaptchaSolver:
                     char_img_bytes = img_buffer.getvalue()
 
                     # 使用多引擎融合识别
-                    recognized_chars = self._recognize_char_fusion(char_img_bytes)
+                    recognized_chars = await self._recognize_char_fusion(char_img_bytes)
 
                     if recognized_chars:
                         # 将相对坐标转换为绝对坐标
@@ -755,6 +892,7 @@ class CaptchaSolver:
                 await self._click_refresh(page)
 
         print(f"    [线程{self.thread_id}] 点选验证码解决失败，已达到最大重试次数 ({max_retries})")
+        _report_captcha(tag=f"[线程{self.thread_id}]")
         return False
 
     async def _click_refresh(self, page: Page):
@@ -800,15 +938,22 @@ class HistoryManager:
         return {'last_updated': None, 'journals': {}}
 
     @staticmethod
+    def _atomic_write(path: Path, data: dict):
+        """原子写 JSON：先写临时文件再 rename，避免崩溃/中断时损坏缓存文件。"""
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + '.tmp')
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp.replace(path)
+
+    @staticmethod
     def save_journals_history(journals: dict):
         """保存期刊历史记录"""
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
         data = {
             'last_updated': datetime.now().isoformat(),
             'journals': journals
         }
-        with open(JOURNALS_HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        HistoryManager._atomic_write(JOURNALS_HISTORY_FILE, data)
 
     @staticmethod
     def load_papers_history() -> dict:
@@ -821,13 +966,11 @@ class HistoryManager:
     @staticmethod
     def save_papers_history(papers: dict):
         """保存论文链接历史记录"""
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
         data = {
             'last_updated': datetime.now().isoformat(),
             'papers': papers
         }
-        with open(PAPERS_HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        HistoryManager._atomic_write(PAPERS_HISTORY_FILE, data)
 
     @staticmethod
     def is_journals_cache_valid() -> bool:
@@ -904,14 +1047,17 @@ class HistoryManager:
 
 
 class JournalCrawler:
-    """单个期刊爬虫（每个线程一个实例）"""
+    """期刊/详情爬虫基类（单浏览器 + 多标签页并发模型）"""
 
-    def __init__(self, headless=True, thread_id=0):
+    def __init__(self, headless=True, thread_id=0, state_file=None):
         self.headless = headless
         self.thread_id = thread_id
         self.page = None
         self.browser = None
         self.playwright = None
+        self.context = None
+        # 会话态文件：存在则复用（暖会话），结束时保存（供下次/详情阶段使用）
+        self.state_file = Path(state_file) if state_file else None
         self.db_initialized = False
         self.captcha_solver = CaptchaSolver(thread_id=thread_id)
         self._captcha_retry_count = 0
@@ -920,22 +1066,7 @@ class JournalCrawler:
     async def init_browser(self):
         """初始化浏览器"""
         self.playwright = await async_playwright().start()
-        # 优先使用系统已安装的 Chrome，避免 Playwright 自带浏览器不兼容问题
-        launch_kwargs = {
-            'headless': self.headless,
-            'args': [
-                '--no-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-            ]
-        }
-        # 优先复用系统已安装的浏览器（Windows 用 Edge，Linux 用 Chrome），避免下载自带内核
-        channel = detect_browser_channel()
-        if channel:
-            launch_kwargs['channel'] = channel
+        launch_kwargs = _launch_kwargs(self.headless)
         self.browser = await self.playwright.chromium.launch(**launch_kwargs)
 
         user_agents = [
@@ -956,14 +1087,20 @@ class JournalCrawler:
         ]
         viewport = random.choice(viewports)
 
-        context = await self.browser.new_context(
-            user_agent=user_agent,
-            viewport=viewport,
-            locale='zh-CN',
-            timezone_id='Asia/Shanghai',
-            permissions=['geolocation'],
-            geolocation={'latitude': 39.9042, 'longitude': 116.4074},
-        )
+        ctx_kwargs = {
+            'user_agent': user_agent,
+            'viewport': viewport,
+            'locale': 'zh-CN',
+            'timezone_id': 'Asia/Shanghai',
+            'permissions': ['geolocation'],
+            'geolocation': {'latitude': 39.9042, 'longitude': 116.4074},
+        }
+        # 复用已保存的会话态（暖会话，显著降低冷会话首波验证码）
+        if self.state_file and self.state_file.exists():
+            ctx_kwargs['storage_state'] = str(self.state_file)
+            print(f"  [线程{self.thread_id}] 复用会话态: {self.state_file}")
+
+        context = await self.browser.new_context(**ctx_kwargs)
 
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
@@ -978,6 +1115,8 @@ class JournalCrawler:
             window.chrome = { runtime: {} };
         """)
 
+        # 保存 context，供详情并发阶段（fetch_details_concurrent）开 worker tab
+        self.context = context
         self.page = await context.new_page()
         print(f"  [线程{self.thread_id}] 浏览器已启动")
         print(f"  [线程{self.thread_id}] 指纹: {user_agent[:40]}...")
@@ -989,6 +1128,30 @@ class JournalCrawler:
         if self.playwright:
             await self.playwright.stop()
         print(f"  [线程{self.thread_id}] 浏览器已关闭")
+
+    async def save_storage_state(self):
+        """保存会话态到 state_file（供下次运行 / 详情阶段复用）。"""
+        if not self.state_file or not self.page:
+            return
+        try:
+            await self.page.context.storage_state(path=str(self.state_file))
+            print(f"  [线程{self.thread_id}] 会话态已保存: {self.state_file}")
+        except Exception as e:
+            print(f"  [线程{self.thread_id}] 保存会话态失败: {e}")
+
+    async def _warmup(self):
+        """暖场：访问知网首页停留片刻并保存会话态，降低冷会话首波验证码概率。"""
+        if not self.page:
+            return
+        try:
+            await _pacing_wait()
+            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+            await asyncio.sleep(random.uniform(2, 4))
+            await self.random_scroll()
+            await self.save_storage_state()
+            print(f"  [线程{self.thread_id}] 暖场完成")
+        except Exception as e:
+            print(f"  [线程{self.thread_id}] 暖场跳过: {e}")
 
     async def random_scroll(self, page=None):
         """随机滚动页面模拟人类行为"""
@@ -1070,12 +1233,20 @@ class JournalCrawler:
     async def get_year_issues(self, journal_url: str) -> list:
         """获取期刊的年份期次列表"""
         print(f"  [线程{self.thread_id}] 访问期刊页面: {journal_url[:60]}...")
+        await _pacing_wait()
         await self.page.goto(journal_url, wait_until='domcontentloaded', timeout=60000)
 
         if not await self.wait_for_page_stable(journal_url):
             return []
 
-        await asyncio.sleep(8)
+        # 事件驱动：等期次树容器出现再解析，替代固定 8s 等待
+        try:
+            await self.page.wait_for_selector(
+                'div.yearissuepage, #YearIssueTree', timeout=PAGE_STABLE_TIMEOUT * 1000
+            )
+        except Exception:
+            print(f"  [线程{self.thread_id}] 等待期次容器超时，继续尝试解析")
+        await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
 
         current_year = datetime.now().year
         latest_issue = max(1, datetime.now().month - 2)
@@ -1262,8 +1433,16 @@ class JournalCrawler:
 
             print(f"    [线程{self.thread_id}] 点击前一期按钮...")
             try:
+                await _pacing_wait()
                 await self.page.evaluate('document.getElementById("larrow").click()')
-                await asyncio.sleep(8)
+                # 事件驱动：等目录容器重新出现再继续，替代固定 8s
+                try:
+                    await self.page.wait_for_selector(
+                        '#rightCataloglist, #originalCatalogview', timeout=PAGE_STABLE_TIMEOUT * 1000
+                    )
+                except Exception:
+                    print(f"    [线程{self.thread_id}] 等待目录容器超时，继续尝试解析")
+                await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
             except Exception as e:
                 print(f"    [线程{self.thread_id}] 点击前一期按钮失败: {e}")
                 break
@@ -1369,36 +1548,42 @@ class JournalCrawler:
         page = page or self.page
         paper_url = paper_info['url']
 
-        try:
-            import sys
-            sys.path.insert(0, str(BACKEND_DIR))
-
-            from app.crud import PaperCRUD
-            from app.database import AsyncSessionLocal
-
-            async with AsyncSessionLocal() as db:
-                existing = await PaperCRUD.get_paper_by_url(db, paper_url)
-                if existing:
-                    print(f"  [线程{self.thread_id}] 数据库中已存在，跳过")
-                    return {'error': 'already_exists'}
-        except Exception:
-            pass
+        # 去重检查（并发 worker 间安全网；批量阶段已预取 existing_urls 做过一次过滤）
+        if await self._db_paper_exists(paper_url):
+            print(f"  [线程{self.thread_id}] 数据库中已存在，跳过")
+            return {'error': 'already_exists'}
 
         print(f"  [线程{self.thread_id}] 获取论文详情: {paper_info['title'][:50]}...")
 
-        wait_time = random.uniform(5, 10)
-        await asyncio.sleep(wait_time)
+        # 详情页抓取：goto + 等标题元素出现（事件驱动），网络/解析失败退避重试
+        html = None
+        for attempt in range(DETAIL_MAX_RETRIES + 1):
+            try:
+                await _pacing_wait()
+                await page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
+
+                if not await self.wait_for_page_stable(paper_url, page=page):
+                    return {'error': 'verify_page'}
+
+                await self.random_scroll(page=page)
+                try:
+                    await page.wait_for_selector('div.doc h1, h1', timeout=20000)
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
+
+                html = await page.content()
+                break
+            except Exception as e:
+                if attempt < DETAIL_MAX_RETRIES:
+                    backoff = DETAIL_RETRY_BACKOFF[min(attempt, len(DETAIL_RETRY_BACKOFF) - 1)]
+                    print(f"    [线程{self.thread_id}] 详情页加载失败（{e}），{backoff}s 后重试 ({attempt + 1}/{DETAIL_MAX_RETRIES})")
+                    await asyncio.sleep(backoff)
+                else:
+                    print(f"    [线程{self.thread_id}] ✗ 获取失败: {e}")
+                    return {'error': str(e)}
 
         try:
-            await page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
-
-            if not await self.wait_for_page_stable(paper_url, page=page):
-                return {'error': 'verify_page'}
-
-            await self.random_scroll(page=page)
-            await asyncio.sleep(random.uniform(3, 6))
-
-            html = await page.content()
             soup = BeautifulSoup(html, 'lxml')
 
             title = ''
@@ -1506,6 +1691,71 @@ class JournalCrawler:
             print(f"    [线程{self.thread_id}] ✗ 获取失败: {e}")
             return {'error': str(e)}
 
+    async def _ensure_db(self):
+        """确保数据库文件存在并初始化表结构（首次运行自动建库）。"""
+        if self.db_initialized:
+            return
+        from app.database import init_db
+        db_file = BACKEND_DIR / 'data' / 'paperpulse.db'
+        # SQLite 不会自动创建父目录：先确保 backend/data/ 存在，
+        # 否则 init_db() 报 unable to open database file
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        if not db_file.exists():
+            print(f"    [线程{self.thread_id}] 数据库文件不存在，正在创建...")
+            await init_db()
+            print(f"    [线程{self.thread_id}] ✓ 数据库已创建")
+        self.db_initialized = True
+
+    async def _db_paper_exists(self, paper_url: str) -> bool:
+        """按 URL 判断论文是否已在库中。"""
+        try:
+            from app.crud import PaperCRUD
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                return (await PaperCRUD.get_paper_by_url(db, paper_url)) is not None
+        except Exception:
+            return False
+
+    async def _db_existing_urls(self) -> set:
+        """批量获取库中全部论文 URL（详情阶段开始时调用一次，避免逐篇 roundtrip）。"""
+        try:
+            from app.crud import PaperCRUD
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                return set(await PaperCRUD.get_all_paper_urls(db))
+        except Exception as e:
+            print(f"  [线程{self.thread_id}] 获取数据库已有论文失败: {e}")
+            return set()
+
+    async def _create_crawl_log(self, journal_name: str) -> Optional[int]:
+        """创建爬取日志，返回 crawl_log_id。"""
+        try:
+            from app.schemas import CrawlLogCreate
+            from app.crud import CrawlLogCRUD
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                crawl_log = await CrawlLogCRUD.create_crawl_log(
+                    db, CrawlLogCreate(journal_name=journal_name, crawl_start_time=datetime.now())
+                )
+                await db.commit()
+                return crawl_log.id
+        except Exception as e:
+            print(f"  [线程{self.thread_id}] 创建爬取日志失败: {e}")
+            return None
+
+    async def _update_crawl_log(self, crawl_log_id: Optional[int], **fields):
+        """更新爬取日志（成功/失败均走这里）。"""
+        if not crawl_log_id:
+            return
+        try:
+            from app.crud import CrawlLogCRUD
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                await CrawlLogCRUD.update_crawl_log(db, crawl_log_id, **fields)
+                await db.commit()
+        except Exception as e:
+            print(f"  [线程{self.thread_id}] 更新爬取日志失败: {e}")
+
     async def save_to_database(self, paper_data: dict, journal_name: str = None, year: str = None, issue: str = None):
         """异步保存到数据库"""
         # 多 worker 并发写库会撞 SQLite 写锁：实例级锁串行化写操作
@@ -1513,24 +1763,11 @@ class JournalCrawler:
             self._db_lock = asyncio.Lock()
         async with self._db_lock:
             try:
-                import sys
                 import re
-                sys.path.insert(0, str(BACKEND_DIR))
+                await self._ensure_db()
 
-                from app.database import init_db
                 from app.crud import PaperCRUD
                 from app.database import AsyncSessionLocal
-
-                if not self.db_initialized:
-                    db_file = BACKEND_DIR / 'data' / 'paperpulse.db'
-                    # SQLite 不会自动创建父目录：先确保 backend/data/ 存在，
-                    # 否则 init_db() 报 unable to open database file
-                    db_file.parent.mkdir(parents=True, exist_ok=True)
-                    if not db_file.exists():
-                        print(f"    [线程{self.thread_id}] 数据库文件不存在，正在创建...")
-                        await init_db()
-                        print(f"    [线程{self.thread_id}] ✓ 数据库已创建")
-                    self.db_initialized = True
 
                 async with AsyncSessionLocal() as db:
                     existing = await PaperCRUD.get_paper_by_url(db, paper_data['url'])
@@ -1561,141 +1798,8 @@ class JournalCrawler:
                 import traceback
                 traceback.print_exc()
 
-    async def process_journal(self, journal_name: str, journal_info: dict):
-        """处理单个期刊（线程入口）"""
-        crawl_log_id = None
-        try:
-            await self.init_browser()
-
-            papers = await self.crawl_papers_for_journal(journal_name, journal_info)
-
-            if not papers:
-                print(f"[线程{self.thread_id}] 期刊 {journal_name} 未获取到论文")
-                return
-
-            # 创建爬取日志
-            try:
-                import sys
-                sys.path.insert(0, str(BACKEND_DIR))
-                from app.schemas import CrawlLogCreate
-                from app.crud import CrawlLogCRUD
-                from app.database import AsyncSessionLocal
-                async with AsyncSessionLocal() as db:
-                    crawl_log_data = CrawlLogCreate(
-                        journal_name=journal_name,
-                        crawl_start_time=datetime.now()
-                    )
-                    crawl_log = await CrawlLogCRUD.create_crawl_log(db, crawl_log_data)
-                    crawl_log_id = crawl_log.id
-                    await db.commit()
-            except Exception as e:
-                print(f"  [线程{self.thread_id}] 创建爬取日志失败: {e}")
-
-            print(f"\n[线程{self.thread_id}] {'=' * 60}")
-            print(f"[线程{self.thread_id}] 步骤8: 获取论文详情 - {journal_name}")
-            print(f"[线程{self.thread_id}] {'=' * 60}")
-
-            papers_history = HistoryManager.load_papers_history()
-            journal_data = papers_history.get('papers', {}).get(journal_name, {})
-
-            total_processed = 0
-            total_papers = 0
-
-            try:
-                import sys
-                sys.path.insert(0, str(BACKEND_DIR))
-
-                from app.crud import PaperCRUD
-                from app.database import AsyncSessionLocal
-
-                async with AsyncSessionLocal() as db:
-                    existing_urls = set(await PaperCRUD.get_all_paper_urls(db))
-                    print(f"  [线程{self.thread_id}] 数据库中已有 {len(existing_urls)} 篇论文")
-            except Exception as e:
-                existing_urls = set()
-                print(f"  [线程{self.thread_id}] 获取数据库已有论文失败: {e}")
-
-            for year in sorted(journal_data.keys(), reverse=True):
-                year_data = journal_data[year]
-                for issue in sorted(year_data.keys(), reverse=True):
-                    issue_data = year_data[issue]
-                    papers_list = issue_data.get('papers', [])
-                    total_papers += len(papers_list)
-
-                    papers_to_process = [p for p in papers_list if p['url'] not in existing_urls]
-
-                    if not papers_to_process:
-                        print(f"  [线程{self.thread_id}] {year}年{issue}期: 所有论文已在数据库中，跳过")
-                        continue
-
-                    print(f"\n  [线程{self.thread_id}] {year}年{issue}期: 需要处理 {len(papers_to_process)}/{len(papers_list)} 篇论文")
-
-                    for i, paper in enumerate(papers_to_process, 1):
-                        print(f"\n  [线程{self.thread_id}] [{i}/{len(papers_to_process)}] {paper['title'][:50]}...")
-                        detail = await self.crawl_paper_detail(paper, journal_name, year, issue)
-
-                        if 'error' not in detail:
-                            total_processed += 1
-
-                        await asyncio.sleep(random.uniform(3, 6))
-
-            print(f"\n[线程{self.thread_id}] 期刊 {journal_name} 处理完成: {total_processed}/{total_papers} 篇论文")
-
-            # 更新爬取日志为成功
-            if crawl_log_id:
-                try:
-                    import sys
-                    sys.path.insert(0, str(BACKEND_DIR))
-                    from app.crud import CrawlLogCRUD
-                    from app.database import AsyncSessionLocal
-                    async with AsyncSessionLocal() as db:
-                        await CrawlLogCRUD.update_crawl_log(
-                            db, crawl_log_id,
-                            crawl_end_time=datetime.now(),
-                            papers_fetched=total_processed,
-                            papers_failed=total_papers - total_processed,
-                            status="completed"
-                        )
-                        await db.commit()
-                except Exception as e:
-                    print(f"  [线程{self.thread_id}] 更新爬取日志失败: {e}")
-
-        except Exception as e:
-            print(f"[线程{self.thread_id}] 处理期刊 {journal_name} 时出错: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # 更新爬取日志为失败
-            if crawl_log_id:
-                try:
-                    import sys
-                    sys.path.insert(0, str(BACKEND_DIR))
-                    from app.crud import CrawlLogCRUD
-                    from app.database import AsyncSessionLocal
-                    async with AsyncSessionLocal() as db:
-                        await CrawlLogCRUD.update_crawl_log(
-                            db, crawl_log_id,
-                            crawl_end_time=datetime.now(),
-                            status="failed",
-                            error_message=str(e)
-                        )
-                        await db.commit()
-                except Exception:
-                    pass
-
-        finally:
-            await self.close_browser()
-
-
-class MultiThreadedCrawler:
-    """多线程爬虫管理器"""
-
-    def __init__(self, headless=True, max_workers=3):
-        self.headless = headless
-        self.max_workers = max_workers
-
-    async def crawl_journals(self) -> dict:
-        """获取期刊列表"""
+    async def fetch_journals(self) -> dict:
+        """获取期刊列表（复用共享浏览器的主页面，不再单独开浏览器）。"""
         print("=" * 60)
         print("步骤1-3: 获取期刊列表")
         print("=" * 60)
@@ -1707,36 +1811,11 @@ class MultiThreadedCrawler:
 
         print("未找到有效的期刊历史记录，开始爬取...")
 
-        from playwright.async_api import async_playwright
-
-        playwright = None
-        browser = None
+        page = self.page
         try:
-            playwright = await async_playwright().start()
-            # 优先使用系统已安装的 Chrome
-            launch_kwargs = {
-                'headless': self.headless,
-                'args': [
-                    '--no-sandbox',
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                ]
-            }
-            # 优先复用系统已安装的浏览器
-            channel = detect_browser_channel()
-            if channel:
-                launch_kwargs['channel'] = channel
-            browser = await playwright.chromium.launch(**launch_kwargs)
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1366, 'height': 768}
-            )
-            page = await context.new_page()
-
             print("访问期刊导航页...")
+            await _pacing_wait()
             await page.goto(f'{BASE_URL}/knavi/journals/index', wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(5)
 
             print("点击'经济与管理科学'按钮...")
             try:
@@ -1758,7 +1837,6 @@ class MultiThreadedCrawler:
 
                 if btn:
                     await btn.click()
-                    await asyncio.sleep(5)
                 else:
                     print("  未找到按钮，尝试通过文本查找...")
                     # 通过页面文本查找
@@ -1768,8 +1846,13 @@ class MultiThreadedCrawler:
                         if text and '经济与管理科学' in text:
                             await elem.click()
                             print("  通过文本内容找到并点击")
-                            await asyncio.sleep(5)
                             break
+                # 事件驱动：等期刊列表容器出现，替代固定 5s
+                try:
+                    await page.wait_for_selector('div.result, div.resultList, #gridTable', timeout=PAGE_STABLE_TIMEOUT * 1000)
+                except Exception:
+                    print("  等待期刊列表容器超时，继续尝试解析")
+                await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
             except Exception as e:
                 print(f"点击按钮失败: {e}")
 
@@ -1834,28 +1917,159 @@ class MultiThreadedCrawler:
             import traceback
             traceback.print_exc()
             return {}
-        finally:
-            # 确保资源被正确释放
-            if browser:
+
+    async def fetch_details_concurrent(self, workers: int, collected_journals: list):
+        """集中并发抓详情入库（单浏览器 + N 个 worker tab）。
+
+        collected_journals: [{'name': str, 'log_id': int|None, 'count': int}, ...]
+        论文清单从 HistoryManager 读取（收集阶段已写入），并对库中已有 URL 批量去重。
+        """
+        if not collected_journals:
+            return
+        tag = f"[线程{self.thread_id}]"
+        journal_names = [j['name'] for j in collected_journals]
+        log_by_name = {j['name']: j['log_id'] for j in collected_journals}
+
+        # 从 HistoryManager 摊平出 (journal, year, issue, paper) 任务
+        history = HistoryManager.load_papers_history()
+        tasks = []
+        per_journal_total = {jn: 0 for jn in journal_names}
+        for jn in journal_names:
+            jdata = history.get('papers', {}).get(jn, {})
+            for year in sorted(jdata.keys(), reverse=True):
+                for issue in sorted(jdata[year].keys(), reverse=True):
+                    for p in jdata[year][issue].get('papers', []):
+                        tasks.append((jn, year, issue, p))
+                        per_journal_total[jn] += 1
+
+        print(f"\n{tag} 共收集 {len(tasks)} 篇待处理论文，预取数据库已有 URL ...")
+        existing_urls = await self._db_existing_urls()
+        print(f"{tag} 数据库中已有 {len(existing_urls)} 篇论文")
+
+        queue = asyncio.Queue()
+        skipped = 0
+        for jn, year, issue, p in tasks:
+            if p.get('url') in existing_urls:
+                skipped += 1
+                continue
+            queue.put_nowait((jn, year, issue, p))
+        print(f"{tag} 已在库跳过 {skipped} 篇，待抓 {queue.qsize()} 篇")
+
+        total = queue.qsize()
+        done = ok = 0
+        stats = {'already_exists': skipped, 'filtered': 0, 'verify_failed': 0, 'failed': 0}
+        per_journal_ok = {jn: 0 for jn in journal_names}
+
+        async def detail_worker(wid: int):
+            nonlocal done, ok
+            wtag = f"{tag}[W{wid}]"
+            page = await self.context.new_page()
+            try:
+                while True:
+                    try:
+                        jn, year, issue, paper = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    done += 1
+                    print(f"{wtag} [{done}/{total}] 处理: {paper['title'][:30]}...")
+                    res = await self.crawl_paper_detail(paper, jn, year, issue, page=page)
+                    if res and res.get('title'):
+                        ok += 1
+                        per_journal_ok[jn] += 1
+                    else:
+                        reason = res.get('error', 'failed') if res else 'failed'
+                        if reason == 'already_exists':
+                            stats['already_exists'] += 1
+                        elif reason == 'verify_page':
+                            stats['verify_failed'] += 1
+                        elif reason == 'filtered_non_paper':
+                            stats['filtered'] += 1
+                        else:
+                            stats['failed'] += 1
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+            finally:
                 try:
-                    await browser.close()
-                except Exception:
-                    pass
-            if playwright:
-                try:
-                    await playwright.stop()
+                    await page.close()
                 except Exception:
                     pass
 
-    def run_thread(self, journal_name: str, journal_info: dict, headless: bool, thread_id: int):
-        """运行单个线程"""
-        crawler = JournalCrawler(headless=headless, thread_id=thread_id)
-        asyncio.run(crawler.process_journal(journal_name, journal_info))
+        n = max(1, workers)
+        print(f"{tag} 详情并发数: {n}")
+        await asyncio.gather(*[detail_worker(i) for i in range(n)])
+
+        # 汇总输出（按原因统计，便于定位问题）
+        print(f"\n{tag} {'=' * 60}")
+        print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
+              f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+        print(f"{tag} {'=' * 60}")
+
+        # 更新各期刊爬取日志
+        for jn in journal_names:
+            ok_j = per_journal_ok[jn]
+            total_j = per_journal_total[jn]
+            await self._update_crawl_log(
+                log_by_name.get(jn),
+                crawl_end_time=datetime.now(),
+                papers_fetched=ok_j,
+                papers_failed=total_j - ok_j,
+                status="completed",
+            )
+
+
+class JournalCollector:
+    """期刊链接收集器：一个浏览器负责一批期刊，并行收集论文链接写入 HistoryManager。"""
+
+    def __init__(self, headless: bool, thread_id: int, journals: list, state_file: Optional[Path]):
+        self.crawler = JournalCrawler(headless=headless, thread_id=thread_id, state_file=state_file)
+        self.journals = journals
+        self.results: list = []  # [{'name','log_id','count'}, ...]
 
     async def run(self):
-        """运行多线程爬虫"""
+        tag = f"[收集器{self.crawler.thread_id}]"
+        await self.crawler.init_browser()
+        try:
+            await self.crawler._warmup()
+            total = len(self.journals)
+            for i, (journal_name, journal_info) in enumerate(self.journals, 1):
+                print(f"\n{tag} [{i}/{total}] 收集期刊: {journal_name}")
+                try:
+                    papers = await self.crawler.crawl_papers_for_journal(journal_name, journal_info)
+                    crawl_log_id = await self.crawler._create_crawl_log(journal_name)
+                    self.results.append({
+                        'name': journal_name,
+                        'log_id': crawl_log_id,
+                        'count': len(papers),
+                    })
+                    print(f"{tag} [{i}/{total}] 期刊 {journal_name} 共收集 {len(papers)} 篇论文")
+                except Exception as e:
+                    print(f"{tag} 收集期刊 {journal_name} 出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 单期刊失败不阻塞其他期刊（继续下一批）
+        finally:
+            await self.crawler.save_storage_state()
+            await self.crawler.close_browser()
+
+
+class MultiThreadedCrawler:
+    """期刊模式爬虫管理器。
+
+    阶段一（收集）：N 个浏览器（--threads）并行收集各期刊论文链接；
+    阶段二（详情）：单浏览器 + M 个 worker tab（--detail-workers）并发抓详情入库。
+    两个阶段共享全局导航闸/熔断，避免聚合请求率过高触发验证码。
+    """
+
+    def __init__(self, headless=True, max_workers=3, detail_workers=3):
+        self.headless = headless
+        self.max_workers = max(1, int(max_workers))
+        self.detail_workers = max(1, int(detail_workers))
+
+    async def run(self):
+        """运行期刊爬虫（收集并行 -> 详情并发）。"""
         print("=" * 60)
-        print(f"知网期刊爬虫 - 验证码自动解决版本 (线程数: {self.max_workers})")
+        print(f"知网期刊爬虫 - 验证码自动解决版本")
+        print(f"收集并发浏览器数: {self.max_workers} | 详情并发 tab 数: {self.detail_workers}")
+        print(f"全局导航间隔: {PACING_BASE_INTERVAL}s（熔断上限 {PACING_MAX_INTERVAL}s）")
         print(f"浏览器模式: {'无头' if self.headless else '显示窗口'}")
         if DDDDOCR_AVAILABLE:
             print("验证码解决: ddddocr 已启用")
@@ -1863,36 +2077,44 @@ class MultiThreadedCrawler:
             print("验证码解决: ddddocr 未安装，将使用手动模式")
         print("=" * 60)
 
-        # 获取期刊列表（单线程）
-        journals = await self.crawl_journals()
+        # 步骤0：单个浏览器获取期刊列表（复用暖会话）
+        listing = JournalCrawler(headless=self.headless, thread_id=0, state_file=CNKI_STATE_FILE)
+        await listing.init_browser()
+        try:
+            journals = await listing.fetch_journals()
+        finally:
+            await listing.save_storage_state()
+            await listing.close_browser()
         if not journals:
             print("未获取到期刊列表，退出")
             return
 
         journal_list = list(journals.items())
         print(f"\n共 {len(journal_list)} 个期刊需要处理")
-        print(f"使用 {self.max_workers} 个线程同时处理\n")
 
-        # 使用线程池处理期刊
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = []
-            for i, (journal_name, journal_info) in enumerate(journal_list):
-                thread_id = i + 1
-                future = executor.submit(
-                    self.run_thread,
-                    journal_name,
-                    journal_info,
-                    self.headless,
-                    thread_id
-                )
-                futures.append(future)
+        # 阶段一：N 个浏览器并行收集（每个浏览器独立会话态文件，避免共享 cookie）
+        n = self.max_workers
+        slices = [journal_list[i::n] for i in range(n)]
+        slices = [s for s in slices if s]
+        collectors = [
+            JournalCollector(self.headless, i + 1, sl, _collect_state_file(i))
+            for i, sl in enumerate(slices)
+        ]
+        print(f"使用 {len(collectors)} 个收集浏览器并行处理\n")
+        await asyncio.gather(*[c.run() for c in collectors])
 
-            # 等待所有线程完成
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"线程执行出错: {e}")
+        collected_journals = [item for c in collectors for item in c.results]
+        print(f"\n共收集 {len(collected_journals)} 个期刊的论文链接")
+
+        # 阶段二：单浏览器 + M tab 并发抓详情入库（复用收集阶段保存的暖会话）
+        detail = JournalCrawler(headless=self.headless, thread_id=0, state_file=CNKI_STATE_FILE)
+        await detail.init_browser()
+        try:
+            await detail._warmup()
+            await detail.fetch_details_concurrent(self.detail_workers, collected_journals)
+        finally:
+            await detail.save_storage_state()
+            await detail.close_browser()
 
         print("\n" + "=" * 60)
         print("所有期刊处理完成")
@@ -1956,20 +2178,7 @@ class KeywordSearchCrawler(JournalCrawler):
     async def init_browser(self):
         """初始化浏览器（支持复用已保存的登录态）。"""
         self.playwright = await async_playwright().start()
-        launch_kwargs = {
-            'headless': self.headless,
-            'args': [
-                '--no-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process',
-            ]
-        }
-        channel = detect_browser_channel()
-        if channel:
-            launch_kwargs['channel'] = channel
+        launch_kwargs = _launch_kwargs(self.headless)
         self.browser = await self.playwright.chromium.launch(**launch_kwargs)
 
         ctx_kwargs = {
@@ -2014,6 +2223,7 @@ class KeywordSearchCrawler(JournalCrawler):
                 return True
             if asyncio.get_event_loop().time() - start > timeout:
                 print(f"  [关键词#{self.thread_id}] 等待安全验证超时")
+                _report_captcha(tag=f"[关键词#{self.thread_id}]")
                 return False
             # 优先尝试自动解决（仅首次）
             if not prompted and self.captcha_solver.is_available():
@@ -2200,12 +2410,14 @@ class KeywordSearchCrawler(JournalCrawler):
             if self.search_url:
                 # 复用已保存的检索结果页 URL，跳过首页检索/主题/类型筛选
                 print(f"{tag} 直接打开已保存的检索结果页: {self.search_url}")
+                await _pacing_wait()
                 await self.page.goto(self.search_url, wait_until='domcontentloaded', timeout=60000)
                 await self._ensure_no_captcha(timeout=180)
                 await asyncio.sleep(random.uniform(2, 4))
             else:
                 # 1. 打开知网首页（校外经登录态直接进，否则等待手动登录跳回）
                 print(f"{tag} 打开知网首页...")
+                await _pacing_wait()
                 await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
                 for _ in range(90):
                     if 'cnki.net' in self.page.url:
@@ -2288,6 +2500,7 @@ class KeywordSearchCrawler(JournalCrawler):
                 # 翻页：等 loading 遮罩消失后「单击」下一页（JS 点击优先，失败才用 force 兜底；
                 # 不能两种点击都执行——双击会把分页器状态点乱，导致页码误判提前停止）
                 await self._wait_loading_gone()
+                await _pacing_wait()
                 prev_cur = await self._current_page_num()
                 click_ok = False
                 try:
@@ -2347,12 +2560,19 @@ class KeywordSearchCrawler(JournalCrawler):
 
             # 并发获取详情并入库（含去重，见 crawl_paper_detail）：
             # 翻页收集必须串行（同一结果页），详情抓取用 detail_workers 个 tab 并行
-            total = len(all_papers)
+            # 先批量预取库中已有 URL，跳过已入库论文（逐篇检查仍保留作安全网）
+            existing_urls = await self._db_existing_urls()
+            queue = asyncio.Queue()
+            skipped = 0
+            for p in all_papers:
+                if p.get('url') in existing_urls:
+                    skipped += 1
+                    continue
+                queue.put_nowait(p)
+            total = queue.qsize()
             done = 0
             ok = 0
-            queue = asyncio.Queue()
-            for p in all_papers:
-                queue.put_nowait(p)
+            stats = {'already_exists': skipped, 'filtered': 0, 'verify_failed': 0, 'failed': 0}
 
             async def detail_worker(wid: int):
                 nonlocal done, ok
@@ -2369,6 +2589,16 @@ class KeywordSearchCrawler(JournalCrawler):
                         res = await self.crawl_paper_detail(paper, page=page)
                         if res and res.get('title'):
                             ok += 1
+                        else:
+                            reason = res.get('error', 'failed') if res else 'failed'
+                            if reason == 'already_exists':
+                                stats['already_exists'] += 1
+                            elif reason == 'verify_page':
+                                stats['verify_failed'] += 1
+                            elif reason == 'filtered_non_paper':
+                                stats['filtered'] += 1
+                            else:
+                                stats['failed'] += 1
                         await asyncio.sleep(random.uniform(0.5, 1.5))
                 finally:
                     try:
@@ -2377,10 +2607,11 @@ class KeywordSearchCrawler(JournalCrawler):
                         pass
 
             n = max(1, self.detail_workers)
-            print(f"{tag} 详情并发数: {n}")
+            print(f"{tag} 详情并发数: {n}，待抓 {total} 篇（已在库跳过 {skipped}）")
             await asyncio.gather(*[detail_worker(i) for i in range(n)])
 
-            print(f"{tag} 完成，成功入库 {ok} 篇（含已存在跳过）")
+            print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
+                  f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
         except Exception as e:
             print(f"{tag} 检索流程异常: {e}")
             import traceback
@@ -2392,7 +2623,7 @@ class KeywordSearchCrawler(JournalCrawler):
 async def main():
     parser = argparse.ArgumentParser(description='知网爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索）')
     parser.add_argument('--show-browser', action='store_true', help='显示浏览器窗口（默认不显示）')
-    parser.add_argument('--threads', type=int, default=3, help='线程数/浏览器窗口数（默认3，仅期刊模式有效）')
+    parser.add_argument('--threads', type=int, default=3, help='期刊收集阶段的并发浏览器数（默认3）')
     parser.add_argument('--search', type=str, default=None,
                         help='按关键词/主题检索知网并入库（启用检索模式，替代按期刊爬取）')
     parser.add_argument('--search-field', type=str, default='主题',
@@ -2412,7 +2643,7 @@ async def main():
     parser.add_argument('--save-url-file', type=str, default=None,
                         help='检索结果页 URL 保存路径（默认当前目录 search_url.txt）')
     parser.add_argument('--detail-workers', type=int, default=3,
-                        help='详情页并发抓取数（仅检索模式，默认3；翻页收集仍串行）')
+                        help='详情页并发抓取 tab 数（默认3；期刊模式与检索模式均有效，翻页/收集仍按各自并发模型）')
     args = parser.parse_args()
 
     if args.search:
@@ -2447,7 +2678,11 @@ async def main():
         await crawler.run_search()
         return
 
-    crawler = MultiThreadedCrawler(headless=not args.show_browser, max_workers=args.threads)
+    crawler = MultiThreadedCrawler(
+        headless=not args.show_browser,
+        max_workers=args.threads,
+        detail_workers=args.detail_workers,
+    )
     await crawler.run()
 
 

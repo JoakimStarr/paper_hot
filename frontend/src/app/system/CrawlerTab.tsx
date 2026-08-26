@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  Settings, Activity, Play, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
+  Settings, Activity, Play, Pause, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
   ToggleRight, ToggleLeft, Search,
 } from 'lucide-react';
 import { CrawlLog, SchedulerJob, CNKISearchInfo } from '@/types/paper';
@@ -12,6 +12,7 @@ export interface KeywordCrawlForm {
   search_field: string;
   years: string;
   max_pages: string;
+  show_browser: boolean;
 }
 
 interface CrawlerTabProps {
@@ -33,6 +34,8 @@ interface CrawlerTabProps {
   kwForm: KeywordCrawlForm;
   setKwForm: (form: KeywordCrawlForm) => void;
   onStartKeywordCrawl: () => void;
+  onPauseKeywordCrawl: () => void;
+  onResumeKeywordCrawl: () => void;
 }
 
 export default function CrawlerTab({
@@ -54,6 +57,8 @@ export default function CrawlerTab({
   kwForm,
   setKwForm,
   onStartKeywordCrawl,
+  onPauseKeywordCrawl,
+  onResumeKeywordCrawl,
 }: CrawlerTabProps) {
   const { t } = useLanguage();
 
@@ -173,6 +178,16 @@ export default function CrawlerTab({
                 />
               </div>
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={kwForm.show_browser}
+                onChange={e => setKwForm({ ...kwForm, show_browser: e.target.checked })}
+                disabled={kwStarting || !!kwInfo?.running}
+                className="w-4 h-4 accent-blue-600 disabled:opacity-50"
+              />
+              {t('sys.kwShowBrowser')}
+            </label>
             <button
               onClick={onStartKeywordCrawl}
               disabled={kwStarting || !!kwInfo?.running || !kwForm.keyword.trim()}
@@ -185,10 +200,33 @@ export default function CrawlerTab({
               <div className="mt-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-gray-700 dark:text-gray-200 space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-500 dark:text-gray-400">{t('sys.kwStatus')}:</span>
-                  <span className={`inline-flex items-center gap-1 font-medium ${kwInfo.running ? 'text-blue-600' : 'text-green-600'}`}>
-                    {kwInfo.running && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {kwInfo.running ? t('sys.kwRunningBadge') : t('sys.simIdle')}
+                  <span className={`inline-flex items-center gap-1 font-medium ${kwInfo.running ? (kwInfo.paused ? 'text-amber-600' : 'text-blue-600') : 'text-green-600'}`}>
+                    {kwInfo.running && !kwInfo.paused && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {kwInfo.running
+                      ? (kwInfo.paused ? t('sys.kwPausedBadge') : t('sys.kwRunningBadge'))
+                      : t('sys.simIdle')}
                   </span>
+                  {kwInfo.running && (
+                    <span className="flex items-center gap-1 ml-auto">
+                      {kwInfo.paused ? (
+                        <button
+                          onClick={onResumeKeywordCrawl}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                        >
+                          <Play className="w-3 h-3" />
+                          {t('sys.kwResume')}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={onPauseKeywordCrawl}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors"
+                        >
+                          <Pause className="w-3 h-3" />
+                          {t('sys.kwPause')}
+                        </button>
+                      )}
+                    </span>
+                  )}
                 </div>
                 {kwInfo.keyword && (
                   <div><span className="text-gray-500 dark:text-gray-400">{t('sys.kwKeywordHint')}:</span> <span className="font-medium">{kwInfo.keyword}</span></div>

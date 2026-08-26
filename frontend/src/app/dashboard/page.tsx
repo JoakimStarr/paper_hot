@@ -1,17 +1,19 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
 import SkeletonCard from '@/components/SkeletonCard';
 import { useToast } from '@/components/Toast';
-import { dashboardApi, DashboardData } from '@/lib/api';
+import { dashboardApi, DashboardData, personalApi } from '@/lib/api';
 import { usePreferences } from '@/lib/usePreferences';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { PaperCard as PaperCardType } from '@/types/paper';
 import {
   BookOpen, Newspaper, Layers, Sparkles, TrendingUp, TrendingDown,
-  Minus, Bookmark, FileSearch, Target, Loader2, EyeOff, Plus, X,
+  Minus, Bookmark, FileSearch, Target, Loader2, EyeOff, Plus, X, History, SlidersHorizontal,
 } from 'lucide-react';
 
 const trendIcon = (trend: string) =>
@@ -23,7 +25,33 @@ const trendIcon = (trend: string) =>
     <Minus className="w-3.5 h-3.5 text-gray-400" />
   );
 
+type DashboardTab = 'workbench' | 'briefing' | 'stack' | 'prefs';
+const VALID_TABS: DashboardTab[] = ['workbench', 'briefing', 'stack', 'prefs'];
+
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <Layout>
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        </div>
+      </Layout>
+    }>
+      <DashboardInner />
+    </Suspense>
+  );
+}
+
+function DashboardInner() {
+  const { t } = useLanguage();
+  const searchParams = useSearchParams();
+
+  // 模块页签；支持 ?tab= 深链（承接原 #follow / #mine 锚点跳转）
+  const tabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<DashboardTab>(
+    tabParam && (VALID_TABS as string[]).includes(tabParam) ? (tabParam as DashboardTab) : 'workbench'
+  );
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +75,14 @@ export default function DashboardPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 页内 Link 跳转到 /dashboard?tab=xxx 时同步激活页签
+  useEffect(() => {
+    const p = searchParams.get('tab');
+    if (p && (VALID_TABS as string[]).includes(p)) {
+      setActiveTab(p as DashboardTab);
+    }
+  }, [searchParams]);
 
   // 屏蔽项变化时静默重取「今日值得读」；reloading 仅在顶部小节显示轻量加载指示
   const [reloading, setReloading] = useState(false);
@@ -72,13 +108,40 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefVersion]);
 
+  const tabs: { key: DashboardTab; label: string; icon: React.ReactNode }[] = [
+    { key: 'workbench', label: t('dash.tabWorkbench'), icon: <BookOpen className="w-4 h-4" /> },
+    { key: 'briefing', label: t('dash.tabBriefing'), icon: <Newspaper className="w-4 h-4" /> },
+    { key: 'stack', label: t('dash.tabStack'), icon: <Layers className="w-4 h-4" /> },
+    { key: 'prefs', label: t('dash.tabPrefs'), icon: <SlidersHorizontal className="w-4 h-4" /> },
+  ];
+
   return (
     <Layout>
       <div className="mb-6">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-1">研究工作台</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-1">{t('dash.tabWorkbench')}</h1>
         <p className="text-gray-500 dark:text-gray-400 text-sm">
           今天该看什么、领域在发生什么、我的研究进展到哪 —— 一页回答
         </p>
+      </div>
+
+      {/* 模块页签（对齐系统页「分开 + 切换」样式） */}
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
+        <nav className="flex gap-4 sm:gap-6 min-w-max">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-1.5 sm:gap-2 px-1 py-2 sm:py-3 text-xs sm:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                activeTab === tab.key
+                  ? 'text-primary-600 dark:text-primary-400 border-primary-600'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 border-transparent'
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </nav>
       </div>
 
       {loading ? (
@@ -94,153 +157,227 @@ export default function DashboardPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {/* ① 今日值得读 */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="w-5 h-5 text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">今日值得读</h2>
-              {reloading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
-              <span className="text-xs text-gray-400">
-                按综合评分{data.mine.has_followed_subfields ? ' + 你关注的子领域' : ''}推荐
-              </span>
-            </div>
-            {!data.mine.has_followed_subfields && (
-              <p className="text-xs text-gray-400 mb-2">
-                提示：在
-                <Link href="/dashboard#follow" className="text-primary-600 mx-1 hover:underline">下方关注子领域</Link>
-                后，这里会优先推荐你关注的方向。
-              </p>
-            )}
-            <div className="grid grid-cols-1 gap-4 sm:gap-6">
-              {data.today_read.map((p) => (
-                <PaperCard key={p.id} paper={p} />
-              ))}
-              {data.today_read.length === 0 && (
-                <p className="text-sm text-gray-400">暂无推荐论文</p>
-              )}
-            </div>
-          </section>
-
-          {/* ② 领域快讯 */}
-          <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
-            <div className="flex items-center gap-2 mb-3">
-              <Newspaper className="w-5 h-5 text-red-500" />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">领域快讯</h2>
-              <span className="text-xs text-gray-400">近 8 周热点趋势 Top 5</span>
-            </div>
-            {data.briefing.ai_note && (
-              <div className="mb-4 flex items-start gap-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3 text-sm text-purple-800 dark:text-purple-300">
-                <Sparkles className="w-4 h-4 mt-0.5 shrink-0" />
-                <span>{data.briefing.ai_note}</span>
-              </div>
-            )}
-            <div className="space-y-2">
-              {data.briefing.topics.map((topic, idx) => (
-                <div key={topic.topic} className="flex items-center justify-between gap-3 py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-5 h-5 shrink-0 flex items-center justify-center bg-gray-100 dark:bg-gray-700 rounded text-xs font-bold text-gray-500">
-                      {idx + 1}
-                    </span>
-                    <Link
-                      href={`/search?search=${encodeURIComponent(topic.topic)}&search_field=keyword`}
-                      className="truncate text-sm text-gray-800 dark:text-gray-200 hover:text-primary-600 dark:hover:text-primary-400"
-                    >
-                      {topic.topic}
-                    </Link>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 text-xs text-gray-500">
-                    <span>{trendIcon(topic.trend)}</span>
-                    <span className={`font-medium ${topic.growth_rate > 0.2 ? 'text-red-500' : topic.growth_rate < -0.1 ? 'text-blue-500' : 'text-gray-400'}`}>
-                      {(topic.growth_rate * 100).toFixed(0)}%
-                    </span>
-                    <span className="hidden sm:inline">{topic.paper_count} 篇</span>
-                  </div>
-                </div>
-              ))}
-              {data.briefing.topics.length === 0 && (
-                <p className="text-sm text-gray-400">近期暂无趋势数据</p>
-              )}
-            </div>
-          </section>
-
-          {/* ③ 我的研究栈 */}
-          <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="mine">
-            <div className="flex items-center gap-2 mb-4">
-              <Layers className="w-5 h-5 text-green-600" />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">我的研究栈</h2>
-              <span className="text-xs text-gray-400">收藏 {data.mine.favorite_count} 篇</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* 收藏 */}
-              <div>
-                <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  <Bookmark className="w-4 h-4 text-yellow-500" /> 最近收藏
-                </h3>
-                {data.mine.favorites.length === 0 ? (
-                  <p className="text-xs text-gray-400">还没有收藏，点论文卡片的书签试试</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {data.mine.favorites.slice(0, 5).map((p) => (
-                      <li key={p.id}>
-                        <Link href={`/paper/${p.id}`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
-                          {p.title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {/* 最近 AI 分析 */}
-              <div>
-                <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  <FileSearch className="w-4 h-4 text-purple-500" /> 最近 AI 分析
-                </h3>
-                {data.mine.recent_analyses.length === 0 ? (
-                  <p className="text-xs text-gray-400">还没有分析过论文，列表页点「AI 分析」即可</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {data.mine.recent_analyses.map((a) => (
-                      <li key={a.paper_id}>
-                        <Link href={`/paper/${a.paper_id}#analysis`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
-                          {a.title || a.paper_id}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {/* 进行中选题 */}
-              <div>
-                <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  <Target className="w-4 h-4 text-blue-500" /> 进行中的选题
-                </h3>
-                {data.mine.topic_projects.length === 0 ? (
-                  <p className="text-xs text-gray-400">
-                    还没有选题，去<Link href="/topics" className="text-primary-600 mx-0.5 hover:underline">选题中心</Link>验证一个吧
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {data.mine.topic_projects.map((tp) => (
-                      <li key={tp.id}>
-                        <Link href="/topics?tab=projects" className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
-                          {tp.title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* ④ 关注子领域（驱动推荐） */}
-          <FollowSubfields />
-
-          {/* ⑤ 「不感兴趣」屏蔽管理（P2） */}
-          <PreferencesPanel />
+          {activeTab === 'workbench' && <TodayRead data={data} reloading={reloading} />}
+          {activeTab === 'briefing' && <Briefing data={data} />}
+          {activeTab === 'stack' && <MyStack data={data} />}
+          {activeTab === 'prefs' && (
+            <>
+              <FollowSubfields />
+              <PreferencesPanel />
+            </>
+          )}
         </div>
       )}
     </Layout>
+  );
+}
+
+/** ① 研究工作台：今日值得读 */
+function TodayRead({ data, reloading }: { data: DashboardData; reloading: boolean }) {
+  const { t } = useLanguage();
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <BookOpen className="w-5 h-5 text-primary-600" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">今日值得读</h2>
+        {reloading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+        <span className="text-xs text-gray-400">
+          按综合评分{data.mine.has_followed_subfields ? ' + 你关注的子领域' : ''}推荐
+        </span>
+      </div>
+      {!data.mine.has_followed_subfields && (
+        <p className="text-xs text-gray-400 mb-2">
+          提示：在
+          <Link href="/dashboard?tab=prefs" className="text-primary-600 mx-1 hover:underline">推荐偏好</Link>
+          里关注子领域后，这里会优先推荐你关注的方向。
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-4 sm:gap-6">
+        {data.today_read.map((p) => (
+          <PaperCard key={p.id} paper={p} />
+        ))}
+        {data.today_read.length === 0 && (
+          <p className="text-sm text-gray-400">暂无推荐论文</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** ② 领域快讯：近 8 周热点 Top 5 + AI 摘要，「查看全部」跳趋势页 */
+function Briefing({ data }: { data: DashboardData }) {
+  const { t } = useLanguage();
+  return (
+    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Newspaper className="w-5 h-5 text-red-500" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">领域快讯</h2>
+        <span className="text-xs text-gray-400">近 8 周热点趋势 Top 5</span>
+        <Link
+          href="/trends"
+          className="ml-auto flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+        >
+          {t('dash.viewAll')}
+          <TrendingUp className="w-3 h-3" />
+        </Link>
+      </div>
+      {data.briefing.ai_note && (
+        <div className="mb-4 flex items-start gap-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3 text-sm text-purple-800 dark:text-purple-300">
+          <Sparkles className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{data.briefing.ai_note}</span>
+        </div>
+      )}
+      <div className="space-y-2">
+        {data.briefing.topics.map((topic, idx) => (
+          <div key={topic.topic} className="flex items-center justify-between gap-3 py-1.5 border-b border-gray-100 dark:border-gray-700 last:border-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-5 h-5 shrink-0 flex items-center justify-center bg-gray-100 dark:bg-gray-700 rounded text-xs font-bold text-gray-500">
+                {idx + 1}
+              </span>
+              <Link
+                href={`/search?search=${encodeURIComponent(topic.topic)}&search_field=keyword`}
+                className="truncate text-sm text-gray-800 dark:text-gray-200 hover:text-primary-600 dark:hover:text-primary-400"
+              >
+                {topic.topic}
+              </Link>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 text-xs text-gray-500">
+              <span>{trendIcon(topic.trend)}</span>
+              <span className={`font-medium ${topic.growth_rate > 0.2 ? 'text-red-500' : topic.growth_rate < -0.1 ? 'text-blue-500' : 'text-gray-400'}`}>
+                {(topic.growth_rate * 100).toFixed(0)}%
+              </span>
+              <span className="hidden sm:inline">{topic.paper_count} 篇</span>
+            </div>
+          </div>
+        ))}
+        {data.briefing.topics.length === 0 && (
+          <p className="text-sm text-gray-400">近期暂无趋势数据</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** ③ 我的研究栈：收藏 + 最近 AI 分析 + 进行中选题 + 最近阅读入口 */
+function MyStack({ data }: { data: DashboardData }) {
+  const { t } = useLanguage();
+  return (
+    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="mine">
+      <div className="flex items-center gap-2 mb-4">
+        <Layers className="w-5 h-5 text-green-600" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">我的研究栈</h2>
+        <span className="text-xs text-gray-400">收藏 {data.mine.favorite_count} 篇</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {/* 收藏 */}
+        <div>
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <Bookmark className="w-4 h-4 text-yellow-500" /> 最近收藏
+          </h3>
+          {data.mine.favorites.length === 0 ? (
+            <p className="text-xs text-gray-400">还没有收藏，点论文卡片的书签试试</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {data.mine.favorites.slice(0, 5).map((p) => (
+                <li key={p.id}>
+                  <Link href={`/paper/${p.id}`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                    {p.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {/* 最近 AI 分析 */}
+        <div>
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <FileSearch className="w-4 h-4 text-purple-500" /> 最近 AI 分析
+          </h3>
+          {data.mine.recent_analyses.length === 0 ? (
+            <p className="text-xs text-gray-400">还没有分析过论文，列表页点「AI 分析」即可</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {data.mine.recent_analyses.map((a) => (
+                <li key={a.paper_id}>
+                  <Link href={`/paper/${a.paper_id}#analysis`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                    {a.title || a.paper_id}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {/* 进行中选题 */}
+        <div>
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <Target className="w-4 h-4 text-blue-500" /> 进行中的选题
+          </h3>
+          {data.mine.topic_projects.length === 0 ? (
+            <p className="text-xs text-gray-400">
+              还没有选题，去<Link href="/topics" className="text-primary-600 mx-0.5 hover:underline">选题中心</Link>验证一个吧
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {data.mine.topic_projects.map((tp) => (
+                <li key={tp.id}>
+                  <Link href="/topics?tab=projects" className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                    {tp.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* 最近阅读入口 */}
+      <RecentReading />
+    </section>
+  );
+}
+
+/** 最近阅读历史（最近 5 条 + 查看全部），数据与 /reading 同源 */
+function RecentReading() {
+  const { t } = useLanguage();
+  const [papers, setPapers] = useState<PaperCardType[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    personalApi.getReadingHistory()
+      .then((res) => { if (!cancelled) setPapers(res.papers || []); })
+      .catch(() => { /* 静默失败，不阻塞页签 */ })
+      .finally(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!loaded) return null;
+
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+          <History className="w-4 h-4 text-gray-500" /> {t('dash.recentReading')}
+        </h3>
+        <Link href="/reading" className="flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+          {t('dash.viewAll')}
+          <History className="w-3 h-3" />
+        </Link>
+      </div>
+      {papers.length === 0 ? (
+        <p className="text-xs text-gray-400">{t('dash.noReading')}</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {papers.slice(0, 5).map((p) => (
+            <li key={p.id}>
+              <Link href={`/paper/${p.id}`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                {p.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

@@ -309,7 +309,7 @@ async def get_reading_history(
     )
     papers = presult.scalars().all()
     cards = [_paper_to_card(p) for p in papers]
-    cards.sort(key=lambda c: read_map.get(c["id"], 0), reverse=True)
+    cards.sort(key=lambda c: read_map.get(c.id, 0), reverse=True)
     return {"papers": cards, "total": len(cards)}
 
 
