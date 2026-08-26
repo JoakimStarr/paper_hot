@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
@@ -243,10 +243,6 @@ async def get_trending_topics(
         TrendingTopic(topic=t, paper_count=cur, growth_rate=g, trend=s)
         for cur, _tot, t, g, s in scored[:20]
     ]
-    trending_topics = [
-        TrendingTopic(topic=t, paper_count=heat, growth_rate=g, trend=s)
-        for heat, _m, t, g, s in scored[:20]
-    ]
 
     week_start = now - timedelta(days=7)
 
@@ -267,12 +263,11 @@ async def explain_trend(
     from sqlalchemy import select as sa_select, desc as sa_desc
     from app.models import TopicTrend
 
-    # 与 trending-topics 一致：周窗口向下取整到月初零时，匹配月粒度存储
-    cutoff = datetime.now() - timedelta(weeks=weeks_back)
-    cutoff = cutoff.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # TopicTrend 为「年」粒度桶，直接取该话题全部年份（表已很小，无需时间过滤）
+    _ = weeks_back  # 参数保留兼容旧前端，年度粒度下不再用于过滤
     result = await db.execute(
         sa_select(TopicTrend)
-        .where(TopicTrend.topic == topic.strip(), TopicTrend.week_start >= cutoff)
+        .where(TopicTrend.topic == topic.strip())
         .order_by(sa_desc(TopicTrend.week_start))
         .limit(12)
     )
@@ -281,7 +276,7 @@ async def explain_trend(
         raise HTTPException(status_code=404, detail="No trend data for this topic")
 
     series = [
-        {"week": str(t.week_start)[:10], "paper_count": t.paper_count, "growth_rate": t.growth_rate}
+        {"year": str(t.week_start)[:4], "paper_count": t.paper_count, "growth_rate": t.growth_rate}
         for t in sorted(rows, key=lambda x: x.week_start)
     ]
     total = sum(r.paper_count for r in rows)
@@ -289,7 +284,7 @@ async def explain_trend(
 
     # 规则兜底（无 AI 时）
     direction = "上升" if avg_growth > 0.2 else ("回落" if avg_growth < -0.1 else "平稳")
-    fallback = f"「{topic}」近 {len(rows)} 周共 {total} 篇论文，整体呈{direction}态势（平均周环比 {avg_growth*100:.0f}%）。"
+    fallback = f"「{topic}」近 {len(rows)} 年累计 {total} 篇论文，整体呈{direction}态势（平均同比 {avg_growth*100:+.0f}%）。最新一年 {series[-1]['year']} 年发文 {series[-1]['paper_count']} 篇。"
 
     try:
         provider, bare_model = _resolve_model_provider(None)
@@ -300,8 +295,9 @@ async def explain_trend(
 
     try:
         import asyncio as _asyncio
-        prompt = f"""这是话题「{topic}」在论文库中近 {len(rows)} 周的热度序列（周/篇数/环比）：
-{chr(10).join(f"{s['week']}: {s['paper_count']} 篇, 环比 {s['growth_rate']*100:.0f}%" for s in series)}
+        prompt = f"""这是话题「{topic}」在论文库中近 {len(rows)} 年的发文热度序列（年份/篇数/同比）：
+{chr(10).join(f"{s['year']} 年: {s['paper_count']} 篇, 同比 {s['growth_rate']*100:+.0f}%" for s in series)}
+注意：{series[-1]['year']} 为不完整年度（数据截至当前月份），篇数偏小属正常。
 
 请用中文写 2-3 句话解读这段趋势：热度走向、可能的驱动因素、对研究者是进入还是观望。只输出解读文本，不要标题。"""
         response = await _asyncio.to_thread(
@@ -311,8 +307,15 @@ async def explain_trend(
             max_tokens=300,
             temperature=0.3,
         )
-        explanation = (response.choices[0].message.content or fallback).strip()
-        return {"topic": topic, "explanation": explanation, "series": series, "ai_used": True}
+        _msg = response.choices[0].message
+        _text = (getattr(_msg, "content", None) or getattr(_msg, "reasoning_content", None) or "").strip()
+        # 部分网关(如 MaaS 推理模型)返回空 content：有 reasoning_content 也算有效解读
+        return {
+            "topic": topic,
+            "explanation": _text or fallback,
+            "series": series,
+            "ai_used": bool(_text),
+        }
     except Exception:
         return {"topic": topic, "explanation": fallback, "series": series, "ai_used": False}
 
