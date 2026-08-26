@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     # CNKI 爬虫是否无头模式运行（False 会弹出浏览器窗口，便于人工处理验证码）
     cnki_headless: bool = False
 
-    # CNKI 论文详情跳转链接的域名头（如高校 VPN 镜像 'http://www-cnki-net-s.vpn.dufe.edu.cn:8118'）。
+    # CNKI 论文详情跳转链接的域名头（高校 VPN/镜像地址，需与知网原子域名对应，
+    # 如 kns.cnki.net 在 VPN 下通常映射为 kns-cnki-net-s.<vpn域>）。
     # 留空使用官网默认 https://kns.cnki.net；仅改写详情接口返回的展示链接，不改动库中存储与爬虫逻辑。
     cnki_url_prefix: str = ""
 

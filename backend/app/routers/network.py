@@ -39,66 +39,45 @@ def _aggregate_research_map(keyword: str, papers) -> tuple[dict, dict, dict]:
     return cooccur, yearly, journals
 
 
-@router.get("/network/authors")
-async def get_author_network(
-    limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db)
-):
-    from sqlalchemy import select as sa_select
-    from app.models import Paper as PaperModel
-
-    result = await db.execute(
-        sa_select(PaperModel.id, PaperModel.authors)
-        .where(PaperModel.authors.isnot(None))
-        .order_by(PaperModel.published_at.desc())
-        .limit(limit)
-    )
-    papers = result.all()
-
-    author_papers: dict[str, int] = {}
-    paper_authors: list[list[str]] = []
-
-    for paper in papers:
-        authors: list[str] = _parse_json_list(paper.authors)
-        cleaned: list[str] = []
-        for author in authors:
-            author = author.strip().rstrip(',')
-            if not author or '@' in author:
-                continue
-            cleaned.append(author)
-            author_papers[author] = author_papers.get(author, 0) + 1
-        paper_authors.append(cleaned)
-
-    sorted_authors = sorted(author_papers.items(), key=lambda x: x[1], reverse=True)[:100]
-    nodes = [{"id": name, "name": name, "papers": count, "group": "author"} for name, count in sorted_authors]
-
-    author_index = {name: idx for idx, (name, _) in enumerate(sorted_authors)}
-    link_counts: dict[tuple[str, str], int] = {}
-    for authors in paper_authors:
-        for i in range(len(authors)):
-            for j in range(i + 1, len(authors)):
-                a, b = authors[i], authors[j]
-                if a in author_index and b in author_index:
-                    key = (a, b) if a < b else (b, a)
-                    link_counts[key] = link_counts.get(key, 0) + 1
-
-    links = sorted(
-        [{"source": k[0], "target": k[1], "value": v} for k, v in link_counts.items()],
-        key=lambda x: x["value"], reverse=True
-    )[:300]
-
-    return {"nodes": nodes, "links": links}
-
-
 @router.get("/network/keywords")
 async def get_keyword_network(
-    limit: int = Query(200, ge=1, le=500),
     db: AsyncSession = Depends(get_db)
 ):
+    """关键词共现网络：全库聚合（节点 top80 / 边 top400 在 stats 层裁剪）。
+
+    此前仅统计最近 limit 篇，计数严重失真；现与作者网络一致改为全库。
+    """
     from app.stats import keyword_network
 
     # 统计核心见 app/stats.py（与 ai.py / topic.py 共用同一实现，数据源 papers.keywords_cn）
-    return await keyword_network(db, limit=limit)
+    return await keyword_network(db)
+
+
+@router.get("/network/topic-clusters")
+async def get_topic_clusters(
+    k: int = Query(18, ge=4, le=40),
+    db: AsyncSession = Depends(get_db)
+):
+    """主题聚类地图（P2）：本地 bge-m3 向量全库 KMeans 聚类 + PCA 二维投影。
+
+    结果带进程内缓存（签名=向量论文数+最大特征行id，TTL 30分钟）。
+    """
+    from app.clusters import build_topic_clusters
+
+    return await build_topic_clusters(db, k=k)
+
+
+@router.get("/network/keyword-trends")
+async def get_keyword_trends(
+    top: int = Query(12, ge=3, le=30),
+    keywords: Optional[str] = Query(None, description="逗号分隔的指定关键词，缺省取近一年最热"),
+    db: AsyncSession = Depends(get_db)
+):
+    """关键词年度演化线 + 新兴/衰退动量（近12月 vs 前12月，全库统计）。"""
+    from app.clusters import compute_keyword_trends
+
+    kw_list = [k for k in (keywords or "").split(",") if k.strip()] or None
+    return await compute_keyword_trends(db, top=top, keywords=kw_list)
 
 
 async def _compute_keyword_gaps(db: AsyncSession, limit: int = 10) -> list:

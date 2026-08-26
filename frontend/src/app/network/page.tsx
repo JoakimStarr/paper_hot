@@ -6,13 +6,16 @@ import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi } from '@/lib/api';
 import { NetworkData, NetworkNode } from '@/types/paper';
-import { Loader2, Users, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target } from 'lucide-react';
+import { Loader2, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target, TrendingUp, Crosshair } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { KeywordMapResponse } from '@/lib/api';
 
 const NetworkGraph = dynamic(() => import('./NetworkGraph'), { ssr: false });
+const ClusterMap = dynamic(() => import('./ClusterMap'), { ssr: false });
+const TrendChart = dynamic(() => import('./TrendChart'), { ssr: false });
+const GapsPanel = dynamic(() => import('./GapsPanel'), { ssr: false });
 
-type TabType = 'authors' | 'keywords';
+type TabType = 'keywords' | 'clusters' | 'trends' | 'gaps';
 
 interface ConnectedNode {
   id: string;
@@ -31,7 +34,7 @@ function getLinkNodeId(node: string | { id?: string }): string {
 export default function NetworkPage() {
   const { t } = useLanguage();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabType>('authors');
+  const [activeTab, setActiveTab] = useState<TabType>('keywords');
   const [data, setData] = useState<NetworkData | null>(null);
   const [loading, setLoading] = useState(true);
   const [infoNode, setInfoNode] = useState<NetworkNode | null>(null);
@@ -43,13 +46,8 @@ export default function NetworkPage() {
     setInfoNode(null);
     setHighlightedNodeId(null);
     try {
-      if (tab === 'authors') {
-        const res = await papersApi.getAuthorNetwork(50);
-        setData(res);
-      } else {
-        const res = await papersApi.getKeywordNetwork(200);
-        setData(res);
-      }
+      const res = await papersApi.getKeywordNetwork();
+      setData(res);
     } catch (error) {
       console.error('Error fetching network data:', error);
     } finally {
@@ -58,7 +56,7 @@ export default function NetworkPage() {
   }, []);
 
   useEffect(() => {
-    fetchData(activeTab);
+    if (activeTab === 'keywords') fetchData(activeTab);
   }, [activeTab, fetchData]);
 
   const connectedNodes: ConnectedNode[] = useMemo(() => {
@@ -141,8 +139,7 @@ export default function NetworkPage() {
       id: node.id,
       name: node.name,
       group: node.group,
-      papers: node.group === 'author' ? node.count : undefined,
-      count: node.group === 'keyword' ? node.count : undefined,
+      count: node.count,
     });
     setHighlightedNodeId(node.id);
     setLinkedFilter('');
@@ -171,17 +168,6 @@ export default function NetworkPage() {
 
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4 sm:mb-6">
         <button
-          onClick={() => setActiveTab('authors')}
-          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
-            activeTab === 'authors'
-              ? 'bg-primary-600 text-white'
-              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          {t('net.authors')}
-        </button>
-        <button
           onClick={() => setActiveTab('keywords')}
           className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
             activeTab === 'keywords'
@@ -192,9 +178,48 @@ export default function NetworkPage() {
           <Hash className="w-4 h-4" />
           {t('net.keywords')}
         </button>
+        <button
+          onClick={() => setActiveTab('clusters')}
+          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            activeTab === 'clusters'
+              ? 'bg-primary-600 text-white'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+          }`}
+        >
+          <MapIcon className="w-4 h-4" />
+          {t('net.clusters')}
+        </button>
+        <button
+          onClick={() => setActiveTab('trends')}
+          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            activeTab === 'trends'
+              ? 'bg-primary-600 text-white'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4" />
+          {t('net.trends')}
+        </button>
+        <button
+          onClick={() => setActiveTab('gaps')}
+          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+            activeTab === 'gaps'
+              ? 'bg-primary-600 text-white'
+              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+          }`}
+        >
+          <Crosshair className="w-4 h-4" />
+          {t('net.gaps')}
+        </button>
       </div>
 
-      {loading ? (
+      {activeTab === 'clusters' ? (
+        <ClusterMap />
+      ) : activeTab === 'trends' ? (
+        <TrendChart />
+      ) : activeTab === 'gaps' ? (
+        <GapsPanel />
+      ) : loading ? (
         <div className="flex justify-center items-center py-8 sm:py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
         </div>
@@ -236,17 +261,11 @@ export default function NetworkPage() {
                   <div>
                     <span className="text-gray-400 block text-xs">类型</span>
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">
-                      {infoNode.group === 'author' ? <Users className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
-                      {infoNode.group === 'author' ? t('common.author') : t('common.keyword')}
+                      <Hash className="w-3 h-3" />
+                      {t('common.keyword')}
                     </span>
                   </div>
-                  {infoNode.papers !== undefined && (
-                    <div>
-                      <span className="text-gray-400 block text-xs">{t('net.papersLabel')}</span>
-                      <span className="text-gray-900 dark:text-white font-semibold text-base sm:text-lg">{infoNode.papers}</span>
-                    </div>
-                  )}
-                  {infoNode.count !== undefined && infoNode.group === 'keyword' && (
+                  {infoNode.count !== undefined && (
                     <div>
                       <span className="text-gray-400 block text-xs">出现次数</span>
                       <span className="text-gray-900 dark:text-white font-semibold text-base sm:text-lg">{infoNode.count}</span>
@@ -257,7 +276,7 @@ export default function NetworkPage() {
                     <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-gray-400 block text-xs">
-                          {infoNode.group === 'author' ? t('net.coauthors') : t('net.linkedKeywords')} ({connectedNodes.length})
+                          {t('net.linkedKeywords')} ({connectedNodes.length})
                         </span>
                       </div>
                       {/* 关联关键词筛选 */}
@@ -265,7 +284,7 @@ export default function NetworkPage() {
                         type="text"
                         value={linkedFilter}
                         onChange={e => setLinkedFilter(e.target.value)}
-                        placeholder={`筛选${infoNode.group === 'author' ? '合作作者' : '关联关键词'}...`}
+                        placeholder="筛选关联关键词..."
                         className="w-full mb-2 px-3 py-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-xs outline-none focus:ring-1 focus:ring-primary-500 bg-gray-50 dark:bg-gray-700/40"
                       />
                       <div className="space-y-1 max-h-48 sm:max-h-64 overflow-y-auto">
@@ -428,9 +447,7 @@ export default function NetworkPage() {
                   <svg className="w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-2 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                   </svg>
-                  {activeTab === 'authors'
-                    ? t('net.clickHint')
-                    : t('net.clickHint')}
+                  {t('net.clickHint')}
                 </div>
               )}
             </div>

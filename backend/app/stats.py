@@ -112,9 +112,12 @@ async def compute_keyword_gaps(db: AsyncSession, limit: int = 10) -> list:
     return gaps[:limit]
 
 
-async def keyword_network(db: AsyncSession, limit: int = 200) -> dict:
-    """关键词共现网络（供 /network/keywords 使用，最近 limit 篇）。"""
-    paper_keywords = await iter_paper_keywords(db, limit=limit)
+async def keyword_network(db: AsyncSession) -> dict:
+    """关键词共现网络：全库聚合（此前仅统计最近 N 篇导致计数失真，已改为全库）。
+
+    节点取词频 top80、边取共现 top400，裁剪在本函数内完成。
+    """
+    paper_keywords = await iter_paper_keywords(db)
     keyword_count, cooc = _cooc_from_paper_keywords(paper_keywords)
 
     nodes_map = {}

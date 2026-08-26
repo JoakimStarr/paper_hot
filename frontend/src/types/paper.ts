@@ -322,6 +322,46 @@ export interface ResearchGapsResponse {
   total: number;
 }
 
+export interface ClusterPoint {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+}
+
+export interface TopicCluster {
+  id: number;
+  rank: number;
+  label: string;
+  top_keywords: string[];
+  size: number;
+  cx: number;
+  cy: number;
+  year_range: string;
+  representative_papers: Array<{ id: string; title: string; score: number }>;
+  points: ClusterPoint[];
+}
+
+export interface TopicClustersResponse {
+  total: number;
+  k: number;
+  clusters: TopicCluster[];
+}
+
+export interface KeywordTrendSeries {
+  name: string;
+  yearly: Array<{ year: string; count: number }>;
+  total: number;
+  last12: number;
+  prev12: number;
+  trend: 'emerging' | 'declining' | 'stable';
+}
+
+export interface KeywordTrendsResponse {
+  years: string[];
+  series: KeywordTrendSeries[];
+}
+
 export interface GapAnalysisResponse {
   report_id: number | null;
   status: string | null;

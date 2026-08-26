@@ -222,7 +222,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
           id: d.id,
           name: d.name,
           group: d.group,
-          papers: d.group === 'author' ? d.count : undefined,
+          papers: undefined,
           count: d.group === 'keyword' ? d.count : undefined,
         });
       });

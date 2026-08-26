@@ -41,7 +41,7 @@ export const translations = {
       editAppName: '编辑应用名称',
       appNameLabel: '应用名称',
       cnkiPrefixTitle: 'CNKI 论文链接域名头',
-      cnkiPrefixDesc: '仅影响论文详情页的跳转链接。可填写高校 VPN/镜像地址（如 http://www-cnki-net-s.vpn.dufe.edu.cn:8118），留空使用知网官网。',
+      cnkiPrefixDesc: '仅影响论文详情页的跳转链接。可填写高校 VPN/镜像域名头（需与知网原子域名对应），留空使用知网官网。',
       cnkiPrefixCurrent: '当前生效：{prefix}',
       cnkiPrefixDefault: '未设置，默认跳转知网官网（kns.cnki.net）',
       cnkiPrefixSaved: '已保存，详情页跳转链接已更新',
@@ -353,7 +353,19 @@ export const translations = {
       system: '系统管理',
       network: '关系网络',
       reading: '阅读历史',
+      mine: '我的',
       backHome: '返回首页',
+    },
+
+    // 工作台模块页签
+    dash: {
+      tabWorkbench: '研究工作台',
+      tabBriefing: '领域快讯',
+      tabStack: '我的研究栈',
+      tabPrefs: '推荐偏好',
+      viewAll: '查看全部',
+      recentReading: '最近阅读',
+      noReading: '还没有阅读记录，去浏览一些论文吧',
     },
 
     // 选题中心
@@ -577,7 +589,7 @@ export const translations = {
       editAppName: 'Edit app name',
       appNameLabel: 'App name',
       cnkiPrefixTitle: 'CNKI Link Domain Prefix',
-      cnkiPrefixDesc: 'Only affects the jump link on the paper detail page. You can use a campus VPN/mirror address (e.g. http://www-cnki-net-s.vpn.dufe.edu.cn:8118); leave empty for the official CNKI site.',
+      cnkiPrefixDesc: 'Only affects the jump link on the paper detail page. Fill in your campus VPN/mirror domain prefix; leave empty for the official CNKI site.',
       cnkiPrefixCurrent: 'Active: {prefix}',
       cnkiPrefixDefault: 'Not set — links point to the official CNKI site (kns.cnki.net)',
       cnkiPrefixSaved: 'Saved. Detail page links updated.',
@@ -844,7 +856,26 @@ export const translations = {
     // Network page
     net: {
       title: 'Research Network',
-      subtitle: 'Visualize co-author and keyword co-occurrence networks',
+      subtitle: 'Keyword co-occurrence, topic cluster map and emerging trends for topic positioning',
+      clusters: 'Topic Cluster Map',
+      trends: 'Yearly Trends',
+      gaps: 'Research Gaps',
+      clusterComputing: 'Clustering the whole library semantically (first load ~10s)…',
+      clusterScatterHint: 'Each dot is a paper ({total} total), color = topic cluster; click a dot to open it',
+      clusterLegend: 'Topic clusters (by size)',
+      papersUnit: '',
+      representativePapers: 'Top-scored papers',
+      noData: 'No data',
+      trend_emerging: '↑ Emerging',
+      trend_declining: '↓ Declining',
+      trend_stable: '→ Stable',
+      trendHint: 'Yearly counts across the whole library; momentum = last 12 months vs previous 12 (≥1.3 emerging, ≤0.7 declining). Click legend to toggle lines.',
+      gapHint: 'Sparse co-occurrence pairs among hot keywords — each hot alone, rare together — are potential topic openings.',
+      verifyOnCnki: 'Verify this combo on CNKI',
+      gapSourceCount: 'Keyword A count',
+      gapTargetCount: 'B count',
+      gapCooccur: 'Co-occurrence',
+      gapScore: 'Gap score',
       authors: 'Co-author Network',
       keywords: 'Keyword Co-occurrence',
       nodeDetail: 'Node Details',
@@ -889,7 +920,19 @@ export const translations = {
       system: 'System',
       network: 'Network',
       reading: 'Reading History',
+      mine: 'My',
       backHome: 'Back to Home',
+    },
+
+    // Dashboard module tabs
+    dash: {
+      tabWorkbench: 'Research Workbench',
+      tabBriefing: 'Field Briefing',
+      tabStack: 'My Research Stack',
+      tabPrefs: 'Recommendation Prefs',
+      viewAll: 'View all',
+      recentReading: 'Recent Reading',
+      noReading: 'No reading history yet. Start browsing some papers!',
     },
 
     // Topic Lab

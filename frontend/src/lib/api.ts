@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -217,11 +217,14 @@ export const papersApi = {
   getCNKISearchStatus: async (): Promise<CNKISearchInfo> =>
     request('/crawl/cnki/search/status'),
 
-  getAuthorNetwork: async (limit: number = 50): Promise<NetworkData> =>
-    request('/network/authors', { params: { limit } }),
+  getKeywordNetwork: async (): Promise<NetworkData> =>
+    request('/network/keywords'),
 
-  getKeywordNetwork: async (limit: number = 200): Promise<NetworkData> =>
-    request('/network/keywords', { params: { limit } }),
+  getTopicClusters: async (): Promise<TopicClustersResponse> =>
+    request('/network/topic-clusters'),
+
+  getKeywordTrends: async (top = 12): Promise<KeywordTrendsResponse> =>
+    request('/network/keyword-trends', { params: { top } }),
 
   getCrawlStatus: async (limit: number = 10): Promise<{ logs: CrawlLog[]; total: number }> =>
     request('/crawl/status', { params: { limit } }),
