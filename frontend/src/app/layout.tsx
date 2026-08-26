@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import '../styles/globals.css';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
-import { AiAnalysisModalProvider } from '@/components/AiAnalysisModal';
+import { AiAnalysisModalProvider } from '@/components/AiAnalysisModalContext';
 
 export const metadata: Metadata = {
   title: 'PaperPulse - Discover Trending Research Papers',

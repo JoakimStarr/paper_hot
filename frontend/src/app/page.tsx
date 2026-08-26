@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -7,7 +8,9 @@ import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
 import Pagination from '@/components/Pagination';
 import SkeletonCard from '@/components/SkeletonCard';
-import MarkdownRenderer from '@/components/MarkdownRenderer';
+const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
+  ssr: false,
+});
 import { Loader2, Search, X, Sparkles, FileDown } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';

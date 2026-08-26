@@ -11,7 +11,7 @@ import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
 import { usePreferences } from '@/lib/usePreferences';
 import { useToast } from '@/components/Toast';
-import { useAiAnalysisModal } from '@/components/AiAnalysisModal';
+import { useAiAnalysisModal } from '@/components/AiAnalysisModalContext';
 
 interface PaperCardProps {
   paper: PaperCardType;

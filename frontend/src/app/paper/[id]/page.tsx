@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -7,7 +8,9 @@ import { papersApi, producerApi, getLastModel, rememberModel, streamPaperChat } 
 import { PaperDetailResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown, FileText, Target, Copy, Check } from 'lucide-react';
 import Link from 'next/link';
-import MarkdownRenderer from '@/components/MarkdownRenderer';
+const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
+  ssr: false,
+});
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors, downloadTextFile } from '@/lib/utils';
 
