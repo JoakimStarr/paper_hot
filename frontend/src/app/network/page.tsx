@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
+import SkeletonCard from '@/components/SkeletonCard';
 import { papersApi } from '@/lib/api';
 import { NetworkData, NetworkNode } from '@/types/paper';
 import { Loader2, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target, TrendingUp, Crosshair } from 'lucide-react';
@@ -220,8 +221,10 @@ export default function NetworkPage() {
       ) : activeTab === 'gaps' ? (
         <GapsPanel />
       ) : loading ? (
-        <div className="flex justify-center items-center py-8 sm:py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+        <div className="grid grid-cols-1 gap-4 sm:gap-6">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <SkeletonCard key={i} />
+          ))}
         </div>
       ) : (
         <>

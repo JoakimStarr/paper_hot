@@ -36,6 +36,8 @@ export function AiAnalysisModalProvider({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  // 无历史分析时置 true：等待用户手动点击才开始生成（避免打开即烧 LLM 调用）
+  const [needsStart, setNeedsStart] = useState(false);
 
   // 请求中止控制器：关闭/切换论文时终止未完成的 analyzePaper 请求
   const abortRef = useRef<AbortController | null>(null);
@@ -65,16 +67,75 @@ export function AiAnalysisModalProvider({ children }: { children: React.ReactNod
     abortRef.current = null;
   }, [stopPolling]);
 
-  /** 轮询入参：先 POST 提交一次生成，再轮询只读的 /analyses/latest 拿结果（避免重复提交）。 */
+  /** 纯轮询：只读 latest 直到完成（用于服务端已在生成的场景），不触发任何 POST。 */
+  const pollUntilDone = useCallback((target: string) => {
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const check = async (): Promise<boolean> => {
+      try {
+        const res = await papersApi.getLatestAnalysis(target);
+        if (res.status === 'success' && res.analysis) {
+          setContent(res.analysis);
+          setLoading(false);
+          return true;
+        }
+        if (res.status === 'failed' || res.status === 'error') {
+          setError(true);
+          setLoading(false);
+          return true;
+        }
+        return false;
+      } catch (e: unknown) {
+        if ((e as Error).name === 'AbortError') return true;
+        setError(true);
+        setLoading(false);
+        return true;
+      }
+    };
+
+    (async () => {
+      if (await check()) { stopPolling(); return; }
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        if (!activePaperRef.current) return;
+        const done = await check();
+        if (done) stopPolling();
+      }, 4000);
+    })();
+  }, [stopPolling]);
+
+  /** 打开弹窗时的被动检查：只读 latest，绝不触发生成。 */
+  const loadLatestOnly = useCallback(async (target: string): Promise<void> => {
+    try {
+      const res = await papersApi.getLatestAnalysis(target);
+      if (res.status === 'success' && res.analysis) {
+        setContent(res.analysis);
+        setLoading(false);
+        return;
+      }
+      if (res.status === 'pending') {
+        // 服务端确实在生成（此前显式启动过），继续轮询直到完成
+        pollUntilDone(target);
+        return;
+      }
+      setNeedsStart(true);
+      setLoading(false);
+    } catch {
+      setNeedsStart(true);
+      setLoading(false);
+    }
+  }, []);
+
+  /** 显式开始：POST 提交生成，随后轮询结果。仅由用户点击触发。 */
   const startAnalysis = useCallback((target: string) => {
-    // 单个 AbortController 管理本次分析的生命周期；切换/关闭即中止
     if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
     abortRef.current = ac;
 
     let started = false;
     const pollLatest = async (): Promise<boolean> => {
-      // 首次先提交生成请求（幂等：已有 pending 则返回 pending）
       if (!started) {
         started = true;
         try {
@@ -132,8 +193,8 @@ export function AiAnalysisModalProvider({ children }: { children: React.ReactNod
     setError(false);
     activePaperRef.current = pid;
     setOpen(true);
-    startAnalysis(pid);
-  }, [startAnalysis]);
+    void loadLatestOnly(pid);
+  }, [loadLatestOnly]);
 
   const value = useMemo(() => ({ openAiAnalysis }), [openAiAnalysis]);
 
@@ -184,6 +245,22 @@ export function AiAnalysisModalProvider({ children }: { children: React.ReactNod
                   </div>
                 ) : content ? (
                   <MarkdownRenderer content={content} />
+                ) : needsStart ? (
+                  <div className="flex flex-col items-center justify-center py-14 gap-3 text-center">
+                    <p className="text-gray-400 text-sm">{t('paper.aiNoContent')}</p>
+                    <button
+                      onClick={() => {
+                        if (!paperId) return;
+                        setNeedsStart(false);
+                        setLoading(true);
+                        setContent(null);
+                        startAnalysis(paperId);
+                      }}
+                      className="px-4 py-2 text-sm rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+                    >
+                      {t('pd.startAnalysis')}
+                    </button>
+                  </div>
                 ) : (
                   <div className="py-14 text-center text-gray-400 text-sm">{t('paper.aiNoContent')}</div>
                 )}
