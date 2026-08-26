@@ -73,7 +73,7 @@ PAGE_STABLE_TIMEOUT = 30
 DETAIL_MAX_RETRIES = 2
 DETAIL_RETRY_BACKOFF = [3.0, 8.0]
 # 验证码自动解决最大尝试次数（点选验证码每次刷新都是一次风控交互，不宜过高）
-CLICK_CAPTCHA_MAX_RETRIES = 5
+CLICK_CAPTCHA_MAX_RETRIES = 10  # 测试期临时调高到 10，定位识别问题后应收敛
 SLIDER_CAPTCHA_MAX_RETRIES = 3
 
 # —— 全局请求节流 + 验证码熔断（跨浏览器 / 跨 tab 共享，进程内单例）——
@@ -274,52 +274,6 @@ class CaptchaSolver:
                 return fn(*args)
         return await asyncio.to_thread(_run)
 
-    def _preprocess_char_image(self, char_img_bytes: bytes) -> bytes:
-        """
-        预处理单个文字图片，提高 OCR 识别准确率
-        使用 OpenCV 进行：灰度化 -> 自适应二值化 -> 去噪
-        """
-        if not CV2_AVAILABLE:
-            return char_img_bytes
-
-        try:
-            # 将 bytes 转换为 OpenCV 图像
-            nparr = np.frombuffer(char_img_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-            if img is None:
-                return char_img_bytes
-
-            # 1. 转换为灰度图
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            # 2. 自适应二值化（比固定阈值更能应对光照不均）
-            binary = cv2.adaptiveThreshold(
-                gray, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY_INV,  # 反转：文字为白色，背景为黑色
-                11, 2
-            )
-
-            # 3. 开运算去噪（去除小噪点）
-            kernel = np.ones((2, 2), np.uint8)
-            denoised = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-
-            # 4. 可选：膨胀操作使文字更清晰
-            kernel_dilate = np.ones((2, 2), np.uint8)
-            enhanced = cv2.morphologyEx(denoised, cv2.MORPH_CLOSE, kernel_dilate)
-
-            # 5. 反转回正常颜色（文字黑色，背景白色）
-            final = cv2.bitwise_not(enhanced)
-
-            # 转换回 bytes
-            _, buffer = cv2.imencode('.png', final)
-            return buffer.tobytes()
-
-        except Exception as e:
-            print(f"    [线程{self.thread_id}] 图像预处理失败: {e}")
-            return char_img_bytes
-
     async def _recognize_char_fusion(self, char_img_bytes: bytes) -> list:
         """
         多引擎融合识别单个文字
@@ -348,47 +302,73 @@ class CaptchaSolver:
             except Exception:
                 pass
 
-        # 策略2：使用预处理后的图片 + ddddocr
-        if CV2_AVAILABLE and self._text_ocr is not None:
-            try:
-                processed_bytes = self._preprocess_char_image(char_img_bytes)
-                result = await self._ocr_call(self._text_ocr.classification, processed_bytes)
-                if result and result.strip():
-                    cleaned = self._clean_ocr_result(result.strip())
-                    if cleaned:
-                        all_results.update(cleaned)
-            except Exception:
-                pass
-
-        # 策略3：使用原图 + ddddocr
+        # 策略2-4：ddddocr 多预处理变体识别（原图 / 自适应二值化 / Otsu / 灰度 / 2x / 3x 放大），
+        # 合并所有候选字。不同变体在噪声、底色、对比度不同的验证码上互补，提升命中率。
         if self._text_ocr is not None:
-            try:
-                result = await self._ocr_call(self._text_ocr.classification, char_img_bytes)
-                if result and result.strip():
-                    cleaned = self._clean_ocr_result(result.strip())
-                    if cleaned:
-                        all_results.update(cleaned)
-            except Exception:
-                pass
-
-        # 策略4：尝试调整图片大小 + ddddocr
-        if CV2_AVAILABLE and self._text_ocr is not None:
-            try:
-                nparr = np.frombuffer(char_img_bytes, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if img is not None:
-                    height, width = img.shape[:2]
-                    resized = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_CUBIC)
-                    _, buffer = cv2.imencode('.png', resized)
-                    result = await self._ocr_call(self._text_ocr.classification, buffer.tobytes())
+            for variant_bytes in self._char_image_variants(char_img_bytes):
+                try:
+                    result = await self._ocr_call(self._text_ocr.classification, variant_bytes)
                     if result and result.strip():
                         cleaned = self._clean_ocr_result(result.strip())
                         if cleaned:
                             all_results.update(cleaned)
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
         return list(all_results)
+
+    def _char_image_variants(self, char_img_bytes: bytes) -> list:
+        """生成单字图片的多种预处理变体，供 ddddocr 分别识别。
+
+        返回 [原图, 灰度, 自适应二值化, Otsu二值化, 2x放大, 3x放大]（CV2 不可用时退化为 [原图]）。
+        """
+        variants = [char_img_bytes]
+        if not CV2_AVAILABLE:
+            return variants
+
+        try:
+            nparr = np.frombuffer(char_img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is None:
+                return variants
+
+            height, width = img.shape[:2]
+
+            # 灰度
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            variants.append(self._enc_png(gray))
+
+            # 自适应二值化（保留原 _preprocess_char_image 的核心）
+            binary = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV, 11, 2,
+            )
+            variants.append(self._enc_png(binary))
+
+            # Otsu 全局二值化（对低对比度/渐变底色更稳）
+            _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            variants.append(self._enc_png(otsu))
+
+            # 2x / 3x 放大（小图放大后笔画更连续）
+            for scale in (2, 3):
+                try:
+                    resized = cv2.resize(img, (width * scale, height * scale), interpolation=cv2.INTER_CUBIC)
+                    variants.append(self._enc_png(resized))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return variants
+
+    @staticmethod
+    def _enc_png(img) -> bytes:
+        """将 OpenCV 图像编码为 PNG bytes。"""
+        try:
+            _, buffer = cv2.imencode('.png', img)
+            return buffer.tobytes()
+        except Exception:
+            return None
 
     def _clean_ocr_result(self, text: str) -> list:
         """
@@ -439,6 +419,128 @@ class CaptchaSolver:
             '同': ['司', '句', '旬'],
             '造': ['告', '浩', '酷'],
             '也': ['他', '地', '池'],
+            # —— 补充常见混淆字对（结构相似/易误识）——
+            '已': ['己', '巳'],
+            '己': ['已', '巳'],
+            '千': ['干', '于', '十'],
+            '干': ['千', '于'],
+            '未': ['末', '来'],
+            '末': ['未', '来', '木'],
+            '人': ['入', '八', '个'],
+            '入': ['人', '八'],
+            '日': ['曰', '目', '田'],
+            '曰': ['日', '目'],
+            '目': ['日', '自', '且'],
+            '自': ['目', '白', '首'],
+            '白': ['自', '百', '日'],
+            '百': ['白', '自'],
+            '大': ['太', '犬', '人'],
+            '太': ['大', '犬', '天'],
+            '天': ['夫', '无', '大'],
+            '夫': ['天', '大', '失'],
+            '王': ['玉', '主', '五'],
+            '玉': ['王', '主'],
+            '土': ['士', '工', '上'],
+            '士': ['土', '上', '工'],
+            '田': ['由', '甲', '申', '日'],
+            '由': ['田', '甲', '申'],
+            '甲': ['由', '申', '田'],
+            '申': ['由', '甲', '田'],
+            '月': ['用', '目', '同', '内'],
+            '用': ['月', '甩'],
+            '方': ['万', '才'],
+            '万': ['方', '乃'],
+            '力': ['刀', '九'],
+            '刀': ['力', '刃'],
+            '九': ['力', '几'],
+            '几': ['九', '儿'],
+            '儿': ['几', '九'],
+            '开': ['井', '升', '开'],
+            '井': ['开', '并', '并'],
+            '并': ['并', '开', '井'],
+            '风': ['凤', '风'],
+            '贝': ['见', '只'],
+            '见': ['贝', '只'],
+            '只': ['贝', '见', '双'],
+            '内': ['肉', '丙'],
+            '半': ['羊', '丰'],
+            '羊': ['半', '丰', '美'],
+            '丰': ['半', '羊'],
+            '关': ['美', '天', '开'],
+            '美': ['关', '羊', '差'],
+            '问': ['间', '向'],
+            '间': ['问', '同'],
+            '向': ['问', '同'],
+            '主': ['王', '玉', '生'],
+            '生': ['主', '牛', '王'],
+            '牛': ['生', '午'],
+            '午': ['牛', '干'],
+            '本': ['木', '未', '末'],
+            '木': ['本', '末', '未', '才'],
+            '才': ['木', '方'],
+            '米': ['来', '采'],
+            '来': ['米', '未', '末'],
+            '采': ['米', '来'],
+            '果': ['里', '田'],
+            '里': ['果', '重', '田'],
+            '重': ['里', '垂'],
+            '厂': ['广', '丿'],
+            '广': ['厂', '扩'],
+            '云': ['去', '会'],
+            '去': ['云', '丢'],
+            '会': ['云', '合', '今'],
+            '合': ['会', '令', '今'],
+            '今': ['令', '合', '会'],
+            '令': ['今', '合'],
+            '全': ['金', '企'],
+            '金': ['全', '企'],
+            '企': ['全', '金', '合'],
+            '无': ['天', '元', '夫'],
+            '元': ['无', '天', '示'],
+            '示': ['元', '不'],
+            '不': ['示', '个'],
+            '丁': ['了', '子'],
+            '了': ['丁', '子'],
+            '子': ['了', '孑'],
+            '十': ['干', '千', '士'],
+            '下': ['上', '不'],
+            '上': ['下', '止'],
+            '止': ['上', '正'],
+            '正': ['止', '证'],
+            '直': ['真', '且'],
+            '真': ['直', '具'],
+            '具': ['直', '真', '且'],
+            '且': ['目', '具', '且'],
+            '成': ['戊', '戌', '戎'],
+            '戌': ['戊', '戍', '成'],
+            '戍': ['戌', '戊'],
+            '戊': ['戌', '戍', '成'],
+            '特': ['持', '待', '侍'],
+            '持': ['特', '待'],
+            '待': ['持', '侍'],
+            '构': ['构', '沟', '购'],
+            '购': ['构', '沟'],
+            '值': ['植', '直', '债'],
+            '债': ['值', '植'],
+            '植': ['值', '债'],
+            '优': ['尤', '忧', '忧'],
+            '尤': ['优', '龙'],
+            '忧': ['优', '扰'],
+            '扰': ['忧', '拢'],
+            '晚': ['晓', '挽'],
+            '晓': ['晚', '烧'],
+            '烧': ['晓', '浇'],
+            '浇': ['烧', '绕'],
+            '绕': ['浇', '饶'],
+            '饶': ['绕', '烧'],
+            '纸': ['低', '抵', '邸'],
+            '抵': ['低', '纸'],
+            '低': ['抵', '纸'],
+            '护': ['扩', '拧'],
+            '扩': ['护', '广'],
+            '拔': ['拨', '泼'],
+            '拨': ['拔', '泼'],
+            '泼': ['拔', '拨'],
         }
 
         # 尝试相似字符匹配
@@ -814,13 +916,29 @@ class CaptchaSolver:
                 panel_x = panel_box['x']
                 panel_y = panel_box['y']
 
+                # 关键：screenshot() 返回的是设备像素，bounding_box() 返回的是 CSS 像素。
+                # 显示器 DPI 缩放（Windows 125%/150% 等）时两者不一致，直接相加会把点击坐标整体偏移。
+                # 必须把 OCR 输出的设备像素坐标除以 devicePixelRatio 换算回 CSS 像素再点击。
+                dpr = 1.0
+                try:
+                    dpr = float(await page.evaluate('window.devicePixelRatio') or 1.0)
+                except Exception:
+                    dpr = 1.0
+                if dpr <= 0:
+                    dpr = 1.0
+
                 # 使用 OCR 识别每个位置上的文字（img 已在截图校验时打开，直接复用）
                 char_map = {}  # 文字 -> 位置的映射
 
                 for i, bbox in enumerate(bboxes):
                     x1, y1, x2, y2 = bbox
-                    # 裁剪出单个文字区域
-                    char_img = img.crop((x1, y1, x2, y2))
+                    # 裁剪时外扩 3px，避免笔画贴边被截断导致识别率下降
+                    pad = 3
+                    crop_box = (
+                        max(0, x1 - pad), max(0, y1 - pad),
+                        min(img.width, x2 + pad), min(img.height, y2 + pad),
+                    )
+                    char_img = img.crop(crop_box)
                     # 转换为 bytes
                     img_buffer = io.BytesIO()
                     char_img.save(img_buffer, format='PNG')
@@ -830,9 +948,9 @@ class CaptchaSolver:
                     recognized_chars = await self._recognize_char_fusion(char_img_bytes)
 
                     if recognized_chars:
-                        # 将相对坐标转换为绝对坐标
-                        abs_x = panel_x + (x1 + x2) / 2
-                        abs_y = panel_y + (y1 + y2) / 2
+                        # 将设备像素坐标转换为 CSS 像素后，再加页面偏移得到绝对坐标
+                        abs_x = panel_x + ((x1 + x2) / 2) / dpr
+                        abs_y = panel_y + ((y1 + y2) / 2) / dpr
 
                         # 存储该位置的所有可能识别结果
                         for char in recognized_chars:

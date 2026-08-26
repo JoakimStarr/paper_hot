@@ -31,6 +31,9 @@ export default function ReadingHistoryPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // 时间分组：今天 / 本周（近7天）/ 更早；组内保持接口返回的排序（阅读时间倒序）
+  const groups = groupByTime(papers);
+
   return (
     <Layout>
       <div className="flex items-center justify-between mb-4 sm:mb-6">
@@ -68,13 +71,53 @@ export default function ReadingHistoryPage() {
           <div className="mb-3 sm:mb-4 text-xs sm:text-sm text-gray-500 dark:text-gray-400">
             {t('reading.count', { n: total })}
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:gap-6">
-            {papers.map((paper) => (
-              <PaperCard key={paper.id} paper={paper} read />
+          <div className="space-y-6 sm:space-y-8">
+            {groups.map((group) => (
+              <section key={group.key}>
+                <h2 className="sticky top-16 z-10 -mx-1 px-1 py-1.5 mb-3 bg-gray-50/95 dark:bg-gray-900/95 backdrop-blur text-sm font-bold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 transition-colors">
+                  {group.label}
+                  <span className="ml-1.5 font-normal text-xs text-gray-400 dark:text-gray-500">
+                    {group.papers.length}
+                  </span>
+                </h2>
+                <div className="grid grid-cols-1 gap-4 sm:gap-6">
+                  {group.papers.map((paper) => (
+                    <PaperCard key={paper.id} paper={paper} read />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         </>
       )}
     </Layout>
   );
+}
+
+interface ReadingGroup {
+  key: 'today' | 'week' | 'earlier';
+  label: string;
+  papers: PaperCardType[];
+}
+
+/** 按「今天 / 本周 / 更早」三组划分；时间取记录的 created_at（缺省回退 published_at），解析失败归入「更早」。 */
+function groupByTime(papers: PaperCardType[]): ReadingGroup[] {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfWeek = startOfToday - 7 * 24 * 60 * 60 * 1000;
+  const ts = (p: PaperCardType) =>
+    Date.parse(p.created_at || '') || Date.parse(p.published_at || '') || 0;
+
+  const groups: ReadingGroup[] = [
+    { key: 'today', label: '今天', papers: [] },
+    { key: 'week', label: '本周', papers: [] },
+    { key: 'earlier', label: '更早', papers: [] },
+  ];
+  for (const p of papers) {
+    const t = ts(p);
+    if (t >= startOfToday) groups[0].papers.push(p);
+    else if (t >= startOfWeek) groups[1].papers.push(p);
+    else groups[2].papers.push(p);
+  }
+  return groups.filter((g) => g.papers.length > 0);
 }

@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
 import { papersApi, getLastModel, rememberModel, streamTrendChat } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
-import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Settings2, Maximize2, Minimize2 } from 'lucide-react';
+import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 // 重组件按需加载：recharts(雷达/折线) 与 react-markdown 栈各成独立懒 chunk，首屏不阻塞
@@ -82,8 +82,6 @@ export default function TrendsPage() {
   const [streamContent, setStreamContent] = useState('');
   const [streamReasoning, setStreamReasoning] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('');
-  const [showModelSelect, setShowModelSelect] = useState(false);
   const [analysisModel, setAnalysisModel] = useState('');
   const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
@@ -121,11 +119,9 @@ export default function TrendsPage() {
             available: m.available,
           }));
         setAvailableModels(list);
-        // 恢复上次选择的模型（若仍可用）
+        // 恢复上次选择的模型（若仍可用）；报告与追问共用同一模型
         const lastAnalysis = getLastModel('trends_analysis');
-        const lastChat = getLastModel('trends_chat');
         if (lastAnalysis && list.some(m => m.id === lastAnalysis)) setAnalysisModel(lastAnalysis);
-        if (lastChat && list.some(m => m.id === lastChat)) setSelectedModel(lastChat);
       })
       .catch(() => setAvailableModels([]));
   }, []);
@@ -405,7 +401,7 @@ export default function TrendsPage() {
 
       const contextMessages = allMessages.slice(-MAX_CONTEXT_MESSAGES);
 
-      await streamTrendChat(report.id, contextMessages, selectedModel || undefined, {
+      await streamTrendChat(report.id, contextMessages, analysisModel || undefined, {
         onContent: (text) => setStreamContent(text),
         onReasoning: (text) => setStreamReasoning(text),
         onDone: (fullContent) => {
@@ -586,7 +582,7 @@ export default function TrendsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4 sm:mb-6">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600" />
-                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">{t('tr.aiTrend')}</h2>
+                <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white">AI 领域分析师</h2>
                 {hasHistory && report && !isRunning && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded-full">
                     <Clock className="w-3 h-3" />
@@ -834,36 +830,6 @@ export default function TrendsPage() {
                         {isChatFullscreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
                         {isChatFullscreen ? t('tr.exitFullscreen') : t('tr.fullscreen')}
                       </button>
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowModelSelect(!showModelSelect)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                          title={t('tr.selectModelShort')}
-                        >
-                          <Settings2 className="w-3 h-3" />
-                          {availableModels.find(m => m.id === selectedModel)?.label || t('tr.defaultModel')}
-                        </button>
-                        {showModelSelect && (
-                          <div className="absolute right-0 top-8 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[180px] max-h-64 overflow-y-auto">
-                            <button
-                              onClick={() => { setSelectedModel(''); rememberModel('trends_chat', null); setShowModelSelect(false); }}
-                              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${selectedModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
-                            >
-                              {t('tr.defaultModel')}
-                            </button>
-                            {availableModels.map(model => (
-                              <button
-                                key={model.id}
-                                disabled={!model.available}
-                                onClick={() => { setSelectedModel(model.id); rememberModel('trends_chat', model.id); setShowModelSelect(false); }}
-                                className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${selectedModel === model.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
-                              >
-                                {model.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
                       <button
                         onClick={handleExportChats}
                         disabled={chatMessages.length === 0}

@@ -11,14 +11,83 @@ import SkeletonCard from '@/components/SkeletonCard';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
 });
-import { Loader2, Search, X, Sparkles, FileDown } from 'lucide-react';
+import { Loader2, Search, X, Sparkles, FileDown, Clock } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
 import { usePreferences } from '@/lib/usePreferences';
 import { papersApi, producerApi } from '@/lib/api';
+import { getUserId } from '@/lib/user';
 import type { PaperCard as PaperCardType } from '@/types/paper';
 import { downloadTextFile } from '@/lib/utils';
+
+// 与 lib/api.ts 的 API_BASE_URL 同源拼接（该文件禁止修改，故此处本地定义一份）
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+
+interface TodayBrief {
+  today_count: number;
+  week_count: number;
+  watch_subfield_count: number | null;
+  generated_at: string;
+}
+
+/** 首页「今日速览条」：今日/近7天/关注子领域入库统计；点击仅刷新数据。 */
+function TodayBriefBar() {
+  const [brief, setBrief] = useState<TodayBrief | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        headers['x-user-id'] = getUserId();
+      } catch { /* SSR 环境忽略 */ }
+      const res = await fetch(`${API_BASE_URL}/dashboard/today-brief`, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setBrief(await res.json());
+    } catch {
+      /* 静默失败：速览条不阻塞首页论文流 */
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!brief) return null;
+
+  return (
+    <button
+      onClick={load}
+      title="点击刷新"
+      className="w-full mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-left bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:border-primary-400 dark:hover:border-primary-500 px-4 py-3 transition-colors"
+    >
+      <Clock className="w-4 h-4 text-primary-600 dark:text-primary-400 shrink-0" />
+      <span className="text-sm text-gray-500 dark:text-gray-400">
+        今日入库{' '}
+        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.today_count}</strong> 篇
+      </span>
+      <span className="text-gray-300 dark:text-gray-600">·</span>
+      <span className="text-sm text-gray-500 dark:text-gray-400">
+        近7天{' '}
+        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.week_count}</strong> 篇
+      </span>
+      {brief.watch_subfield_count !== null && brief.watch_subfield_count !== undefined && (
+        <>
+          <span className="text-gray-300 dark:text-gray-600">·</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            关注子领域{' '}
+            <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.watch_subfield_count}</strong> 篇
+          </span>
+        </>
+      )}
+      {refreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400 ml-auto" />}
+    </button>
+  );
+}
 
 export default function HomePage() {
   return (
@@ -198,6 +267,9 @@ function HomePageInner() {
           />
         </form>
       </div>
+
+      {/* 今日速览条（点击刷新） */}
+      <TodayBriefBar />
 
       <Filters
         minScore={minScore}

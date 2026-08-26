@@ -11,10 +11,11 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header
-from sqlalchemy import select as sa_select, desc as sa_desc
+from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.cache_util import ttl_cache
 from app.database import get_db
 from app.models import (
     Paper, PaperScore, Favorite, ReadingHistory, TopicProject,
@@ -256,3 +257,70 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
         "favorite_count": len(fav_papers),
         "has_followed_subfields": has_followed,
     }
+
+
+# ---------- 今日速览（首页速览条数据源）：60s 进程内缓存 ----------
+
+_TODAY_BRIEF_TTL_SECONDS = 60
+
+
+async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = now - timedelta(days=7)
+
+    today_count = (
+        await db.execute(
+            sa_select(sa_func.count())
+            .select_from(Paper)
+            .where(Paper.published_at >= today_start)
+        )
+    ).scalar() or 0
+
+    week_count = (
+        await db.execute(
+            sa_select(sa_func.count())
+            .select_from(Paper)
+            .where(Paper.published_at >= week_start)
+        )
+    ).scalar() or 0
+
+    # 关注子领域：personal 偏好里的 FollowedSubfield；未关注任何子领域时返回 null
+    watch_subfield_count: Optional[int] = None
+    followed = await db.execute(
+        sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid)
+    )
+    subfields = [r[0] for r in followed.all()]
+    if subfields:
+        watch_subfield_count = (
+            await db.execute(
+                sa_select(sa_func.count())
+                .select_from(Paper)
+                .where(
+                    Paper.economics_subfield.in_(subfields),
+                    Paper.published_at >= week_start,
+                )
+            )
+        ).scalar() or 0
+
+    return {
+        "today_count": int(today_count),
+        "week_count": int(week_count),
+        "watch_subfield_count": watch_subfield_count,
+        "generated_at": now.isoformat(),
+    }
+
+
+@router.get("/dashboard/today-brief")
+async def get_today_brief(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """今日速览：今日/近7天入库论文数 + 关注子领域近7天数（60s TTL 缓存，按用户隔离）。"""
+    uid = _uid(x_user_id)
+
+    async def _compute() -> dict:
+        return await _build_today_brief(db, uid)
+
+    return await ttl_cache(f"today-brief:{uid}", _TODAY_BRIEF_TTL_SECONDS, _compute)
