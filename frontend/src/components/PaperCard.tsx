@@ -4,11 +4,14 @@ import React, { useState, memo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
-import { ExternalLink, Calendar, TrendingUp, Award, Bookmark, Sparkles, Check, Loader2 } from 'lucide-react';
+import { ExternalLink, Calendar, TrendingUp, Bookmark, Sparkles, Pin, EyeOff } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
 import { useBookmarks } from '@/lib/useBookmarks';
-import { papersApi } from '@/lib/api';
+import { usePins } from '@/lib/usePins';
+import { usePreferences } from '@/lib/usePreferences';
+import { useToast } from '@/components/Toast';
+import { useAiAnalysisModal } from '@/components/AiAnalysisModal';
 
 interface PaperCardProps {
   paper: PaperCardType;
@@ -16,7 +19,12 @@ interface PaperCardProps {
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (paperId: string) => void;
+  /** 是否已读：true 时标题置灰并在标题处显示「已读」徽章 */
+  read?: boolean;
 }
+
+// 卡片级「不感兴趣」快捷屏蔽的类型
+type QuickHideOption = { type: 'subfield' | 'journal' | 'keyword' | 'author'; value: string; label: string };
 
 const subfieldColors: Record<string, string> = {
   '宏观经济学': 'bg-blue-100 text-blue-800',
@@ -28,32 +36,81 @@ const subfieldColors: Record<string, string> = {
   '国际经济学': 'bg-pink-100 text-pink-800',
 };
 
-function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCardProps) {
+function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: PaperCardProps) {
   const { t } = useLanguage();
   const router = useRouter();
   const score = paper.final_score;
-  const isHighScore = score >= 0.7;
   const isTrending = paper.trend_score >= 0.6;
   const { has: isBookmarkedNow, toggle: toggleBookmarkState } = useBookmarks();
   const bookmarked = isBookmarkedNow(paper.id);
+  const { has: isPinnedNow, toggle: togglePinState } = usePins();
+  const pinned = isPinnedNow(paper.id);
+  const { toast } = useToast();
 
-  // 列表页 AI 分析快捷状态：idle | loading | done | error
-  const [aiStatus, setAiStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
-
-  const handleQuickAnalyze = async (e: React.MouseEvent) => {
+  const handleToggleBookmark = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (aiStatus === 'loading') return;
-    if (aiStatus === 'done') {
-      router.push(`/paper/${paper.id}#analysis`);
-      return;
-    }
-    setAiStatus('loading');
     try {
-      const res = await papersApi.analyzePaper(paper.id);
-      setAiStatus(res.analysis || res.status === 'success' ? 'done' : 'error');
+      const res = await toggleBookmarkState(paper.id);
+      toast(t(res ? 'paper.bookmarkMsg' : 'paper.unbookmarkMsg'), 'success');
     } catch {
-      setAiStatus('error');
+      toast(t('paper.bookmarkFailed'), 'error');
+    }
+  };
+
+  const handleTogglePin = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const res = await togglePinState(paper.id);
+      if (res.limited) {
+        toast(t('paper.pinLimit'), 'warning');
+      } else {
+        toast(t(res.pinned ? 'paper.pinnedMsg' : 'paper.unpinnedMsg'), 'success');
+      }
+    } catch {
+      toast(t('paper.pinFailed'), 'error');
+    }
+  };
+
+  // —— AI 分析：复用全局单例悬浮窗（P3），不再在卡片内维护弹窗状态，避免多卡片并发请求 ——
+  const { openAiAnalysis } = useAiAnalysisModal();
+
+  const handleOpenAi = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openAiAnalysis(paper.id, paper.title);
+  };
+
+  // —— 「不感兴趣」快捷屏蔽：该论文的领域/期刊/关键词/作者入屏蔽表 ——
+  const [hideOpen, setHideOpen] = useState(false);
+  const { has: hasHidden, add: addPreference } = usePreferences();
+
+  let quickHideOptions: QuickHideOption[] = [];
+  if (paper.economics_subfield) {
+    quickHideOptions.push({ type: 'subfield', value: paper.economics_subfield, label: `${t('pref.type.subfield')}：${paper.economics_subfield}` });
+  }
+  if (paper.journal_name) {
+    quickHideOptions.push({ type: 'journal', value: paper.journal_name, label: `${t('pref.type.journal')}：${paper.journal_name}` });
+  }
+  (paper.keywords_cn || []).slice(0, 2).forEach((kw) => {
+    if (kw) quickHideOptions.push({ type: 'keyword', value: kw, label: `${t('pref.type.keyword')}：${kw}` });
+  });
+  (paper.authors || []).slice(0, 2).forEach((au) => {
+    if (au && au.trim()) quickHideOptions.push({ type: 'author', value: au.trim(), label: `${t('pref.type.author')}：${au.trim()}` });
+  });
+  // 过滤已在屏蔽表中的项，避免重复提示
+  quickHideOptions = quickHideOptions.filter((o) => !hasHidden(o.type, o.value));
+
+  const handleHide = async (option: QuickHideOption, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setHideOpen(false);
+    try {
+      await addPreference(option.type, option.value);
+      toast(t('pref.hideMsg'), 'success');
+    } catch {
+      toast(t('pref.hideFailed'), 'error');
     }
   };
 
@@ -68,55 +125,90 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCa
               onChange={() => onToggleSelect?.(paper.id)}
               onClick={(e) => e.stopPropagation()}
               className="mt-1.5 w-4 h-4 accent-primary-600 cursor-pointer shrink-0"
-              aria-label="选择这篇论文"
+              aria-label={t('paper.selectThis')}
             />
           )}
           <Link href={`/paper/${paper.id}`}>
-            <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer line-clamp-2">
-              {paper.title}
-            </h3>
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <h3 className={`flex-1 min-w-0 text-base sm:text-lg font-semibold cursor-pointer line-clamp-2 ${
+                read
+                  ? 'text-gray-400 dark:text-gray-500 hover:text-gray-400 dark:hover:text-gray-500'
+                  : 'text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400'
+              }`}>
+                {paper.title}
+              </h3>
+              {read && (
+                <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 mt-1 rounded text-[10px] font-medium bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-300">
+                  {t('paper.read')}
+                </span>
+              )}
+            </div>
           </Link>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* AI 分析快捷入口（P1-8）：列表页直接触发，完成后跳详情 */}
+          {/* AI 分析快捷入口：打开全局单例悬浮窗展示 AI 分析报告 */}
           <button
-            onClick={handleQuickAnalyze}
-            className={`flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors ${
-              aiStatus === 'done'
-                ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
-                : aiStatus === 'error'
-                  ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'
-                  : 'bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50'
-            }`}
-            title={aiStatus === 'done' ? '查看分析结果' : 'AI 分析这篇论文'}
+            onClick={handleOpenAi}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded border bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+            title={t('paper.aiAnalyzeTitle')}
           >
-            {aiStatus === 'loading' ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : aiStatus === 'done' ? (
-              <Check className="w-3.5 h-3.5" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5" />
-            )}
-            <span className="hidden sm:inline">
-              {aiStatus === 'loading' ? '分析中…' : aiStatus === 'done' ? '已分析' : aiStatus === 'error' ? '失败重试' : 'AI 分析'}
-            </span>
+            <Sparkles className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{t('paper.aiAnalyze')}</span>
           </button>
           <button
-            onClick={(e) => {
-              e.preventDefault();
-              toggleBookmarkState(paper.id).catch(() => {});
-            }}
+            onClick={handleToggleBookmark}
             className="text-gray-400 dark:text-gray-500 hover:text-yellow-500 transition-colors p-1"
-            title={bookmarked ? '取消收藏' : '收藏'}
+            title={bookmarked ? t('paper.unbookmark') : t('paper.bookmark')}
           >
             <Bookmark
               className={`w-4 h-4 sm:w-5 sm:h-5 ${bookmarked ? 'fill-yellow-500 text-yellow-500' : ''}`}
             />
           </button>
+          <button
+            onClick={handleTogglePin}
+            className={`transition-colors p-1 ${pinned ? 'text-indigo-500 hover:text-indigo-600' : 'text-gray-400 dark:text-gray-500 hover:text-indigo-500'}`}
+            title={pinned ? t('paper.unpin') : t('paper.pin')}
+          >
+            <Pin
+              className={`w-4 h-4 sm:w-5 sm:h-5 ${pinned ? 'fill-indigo-500 text-indigo-500' : ''}`}
+            />
+          </button>
+          {quickHideOptions.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setHideOpen((v) => !v);
+                }}
+                className="transition-colors p-1 text-gray-400 dark:text-gray-500 hover:text-red-500"
+                title={t('pref.title')}
+              >
+                <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+              {hideOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setHideOpen(false); }} />
+                  <div className="absolute right-0 z-50 mt-1 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1">
+                    <p className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">{t('pref.title')}</p>
+                    {quickHideOptions.map((o) => (
+                      <button
+                        key={`${o.type}:${o.value}`}
+                        onClick={(e) => handleHide(o, e)}
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 truncate"
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <div className="hidden sm:flex items-center gap-1">
-            {isHighScore && (
-              <span className="flex items-center gap-1 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-2 py-1 rounded">
-                <Award className="w-3 h-3" />
+            {pinned && (
+              <span className="flex items-center gap-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300 text-xs font-medium px-2 py-1 rounded">
+                <Pin className="w-3 h-3" />
                 {t('paper.top')}
               </span>
             )}
@@ -132,9 +224,9 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCa
 
       {/* Mobile badges */}
       <div className="flex sm:hidden items-center gap-1.5 mb-2">
-        {isHighScore && (
-          <span className="flex items-center gap-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 text-xs font-medium px-1.5 py-0.5 rounded">
-            <Award className="w-3 h-3" />
+        {pinned && (
+          <span className="flex items-center gap-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300 text-xs font-medium px-1.5 py-0.5 rounded">
+            <Pin className="w-3 h-3" />
             {t('paper.top')}
           </span>
         )}
@@ -154,7 +246,7 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCa
 
       {paper.authors && paper.authors.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 mb-2 sm:mb-3">
-          <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">作者:</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500 mr-1">{t('paper.authorsLabel')}</span>
           {paper.authors.slice(0, 3).map((author, index) => (
             <button
               key={index}
@@ -169,7 +261,7 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect }: PaperCa
             </button>
           ))}
           {paper.authors.length > 3 && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">等{paper.authors.length}人</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">{t('paper.etAl', { n: paper.authors.length })}</span>
           )}
         </div>
       )}

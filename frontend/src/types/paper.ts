@@ -173,6 +173,44 @@ export interface SystemStats {
   };
 }
 
+// —— 数据健康中心（P3）：向量/趋势/相关性三块状态 ——
+export interface DataHealth {
+  embedding: {
+    embedded: number;
+    total: number;
+    missing: number;
+  };
+  trend: {
+    topics: number;
+    records: number;
+    latest_week_start: string | null;
+    latest_updated_at: string | null;
+  };
+  similarity: {
+    pairs: number;
+    covered_papers: number;
+    latest_computed_at: string | null;
+    running: boolean;
+  };
+}
+
+// —— CNKI 关键词检索爬取 ——
+export interface CNKISearchRequest {
+  keyword: string;
+  search_field?: string;
+  years?: string;
+  max_pages?: number;
+  detail_workers?: number;
+}
+
+export interface CNKISearchInfo {
+  running: boolean;
+  keyword: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  message: string | null;
+}
+
 export interface NetworkNode {
   id: string;
   name: string;
@@ -235,6 +273,7 @@ export interface SettingsInfo {
   custom_providers?: CustomProviderStatus[];
   default_model?: string | null;
   embedding_model?: string | null;
+  cnki_url_prefix?: string;
 }
 
 export interface ModelLinkTestResult {

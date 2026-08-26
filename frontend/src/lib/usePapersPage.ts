@@ -8,7 +8,7 @@
  * 渲染层（Filters / SearchBar 等差异 UI）留在各自页面。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { papersApi } from '@/lib/api';
+import { papersApi, personalApi } from '@/lib/api';
 import { PaperCard as PaperCardType, PaperCardListResponse } from '@/types/paper';
 import { getCache, setCache, buildCacheKey } from '@/lib/cache';
 
@@ -21,6 +21,8 @@ interface UsePapersPageOptions {
   enabled?: boolean;
   /** 首页加载后预取的后续页数（首屏翻页体验优化，默认 0 不预取） */
   prefetch?: number;
+  /** 参与缓存键计算、但不上送后端的扰动值（如"不感兴趣"屏蔽版本号），变化即绕过旧缓存重取 */
+  cacheBust?: unknown;
 }
 
 export function usePapersPage({
@@ -28,6 +30,7 @@ export function usePapersPage({
   deps,
   enabled = true,
   prefetch = 0,
+  cacheBust,
 }: UsePapersPageOptions) {
   const [papers, setPapers] = useState<PaperCardType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +40,20 @@ export function usePapersPage({
   const [pageSize, setPageSize] = useState(20);
   const [queryKey, setQueryKey] = useState(0);
   const prefetchedRef = useRef(false);
+
+  // 当前用户的已读论文 id 集合（一次性加载，{@link PaperCard} 据此渲染「已读」标记）。
+  // 加载失败静默降级为空集，不影响分页列表主流程。
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    personalApi.getReadIds()
+      .then((res) => {
+        if (!cancelled) setReadIds(new Set(res.paper_ids || []));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // buildParams 走 ref：筛选变化只触发 deps effect 重置分页，
   // 不把函数引用引入 fetchPage 依赖链，避免双请求竞态
@@ -53,14 +70,16 @@ export function usePapersPage({
 
   const fetchPage = useCallback(async (p: number) => {
     const params = buildParamsRef.current(p, pageSize);
-    const cacheKey = buildCacheKey(params as Record<string, unknown>);
+    const cacheKey = cacheBust === undefined
+      ? buildCacheKey(params as Record<string, unknown>)
+      : `${String(cacheBust)}|${buildCacheKey(params as Record<string, unknown>)}`;
     let response = getCache<PaperCardListResponse>(cacheKey);
     if (!response) {
       response = await papersApi.getPapers(params);
       setCache(cacheKey, response);
     }
     return response;
-  }, [pageSize]);
+  }, [pageSize, cacheBust]);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,5 +136,6 @@ export function usePapersPage({
   return {
     papers, loading, total, totalPages,
     page, pageSize, handlePageChange, handlePageSizeChange,
+    readIds,
   };
 }

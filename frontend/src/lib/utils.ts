@@ -47,12 +47,66 @@ export function downloadTextFile(filename: string, content: string, mime = 'text
   URL.revokeObjectURL(url);
 }
 
-/** 导出 Word：以 HTML 包裹后按 .doc 下载（无需额外依赖，Word/WPS 可直接打开）。 */
-export function downloadAsWord(filename: string, title: string, markdownContent: string) {
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head>
-<body><h1>${title}</h1>${markdownContent
-    .split(/\n{2,}/)
-    .map((p) => (p.startsWith('#') ? `<h2>${p.replace(/^#+\s*/, '')}</h2>` : `<p>${p.replace(/\n/g, '<br/>')}</p>`))
-    .join('\n')}</body></html>`;
-  downloadTextFile(filename, html, 'application/msword');
+/** 导出 Word：动态加载 docx 库生成真正的 .docx 文件（仅在该函数被调用时按需加载，不增大首屏）。 */
+export async function downloadAsWord(filename: string, title: string, markdownContent: string) {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = await import('docx');
+
+  // docx 经动态 import 引入，Paragraph 是值而非类型名，用 InstanceType 取其实例类型
+  const paragraphs: InstanceType<typeof Paragraph>[] = [];
+
+  // 文档首段：标题加粗、居中
+  if (title.trim()) {
+    paragraphs.push(
+      new Paragraph({
+        heading: HeadingLevel.TITLE,
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: title, bold: true })],
+      }),
+    );
+  }
+
+  const lines = markdownContent.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+
+    if (trimmed === '') {
+      paragraphs.push(new Paragraph({ spacing: { before: 160, after: 160 } }));
+      continue;
+    }
+
+    // 标题行：为某个层级 如 # / ## / ###
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2];
+      const heading = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+      paragraphs.push(new Paragraph({ heading, children: [new TextRun(text)] }));
+      continue;
+    }
+
+    // 无序列表
+    if (/^[-*]\s+/.test(trimmed)) {
+      paragraphs.push(new Paragraph({ children: [new TextRun(`• ${trimmed.replace(/^[-*]\s+/, '')}`)] }));
+      continue;
+    }
+
+    // 其它正文
+    paragraphs.push(new Paragraph({ children: [new TextRun(line)] }));
+  }
+
+  const doc = new Document({ sections: [{ children: paragraphs }] });
+  const blob = await Packer.toBlob(doc);
+
+  const baseName = filename.endsWith('.docx')
+    ? filename
+    : `${filename.replace(/\.(doc|docx)$/i, '')}.docx`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = baseName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

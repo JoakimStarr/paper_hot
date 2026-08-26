@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
-import { FileText, TrendingUp, Home, Settings, Share2, Search, Wifi, WifiOff, Sun, Moon, X, Menu, Compass, LayoutDashboard } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { FileText, TrendingUp, Home, Settings, Share2, WifiOff, Sun, Moon, Menu, Compass, LayoutDashboard, History } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { papersApi, SearchSuggestion } from '@/lib/api';
-import { initBookmarks } from '@/lib/cache';
-import LanguageSwitcher from './LanguageSwitcher';
+import { initBookmarks, initPins } from '@/lib/cache';
+import ToastProvider from '@/components/Toast';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -15,11 +14,12 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const { t } = useLanguage();
   const { isDark, toggleDark } = useTheme();
-  const router = useRouter();
   const pathname = usePathname();
   const [backendOnline, setBackendOnline] = useState(true);
+  // 手动重试计数：离线警告条点「重试」时 +1，触发健康探测重跑
+  const [healthRetry, setHealthRetry] = useState(0);
 
-  // 当前页导航高亮
+  // 桌面端导航高亮
   const navLinkClass = (path: string) => {
     const active = path === '/' ? pathname === '/' : pathname.startsWith(path);
     return `flex items-center gap-1.5 transition-colors text-sm ${
@@ -28,28 +28,20 @@ export default function Layout({ children }: LayoutProps) {
         : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400'
     }`;
   };
+  // 移动端菜单高亮：加大点按区域并带背景色标出当前页
+  const mobileLinkClass = (path: string) => {
+    const active = path === '/' ? pathname === '/' : pathname.startsWith(path);
+    return `flex items-center gap-3 px-3 py-2.5 text-sm rounded-md transition-colors ${
+      active
+        ? 'text-primary-600 dark:text-primary-400 font-medium bg-primary-50 dark:text-primary-300 dark:bg-gray-700/40'
+        : 'text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+    }`;
+  };
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
 
-  const [showSearch, setShowSearch] = useState(false);
-  const [navQuery, setNavQuery] = useState('');
-  const [navSuggestions, setNavSuggestions] = useState<SearchSuggestion[]>([]);
-  const [showNavSuggestions, setShowNavSuggestions] = useState(false);
-  const navSearchRef = useRef<HTMLDivElement>(null);
-  const navInputRef = useRef<HTMLInputElement>(null);
-  const navDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (showSearch && navInputRef.current) {
-      navInputRef.current.focus();
-    }
-  }, [showSearch]);
-
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (navSearchRef.current && !navSearchRef.current.contains(e.target as Node)) {
-        setShowNavSuggestions(false);
-      }
       if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
         setMobileMenuOpen(false);
       }
@@ -58,54 +50,37 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleNavSearch = useCallback((q?: string) => {
-    const trimmed = (q || navQuery).trim();
-    if (!trimmed) return;
-    setShowNavSuggestions(false);
-    setNavQuery('');
-    setShowSearch(false);
-    router.push(`/search?search=${encodeURIComponent(trimmed)}&search_field=keyword`);
-  }, [navQuery, router]);
-
-  const handleNavInputChange = useCallback((value: string) => {
-    setNavQuery(value);
-    if (navDebounceRef.current) clearTimeout(navDebounceRef.current);
-    if (value.trim().length < 1) {
-      setNavSuggestions([]);
-      setShowNavSuggestions(false);
-      return;
-    }
-    navDebounceRef.current = setTimeout(async () => {
-      try {
-        const result = await papersApi.getSearchSuggestions(value.trim());
-        setNavSuggestions(result.suggestions);
-        setShowNavSuggestions(result.suggestions.length > 0);
-      } catch {
-        setNavSuggestions([]);
-      }
-    }, 300);
-  }, []);
-
   useEffect(() => {
-    // 启动即拉取服务端收藏（P1-10），并迁移旧 localStorage 数据
+    // 启动即拉取服务端收藏（P1-10）与手动置顶（P2），并迁移旧 localStorage 数据
     initBookmarks().catch(() => {});
+    initPins().catch(() => {});
+
+    let cancelled = false;
     const checkBackend = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
         const baseUrl = apiUrl.replace(/\/api$/, '');
         const res = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(5000) });
-        setBackendOnline(res.ok);
+        if (!cancelled) setBackendOnline(res.ok);
       } catch {
-        setBackendOnline(false);
+        if (!cancelled) setBackendOnline(false);
       }
     };
     checkBackend();
-    const interval = setInterval(checkBackend, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    // 60s 低频探测：仅在离线时展示警告条，正常时不打扰
+    const interval = setInterval(checkBackend, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [healthRetry]);
+
+  // 手动重试：离线警告条点击后立即重新探测
+  const retryHealth = () => setHealthRetry(healthRetry + 1);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+    <ToastProvider>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
       <header className="sticky top-0 z-40 bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -116,70 +91,19 @@ export default function Layout({ children }: LayoutProps) {
             
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center gap-3">
-              <Link href="/dashboard" className={navLinkClass('/dashboard')}>
-                <LayoutDashboard className="w-4 h-4" />
-                <span>工作台</span>
-              </Link>
               <Link href="/" className={navLinkClass('/')}>
                 <Home className="w-4 h-4" />
                 <span>{t('nav.home')}</span>
               </Link>
+              <Link href="/dashboard" className={navLinkClass('/dashboard')}>
+                <LayoutDashboard className="w-4 h-4" />
+                <span>{t('nav.dashboard')}</span>
+              </Link>
 
-              {showSearch ? (
-                <div ref={navSearchRef} className="relative">
-                  <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-full px-3 py-1.5 gap-1.5">
-                    <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    <input
-                      ref={navInputRef}
-                      type="text"
-                      value={navQuery}
-                      onChange={(e) => handleNavInputChange(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') handleNavSearch(); if (e.key === 'Escape') { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); } }}
-                      onFocus={() => { if (navSuggestions.length > 0) setShowNavSuggestions(true); }}
-                      placeholder={t('common.search')}
-                      className="bg-transparent text-sm outline-none w-28 sm:w-40 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
-                    />
-                    <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} aria-label={t('common.closeSearch')} className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
-                      <X className="w-3 h-3 text-gray-400" />
-                    </button>
-                  </div>
-                  {showNavSuggestions && navSuggestions.length > 0 && (
-                    <div className="absolute right-0 top-full mt-1 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
-                      {navSuggestions.slice(0, 5).map((s, i) => (
-                        <button
-                          key={`${s.type}-${s.text}-${i}`}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setShowNavSuggestions(false);
-                            setNavQuery('');
-                            setShowSearch(false);
-                            const field = s.type === 'author' ? 'author' : s.type === 'title' ? 'title' : 'keyword';
-                            router.push(`/search?search=${encodeURIComponent(s.text)}&search_field=${field}`);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-gray-700 dark:text-gray-300"
-                        >
-                          <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
-                            s.type === 'keyword' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
-                              : s.type === 'author' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
-                              : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400'
-                          }`}>
-                            {s.type === 'keyword' ? t('common.keyword') : s.type === 'author' ? t('common.author') : t('common.titleType')}
-                          </span>
-                          <span className="truncate flex-1">{s.text}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowSearch(true)}
-                  className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors text-sm"
-                >
-                  <Search className="w-4 h-4" />
-                  <span>{t('common.search')}</span>
-                </button>
-              )}
+              <Link href="/reading" className={navLinkClass('/reading')}>
+                <History className="w-4 h-4" />
+                <span>{t('nav.reading')}</span>
+              </Link>
 
               <Link href="/trends" className={navLinkClass('/trends')}>
                 <TrendingUp className="w-4 h-4" />
@@ -197,7 +121,6 @@ export default function Layout({ children }: LayoutProps) {
                 <Settings className="w-4 h-4" />
                 <span>{t('nav.system')}</span>
               </Link>
-              <LanguageSwitcher />
               <button
                 onClick={toggleDark}
                 className="p-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-300"
@@ -205,21 +128,10 @@ export default function Layout({ children }: LayoutProps) {
               >
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-              <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full transition-colors duration-300 ${backendOnline ? 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/30' : 'text-red-500 bg-red-50 dark:text-red-400 dark:bg-red-900/30'}`}>
-                {backendOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                <span>{backendOnline ? t('common.online') : t('common.offline')}</span>
-              </div>
             </nav>
 
             {/* Mobile Navigation */}
             <div className="flex md:hidden items-center gap-2">
-              <button
-                onClick={() => setShowSearch(true)}
-                aria-label={t('common.search')}
-                className="p-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
-              >
-                <Search className="w-5 h-5" />
-              </button>
               <button
                 onClick={toggleDark}
                 aria-label={isDark ? t('common.toggleLight') : t('common.toggleDark')}
@@ -241,28 +153,36 @@ export default function Layout({ children }: LayoutProps) {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div ref={mobileMenuRef} className="md:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-            <nav className="px-4 py-3 space-y-2">
-              <Link
-                href="/dashboard"
-                onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-              >
-                <LayoutDashboard className="w-5 h-5" />
-                <span>工作台</span>
-              </Link>
+          <div ref={mobileMenuRef} className="pp-menu-in md:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+            <nav className="px-3 py-3 space-y-1">
               <Link
                 href="/"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className={mobileLinkClass('/')}
               >
                 <Home className="w-5 h-5" />
                 <span>{t('nav.home')}</span>
               </Link>
               <Link
+                href="/dashboard"
+                onClick={() => setMobileMenuOpen(false)}
+                className={mobileLinkClass('/dashboard')}
+              >
+                <LayoutDashboard className="w-5 h-5" />
+                <span>{t('nav.dashboard')}</span>
+              </Link>
+              <Link
+                href="/reading"
+                onClick={() => setMobileMenuOpen(false)}
+                className={mobileLinkClass('/reading')}
+              >
+                <History className="w-5 h-5" />
+                <span>{t('nav.reading')}</span>
+              </Link>
+              <Link
                 href="/trends"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className={mobileLinkClass('/trends')}
               >
                 <TrendingUp className="w-5 h-5" />
                 <span>{t('nav.trends')}</span>
@@ -270,7 +190,7 @@ export default function Layout({ children }: LayoutProps) {
               <Link
                 href="/topics"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className={mobileLinkClass('/topics')}
               >
                 <Compass className="w-5 h-5" />
                 <span>{t('nav.topics')}</span>
@@ -278,7 +198,7 @@ export default function Layout({ children }: LayoutProps) {
               <Link
                 href="/network"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className={mobileLinkClass('/network')}
               >
                 <Share2 className="w-5 h-5" />
                 <span>{t('nav.network')}</span>
@@ -286,74 +206,41 @@ export default function Layout({ children }: LayoutProps) {
               <Link
                 href="/system"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-3 py-2 text-gray-600 dark:text-gray-300 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+                className={mobileLinkClass('/system')}
               >
                 <Settings className="w-5 h-5" />
                 <span>{t('nav.system')}</span>
               </Link>
-              <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
-                <div className="flex items-center justify-between px-3 py-2">
-                  <LanguageSwitcher />
-                  <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${backendOnline ? 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/30' : 'text-red-500 bg-red-50 dark:text-red-400 dark:bg-red-900/30'}`}>
-                    {backendOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-                    <span>{backendOnline ? t('common.online') : t('common.offline')}</span>
-                  </div>
-                </div>
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 px-3">
+                {/* 在线状态已移除：仅在后端离线时于页面顶部展示警告条 */}
               </div>
             </nav>
+            <style jsx>{`
+              @keyframes ppMenuIn {
+                from { opacity: 0; transform: translateY(-6px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              .pp-menu-in { animation: ppMenuIn .18s ease; }
+            `}</style>
           </div>
         )}
+        </header>
 
-        {/* Mobile Search Overlay */}
-        {showSearch && (
-          <div className="md:hidden fixed inset-0 bg-black/50 z-50" onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }}>
-            <div ref={navSearchRef} className="absolute top-16 left-0 right-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg px-3 py-2 gap-2">
-                <Search className="w-5 h-5 text-gray-400 shrink-0" />
-                <input
-                  ref={navInputRef}
-                  type="text"
-                  value={navQuery}
-                  onChange={(e) => handleNavInputChange(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleNavSearch(); if (e.key === 'Escape') { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); } }}
-                  onFocus={() => { if (navSuggestions.length > 0) setShowNavSuggestions(true); }}
-                  placeholder={t('common.search')}
-                  className="bg-transparent text-base outline-none flex-1 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
-                />
-                <button onClick={() => { setShowSearch(false); setNavQuery(''); setNavSuggestions([]); }} aria-label={t('common.closeSearch')} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors">
-                  <X className="w-5 h-5 text-gray-400" />
-                </button>
-              </div>
-              {showNavSuggestions && navSuggestions.length > 0 && (
-                <div className="mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                  {navSuggestions.slice(0, 8).map((s, i) => (
-                    <button
-                      key={`${s.type}-${s.text}-${i}`}
-                      onClick={() => {
-                        setShowNavSuggestions(false);
-                        setNavQuery('');
-                        setShowSearch(false);
-                        const field = s.type === 'author' ? 'author' : s.type === 'title' ? 'title' : 'keyword';
-                        router.push(`/search?search=${encodeURIComponent(s.text)}&search_field=${field}`);
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700 last:border-0"
-                    >
-                      <span className={`shrink-0 px-2 py-1 rounded text-xs font-medium ${
-                        s.type === 'keyword' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
-                          : s.type === 'author' ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
-                          : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400'
-                      }`}>
-                        {s.type === 'keyword' ? t('common.keyword') : s.type === 'author' ? t('common.author') : t('common.titleType')}
-                      </span>
-                      <span className="truncate flex-1">{s.text}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+      {/* 后端离线警告条：正常时不显示，只有在健康探测失败时出现 */}
+      {!backendOnline && (
+        <div className="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+            <WifiOff className="w-4 h-4 shrink-0" />
+            <span className="flex-1">{t('common.backendOffline')}</span>
+            <button
+              onClick={retryHealth}
+              className="text-xs font-medium underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 transition-colors"
+            >
+              {t('common.retry')}
+            </button>
           </div>
-        )}
-      </header>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
@@ -367,6 +254,7 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+    </ToastProvider>
   );
 }

@@ -1,6 +1,7 @@
 """爬虫、调度器、相似度重算与数据维护接口。"""
 import asyncio
 import logging
+import sys
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.database import get_db, AsyncSessionLocal
-from app.config import settings
+from app.config import settings, BASE_DIR
 from app.crud import PaperCRUD, CrawlLogCRUD, PaperSimilarityCRUD
 from app.schemas import CrawlLogResponse, CrawlLogListResponse
 from app.models import PaperSimilarity
@@ -103,6 +104,96 @@ async def start_cnki_navi_crawl(token: bool = Depends(verify_token)):
     except Exception as e:
         logger.error(f"Failed to start CNKI navi crawl: {e}")
         raise HTTPException(status_code=500, detail=f"Internal error ({type(e).__name__})")
+
+
+class CNKISearchRequest(BaseModel):
+    """知网关键词检索爬取入参（对应 cnki_paper_captcha.py --search 检索模式）。"""
+    keyword: str
+    search_field: str = "主题"      # 主题/篇名/关键词/作者
+    years: Optional[str] = None     # 年份区间，如 2024-2026
+    max_pages: Optional[int] = None  # 最大翻页数，默认翻到最后一页
+    detail_workers: int = 3          # 详情页并发抓取数
+
+
+# 关键词爬取任务状态（内存态；进程重启后归零。结果见 crawl_logs 与脚本 stdout 尾部）
+_cnki_search_state = {
+    "running": False,
+    "keyword": None,
+    "started_at": None,
+    "finished_at": None,
+    "message": None,
+}
+
+
+async def _run_cnki_search_background(keyword: str, search_field: str, years: Optional[str],
+                                      max_pages: Optional[int], detail_workers: int):
+    """以后端子进程方式复用 cnki_paper_captcha.py --search 检索模式抓取并入库。
+
+    该脚本内置通过 app.crud 写入 paperpulse.db 并记录 CrawlLog（详见其 main / run_search），
+    这里只负责用当前 venv 的 python 拉起子进程，等待其结束后记录简要结果。
+    """
+    import asyncio
+    _cnki_search_state["running"] = True
+    _cnki_search_state["keyword"] = keyword
+    _cnki_search_state["started_at"] = datetime.now(timezone.utc).isoformat()
+    _cnki_search_state["finished_at"] = None
+    _cnki_search_state["message"] = "启动中…"
+
+    script = BASE_DIR.parent / "cnki_paper_captcha.py"
+    cmd = [
+        sys.executable, str(script), "--search", keyword,
+        "--search-field", search_field, "--detail-workers", str(max(1, detail_workers)),
+    ]
+    if years:
+        cmd += ["--years", years]
+    if max_pages:
+        cmd += ["--max-pages", str(max(int(max_pages), 1))]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(BASE_DIR.parent),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output, _ = await proc.communicate()
+        tail = (output.decode("utf-8", errors="replace") or "").strip()
+        tail = tail[-600:] if tail else ""
+        if proc.returncode == 0:
+            _cnki_search_state["message"] = f"已完成。{tail}" if tail else "已完成。"
+        else:
+            _cnki_search_state["message"] = f"脚本退出码 {proc.returncode}。尾部输出：{tail}" if tail else f"脚本退出码 {proc.returncode}。"
+    except Exception as e:
+        logger.error(f"CNKI keyword search subprocess failed: {e}")
+        _cnki_search_state["message"] = f"启动失败：{e}"
+    finally:
+        _cnki_search_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _cnki_search_state["running"] = False
+
+
+@router.post("/crawl/cnki/search/start")
+async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verify_token)):
+    """按关键词触发知网检索爬取并入库（复用 cnki_paper_captcha.py --search，浏览器窗口模式可人工处理验证码）。"""
+    keyword = (body.keyword or "").strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="keyword is required")
+    if _cnki_search_state["running"]:
+        return {"status": "already_running", "keyword": _cnki_search_state["keyword"]}
+    from app.main import spawn_background_task
+    spawn_background_task(_run_cnki_search_background(
+        keyword=keyword,
+        search_field=(body.search_field or "主题").strip() or "主题",
+        years=body.years,
+        max_pages=body.max_pages,
+        detail_workers=body.detail_workers,
+    ))
+    return {"status": "started", "keyword": keyword}
+
+
+@router.get("/crawl/cnki/search/status")
+async def cnki_search_status(token: bool = Depends(verify_token)):
+    """关键词爬取任务状态（运行中 / 最近结果）。"""
+    return dict(_cnki_search_state)
 
 
 @router.get("/crawl/status", response_model=CrawlLogListResponse)

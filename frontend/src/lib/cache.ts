@@ -176,3 +176,173 @@ export async function toggleBookmark(paperId: string): Promise<boolean> {
     throw e;
   }
 }
+
+// —— 手动置顶（P2 置顶改造）：服务端为事实源，内存 Set 同步快照 ——
+// 语义与收藏一致，但只有"用户主动置顶"（无分数/趋势自动徽章）。
+const pinListeners = new Set<() => void>();
+let pinsCache: Set<string> = new Set();
+let pinsHydrated = false;
+let pinsVersion = 0;
+
+function notifyPins() {
+  pinsVersion++;
+  pinListeners.forEach((cb) => cb());
+}
+
+export function subscribePins(cb: () => void): () => void {
+  pinListeners.add(cb);
+  return () => pinListeners.delete(cb);
+}
+
+export function getPinsVersion(): number {
+  return pinsVersion;
+}
+
+/** 应用启动时调用一次：拉取服务端手动置顶论文 id。 */
+export async function initPins(): Promise<void> {
+  if (pinsHydrated) return;
+  pinsHydrated = true;
+  const { personalApi } = await import('./api');
+  try {
+    const res = await personalApi.getPins();
+    pinsCache = new Set(res.paper_ids || []);
+  } catch {
+    pinsCache = new Set();
+  }
+  notifyPins();
+}
+
+export function getPins(): string[] {
+  return Array.from(pinsCache);
+}
+
+export function isPinned(paperId: string): boolean {
+  return pinsCache.has(paperId);
+}
+
+/** 切换手动置顶的返回结果：pinned 为最终状态；limited 表示已达置顶上限被拒绝。 */
+export interface PinToggleResult {
+  pinned: boolean;
+  limited: boolean;
+}
+
+/** 切换手动置顶（服务端为事实源），返回切换后的状态与是否触顶。 */
+export async function togglePin(paperId: string): Promise<PinToggleResult> {
+  const { personalApi } = await import('./api');
+  const optimistic = !pinsCache.has(paperId);
+  if (optimistic) pinsCache.add(paperId);
+  else pinsCache.delete(paperId);
+  notifyPins();
+  try {
+    const res = await personalApi.togglePin(paperId);
+    if (res.pinned) pinsCache.add(paperId);
+    else pinsCache.delete(paperId);
+    notifyPins();
+    return { pinned: res.pinned, limited: false };
+  } catch (e) {
+    // 已达置顶上限：服务端拒绝（detail 恒为 MAX_PINNED_PAPERS），回滚并返回触顶态
+    if (e instanceof Error && e.message === 'MAX_PINNED_PAPERS') {
+      pinsCache.delete(paperId);
+      notifyPins();
+      return { pinned: false, limited: true };
+    }
+    // 其他失败回滚
+    if (optimistic) pinsCache.delete(paperId);
+    else pinsCache.add(paperId);
+    notifyPins();
+    throw e;
+  }
+}
+
+// —— "不感兴趣"屏蔽（P2）：服务端为事实源，内存快照同步 ——
+// 命中任一屏蔽项（领域/期刊/关键词/作者）的论文会被后端在列表层干掉，
+// 这里只缓存屏蔽项集合，供管理工作台渲染 + 卡片级状态判断 + 列表刷新信号。
+export interface HiddenPreferenceItem {
+  entity_type: 'subfield' | 'journal' | 'keyword' | 'author';
+  entity_value: string;
+}
+
+const prefListeners = new Set<() => void>();
+let prefCache: HiddenPreferenceItem[] = [];
+let prefHydrated = false;
+let prefVersion = 0;
+
+function notifyPreferences() {
+  prefVersion++;
+  prefListeners.forEach((cb) => cb());
+}
+
+export function subscribePreferences(cb: () => void): () => void {
+  prefListeners.add(cb);
+  return () => prefListeners.delete(cb);
+}
+
+export function getPreferencesVersion(): number {
+  return prefVersion;
+}
+
+/** 应用启动时调用一次：拉取服务端"不感兴趣"屏蔽项。 */
+export async function initPreferences(): Promise<void> {
+  if (prefHydrated) return;
+  prefHydrated = true;
+  const { personalApi } = await import('./api');
+  try {
+    const res = await personalApi.getPreferences();
+    prefCache = (res.items || []).filter(
+      (i): i is HiddenPreferenceItem => !!i && ['subfield', 'journal', 'keyword', 'author'].includes(i.entity_type),
+    );
+  } catch {
+    prefCache = [];
+  }
+  notifyPreferences();
+}
+
+export function getPreferences(): HiddenPreferenceItem[] {
+  return prefCache;
+}
+
+export function isPreferenceHidden(entity_type: string, entity_value: string): boolean {
+  return prefCache.some((p) => p.entity_type === entity_type && p.entity_value === entity_value);
+}
+
+/** 新增一条屏蔽项（乐观添加，失败回滚）。 */
+export async function addPreference(entity_type: string, entity_value: string): Promise<void> {
+  const { personalApi } = await import('./api');
+  const existingIndex = prefCache.findIndex(
+    (p) => p.entity_type === entity_type && p.entity_value === entity_value,
+  );
+  if (existingIndex < 0) {
+    prefCache = [...prefCache, { entity_type, entity_value } as HiddenPreferenceItem];
+    notifyPreferences();
+  }
+  try {
+    await personalApi.addPreference(entity_type, entity_value);
+  } catch (e) {
+    if (existingIndex < 0) {
+      prefCache = prefCache.filter(
+        (p) => !(p.entity_type === entity_type && p.entity_value === entity_value),
+      );
+      notifyPreferences();
+    }
+    throw e;
+  }
+}
+
+/** 删除一条屏蔽项（乐观删除，失败回滚）。 */
+export async function removePreference(entity_type: string, entity_value: string): Promise<void> {
+  const { personalApi } = await import('./api');
+  const existed = prefCache.some((p) => p.entity_type === entity_type && p.entity_value === entity_value);
+  if (existed) {
+    prefCache = prefCache.filter((p) => !(p.entity_type === entity_type && p.entity_value === entity_value));
+    notifyPreferences();
+  }
+  try {
+    await personalApi.removePreference(entity_type, entity_value);
+  } catch (e) {
+    if (existed) {
+      prefCache = [...prefCache, { entity_type, entity_value } as HiddenPreferenceItem];
+      notifyPreferences();
+    }
+    throw e;
+  }
+}

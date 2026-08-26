@@ -12,6 +12,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _aggregate_research_map(keyword: str, papers) -> tuple[dict, dict, dict]:
+    """对一个关键词命中的论文列表做聚合统计（#14 可测纯函数）。
+
+    返回 (cooccur, yearly, journals)：
+    - cooccur: dict[其他关键词] -> 共现次数（排除自身与含该词子串的宽泛词）
+    - yearly:  dict[年份(YYYY)] -> 论文数
+    - journals:dict[期刊名] -> 论文数
+    papers 为带 keywords_cn / published_at / journal_name / venue 属性的对象（ORM 或 mock）。
+    """
+    cooccur: dict = {}
+    yearly: dict = {}
+    journals: dict = {}
+    for p in papers:
+        for other in p.keywords_cn or []:
+            other = (other or "").strip()
+            # 排除自身关键词及包含该词子串的宽泛词（如查询"经济"时剔除"经济研究"）
+            if other and other != keyword and keyword not in other:
+                cooccur[other] = cooccur.get(other, 0) + 1
+        if p.published_at:
+            year = str(p.published_at)[:4]
+            yearly[year] = yearly.get(year, 0) + 1
+        j = p.journal_name or p.venue
+        if j:
+            journals[j] = journals.get(j, 0) + 1
+    return cooccur, yearly, journals
+
+
 @router.get("/network/authors")
 async def get_author_network(
     limit: int = Query(50, ge=1, le=200),
@@ -103,36 +130,30 @@ async def get_keyword_research_map(
 
     返回：共现词（含计数）、年度趋势、代表论文（综合评分 top）、期刊分布。
     """
-    from sqlalchemy import select as sa_select, desc as sa_desc
+    from sqlalchemy import select as sa_select, desc as sa_desc, or_ as sa_or, String as SAString
     from app.models import Paper as PaperModel, PaperScore
 
     kw = keyword.strip()
+    # P0 遗留#9（性能）：不再全表拉进 Python 过滤，改为数据库侧 OR LIKE 先筛该关键词
+    # 命中的论文（keywords_cn 为 JSON 文本，子串 LIKE 足够；标题 LIKE 兜底），取 top 500 候选。
+    cond = sa_or(
+        PaperModel.keywords_cn.cast(SAString).ilike(f"%{kw}%"),
+        PaperModel.title.ilike(f"%{kw}%"),
+    )
     result = await db.execute(
         sa_select(PaperModel)
-        .where(PaperModel.keywords_cn.isnot(None))
+        .where(cond)
         .order_by(PaperModel.published_at.desc())
-        .limit(4000)
+        .limit(500)
     )
     papers = []
     for p in result.scalars():
         kws = p.keywords_cn or []
+        # Python 侧精确复检，避免关键词子串误报（如 "经济" 命中 "经济研究"）
         if any(kw in (k or "") for k in kws) or kw in (p.title or ""):
             papers.append(p)
 
-    cooccur: dict = {}
-    yearly: dict = {}
-    journals: dict = {}
-    for p in papers:
-        for other in p.keywords_cn or []:
-            other = (other or "").strip()
-            if other and other != kw and kw not in other:
-                cooccur[other] = cooccur.get(other, 0) + 1
-        if p.published_at:
-            year = str(p.published_at)[:4]
-            yearly[year] = yearly.get(year, 0) + 1
-        j = p.journal_name or p.venue
-        if j:
-            journals[j] = journals.get(j, 0) + 1
+    cooccur, yearly, journals = _aggregate_research_map(kw, papers)
 
     # 代表论文：有评分按评分排，否则按时间倒序
     try:

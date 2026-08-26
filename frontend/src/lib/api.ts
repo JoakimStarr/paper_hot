@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -27,7 +27,7 @@ function buildHeaders(): Record<string, string> {
 
 async function request<T>(
   url: string,
-  options?: { method?: string; params?: Record<string, unknown>; body?: unknown },
+  options?: { method?: string; params?: Record<string, unknown>; body?: unknown; signal?: AbortSignal },
 ): Promise<T> {
   const method = options?.method || 'GET';
   const headers = buildHeaders();
@@ -51,6 +51,7 @@ async function request<T>(
         method,
         headers,
         body: options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+        signal: options?.signal,
       });
     } catch (e: any) {
       // 网络层失败（代理/后端不可达），幂等请求重试，AbortError 不重试
@@ -196,6 +197,26 @@ export const papersApi = {
   getSystemStats: async (): Promise<SystemStats> =>
     request('/stats'),
 
+  // —— 数据健康中心（P3）：向量/趋势/相关性三块状态聚合 ——
+  getDataHealth: async (): Promise<DataHealth> =>
+    request('/data-health'),
+
+  // 一键刷新趋势（复用既有接口）
+  triggerTrendUpdate: async (): Promise<{ status: string; message?: string }> =>
+    request('/update-trend-scores', { method: 'POST' }),
+
+  // 相似度全量重算 + 状态（复用既有接口）
+  triggerRecomputeSimilarities: async (): Promise<{ status: string; message?: string }> =>
+    request('/recompute-all-similarities', { method: 'POST' }),
+  getSimilaritiesStatus: async (): Promise<{ running: boolean; last_pairs?: number; last_error?: string | null }> =>
+    request('/recompute-all-similarities'),
+
+  // —— CNKI 关键词检索爬取（复用 cnki_paper_captcha.py --search，子进程触发）——
+  startCNKISearchCrawl: async (opts: CNKISearchRequest): Promise<{ status: string; keyword: string }> =>
+    request('/crawl/cnki/search/start', { method: 'POST', body: opts }),
+  getCNKISearchStatus: async (): Promise<CNKISearchInfo> =>
+    request('/crawl/cnki/search/status'),
+
   getAuthorNetwork: async (limit: number = 50): Promise<NetworkData> =>
     request('/network/authors', { params: { limit } }),
 
@@ -214,8 +235,8 @@ export const papersApi = {
   startCNKNaviCrawl: async (): Promise<{ status: string; message: string }> =>
     request('/crawl/cnki/navi/start', { method: 'POST', body: {} }),
 
-  analyzePaper: async (paperId: string, model?: string): Promise<{ analysis: string | null; status: string; model?: string }> =>
-    request(`/papers/${paperId}/analyze`, { method: 'POST', body: model ? { model } : {} }),
+  analyzePaper: async (paperId: string, model?: string, signal?: AbortSignal): Promise<{ analysis: string | null; status: string; model?: string }> =>
+    request(`/papers/${paperId}/analyze`, { method: 'POST', body: model ? { model } : {}, signal }),
 
   getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> =>
     request(`/papers/${paperId}/analyses/latest`),
@@ -244,11 +265,14 @@ export const papersApi = {
   getSettings: async (): Promise<SettingsInfo> =>
     request('/settings'),
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}> }): Promise<{ success: boolean }> =>
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}>; cnki_url_prefix?: string | null }): Promise<{ success: boolean }> =>
     request('/settings', { method: 'PUT', body: data }),
 
   testModelLink: async (model: string): Promise<ModelLinkTestResult> =>
     request('/settings/test-model', { method: 'POST', body: { model } }),
+
+  fetchProviderModels: async (body: { name?: string; base_url?: string; api_key?: string }): Promise<{ models?: string[]; message?: string }> =>
+    request('/settings/fetch-models', { method: 'POST', body }),
 
   getSchedulerJobs: async (): Promise<SchedulerJob[]> =>
     request('/scheduler/jobs'),
@@ -268,8 +292,12 @@ export const papersApi = {
   getBackfillStatus: async (): Promise<{ tasks: Record<string, { status: string; stats?: Record<string, number> }> }> =>
     request('/maintenance/backfill-abstracts'),
 
-  batchAnalyzePapers: async (paperIds: string[], model?: string): Promise<{ summary: string; model?: string; paper_count: number }> =>
+  // #7 异步化：批量分析先拿 batch_id，再轮询 getBatchAnalyze 拿结果
+  startBatchAnalyze: async (paperIds: string[], model?: string): Promise<{ batch_id: number; status: string; paper_count: number }> =>
     request('/papers/batch-analyze', { method: 'POST', body: { paper_ids: paperIds, ...(model ? { model } : {}) } }),
+
+  getBatchAnalyze: async (batchId: number): Promise<{ batch_id: number; status: string; content?: string; paper_count?: number; model?: string; error_message?: string }> =>
+    request(`/papers/batch-analyze/${batchId}`),
 };
 
 // —— 个人化（P1-10）：收藏 / 阅读历史 / 关注子领域 ——
@@ -283,11 +311,28 @@ export const personalApi = {
   toggleFavorite: async (paperId: string): Promise<{ bookmarked: boolean }> =>
     request('/personal/favorites/toggle', { method: 'POST', body: { paper_id: paperId } }),
 
+  getPins: async (): Promise<{ paper_ids: string[] }> =>
+    request('/personal/pins'),
+
+  togglePin: async (paperId: string): Promise<{ pinned: boolean }> =>
+    request('/personal/pins/toggle', { method: 'POST', body: { paper_id: paperId } }),
+
+  // —— "不感兴趣"屏蔽（P2）：领域/期刊/关键词/作者 ——
+  getPreferences: async (): Promise<{ items: Array<{ entity_type: string; entity_value: string }> }> =>
+    request('/personal/preferences'),
+  addPreference: async (entity_type: string, entity_value: string): Promise<{ added: boolean }> =>
+    request('/personal/preferences', { method: 'POST', body: { entity_type, entity_value } }),
+  removePreference: async (entity_type: string, entity_value: string): Promise<{ removed: boolean }> =>
+    request('/personal/preferences', { method: 'DELETE', params: { entity_type, entity_value } }),
+
   recordReading: async (paperId: string): Promise<{ recorded: boolean }> =>
     request('/personal/reading', { method: 'POST', body: { paper_id: paperId } }),
 
   getReadingHistory: async (): Promise<{ papers: PaperCard[]; total: number }> =>
     request('/personal/reading-history'),
+
+  getReadIds: async (): Promise<{ paper_ids: string[] }> =>
+    request('/personal/read-ids'),
 
   getSubfields: async (): Promise<{ subfields: string[] }> =>
     request('/personal/subfields'),

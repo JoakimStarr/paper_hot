@@ -20,6 +20,102 @@ from app.fetchers import EconomicsJournalFetcher, retry_on_failure
 
 logger = logging.getLogger(__name__)
 
+# ddddocr 用于滑块验证码自动识别（#12 遗留项）。爬虫依赖为可选：
+# 未安装时自动降级为人工处理，不影响服务端轻量化运行。
+try:
+    import ddddocr as _dddocr
+    _CAPTCHA_OCR_SLIDER = _dddocr.DdddOcr(det=False, ocr=False, show_ad=False)
+except Exception:  # ddddocr 未安装 / 初始化失败
+    _dddocr = None
+    _CAPTCHA_OCR_SLIDER = None
+
+
+def _try_auto_solve_captcha(tab, timeout: int = 60) -> bool:
+    """尽力自动解决滑块验证码（#12）。
+
+    仅在 ddddocr 可用且能探测到滑块/背景图时尝试；任何一步失败都返回 False，
+    由 handle_captcha 降级为等待人工处理。不会抛出异常阻断主流程。
+    """
+    if _CAPTCHA_OCR_SLIDER is None:
+        return False
+
+    # 常见的滑块验证码元素选择器（知网验证码 iframe 内）
+    slider_selectors = [
+        'img[src*="slider"]',
+        'img[src*="jigsaw"]',
+        '[class*="slider"] img',
+        '.verify-slider img',
+        '.slider-img',
+        '.geetest_slider',
+        '[class*="jigsaw"] img',
+    ]
+    bg_selectors = [
+        'img[src*="bg"]',
+        'img[src*="background"]',
+        '[class*="background"] img',
+        '.verify-bg img',
+        '.bg-img',
+        '.geetest_canvas_bg',
+        '[class*="canvas"] img',
+    ]
+
+    started = time.time()
+    while time.time() - started < timeout:
+        slider = None
+        bg = None
+        for sel in slider_selectors:
+            try:
+                slider = tab.ele(sel, timeout=0.5)
+                if slider:
+                    break
+            except Exception:
+                continue
+        if slider is None:
+            time.sleep(2)
+            continue
+        for sel in bg_selectors:
+            try:
+                bg = tab.ele(sel, timeout=0.5)
+                if bg:
+                    break
+            except Exception:
+                continue
+        if bg is None:
+            time.sleep(2)
+            continue
+
+        try:
+            target_bytes = slider.get_screenshot(as_bytes=True)
+            bg_bytes = bg.get_screenshot(as_bytes=True)
+            if not target_bytes or not bg_bytes:
+                time.sleep(2)
+                continue
+
+            result = _CAPTCHA_OCR_SLIDER.slide_match(
+                target_bytes, bg_bytes, simple_target=True
+            )
+            if not result or "target" not in result:
+                time.sleep(2)
+                continue
+            distance = float(result["target"][0])
+
+            # 用 DrissionPage Actions 模拟人类拖动滑块
+            from DrissionPage.common import Actions
+            ac = Actions(tab)
+            ac.hold(slider).move(distance, 0, duration=0.5).release()
+            time.sleep(3)
+
+            # 验证是否通过：验证码元素已消失
+            still = any(tab.ele(sel, timeout=0.5) for sel in slider_selectors)
+            if not still:
+                logger.info("滑块验证码自动解决成功")
+                return True
+        except Exception as e:
+            logger.debug(f"Auto captcha solve attempt failed: {e}")
+
+        time.sleep(2)
+    return False
+
 
 # 经济学TOP50期刊配置
 CNKI_TOP50_JOURNALS = {
@@ -198,10 +294,14 @@ class DrissionPageBase:
             return False
     
     def handle_captcha(self, timeout: int = 300):
-        """处理验证码 - 提示用户手动完成"""
+        """处理验证码（#12）：优先尝试 ddddocr 自动解决滑块，失败则提示人工完成"""
         if not self.check_captcha():
             return True
-        
+
+        # 优先机器人自动解决（仅 ddddocr 可用且能探测到滑块时生效）
+        if _try_auto_solve_captcha(self.tab):
+            return True
+
         logger.warning("=" * 60)
         logger.warning("检测到验证码！请手动完成验证")
         logger.warning(f"请在浏览器中完成验证码，超时时间: {timeout}秒")

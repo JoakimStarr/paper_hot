@@ -40,6 +40,9 @@ async def lifespan(app: FastAPI):
     await _cleanup_zombie_reports()
     await _cleanup_stale_crawl_logs()
 
+    # P0 遗留#2/#3：无论定时器是否开启，启动即刷新趋势数据 + 补齐存量 embedding
+    spawn_background_task(scheduler.run_startup_maintenance())
+
     if settings.scheduler_enabled:
         scheduler.start()
         # 初始抓取放后台执行，避免阻塞服务启动（外部网络慢时接口迟迟不可用）
@@ -59,10 +62,13 @@ async def lifespan(app: FastAPI):
 
 
 async def _cleanup_zombie_reports():
-    """清理超过10分钟仍在running状态的僵尸分析报告（直接删除）"""
+    """清理超时僵尸报告：
+    - ai_analysis_reports / batch_reports 超过10分钟仍 running -> 直接删除/标记失败
+    （服务重启会遗留 running 记录，否则前端轮询永远转圈）
+    """
     from sqlalchemy import text as sa_text
     from app.database import AsyncSessionLocal
-    
+
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -77,6 +83,24 @@ async def _cleanup_zombie_reports():
                 logger.info(f"Deleted {result.rowcount} zombie analysis reports")
     except Exception as e:
         logger.warning(f"Failed to cleanup zombie reports: {e}")
+
+    # P0/#7：批量分析报告僵尸化处理（后端重启后遗留的 running 记录标记为 failed）
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                sa_text("""
+                    UPDATE batch_reports
+                    SET status = 'failed',
+                        error_message = '服务重启，任务中断，请重试'
+                    WHERE status = 'running'
+                    AND created_at < datetime('now', '-10 minutes')
+                """)
+            )
+            if result.rowcount > 0:
+                await db.commit()
+                logger.info(f"Marked {result.rowcount} zombie batch report(s) as failed")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup zombie batch reports: {e}")
 
 
 async def _cleanup_stale_crawl_logs():

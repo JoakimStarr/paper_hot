@@ -147,31 +147,23 @@ status_services() {
     fi
 }
 
-# ───────────────────────── 生产模式 ─────────────────────────
-start_production() {
-    echo -e "🚀 Starting PaperPulse (${GREEN}Production${NC} Mode)..."
-    echo ""
-
-    stop_stale_instance
-    load_ports
-    resolve_ports prod
-    echo "   Ports: backend=${BACKEND_PORT}, frontend=${FRONTEND_PORT}"
-
-    # 启动后端服务
+# ───────────────────────── 启动服务（统一实现） ─────────────────────────
+# prod 与 dev 仅前端行为不同（构建产物复用 vs 清空重建+HMR），后端启动逻辑完全一致。
+# 注意：WSL 下 uvicorn --reload 的 spawn 子进程存在 loopback SYN 不应答问题，
+# 故 dev 模式也用无 reload 启动；改后端代码后需 restart。
+start_backend() {
     echo "📦 Starting backend server..."
     cd "$PROJECT_DIR/backend"
     require_venv
-    source "$VENV_DIR/bin/activate"
     setsid nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" > backend.log 2>&1 &
     BACKEND_PID=$!
     echo "backend_pid=${BACKEND_PID}" >> "$RUNTIME_PORTS_FILE"
     echo "   Backend started (PID: $BACKEND_PID)"
+}
 
-    # 等后端健康后再启前端：避免前端先就绪、浏览器打开即吃到代理 500（socket hang up）
-    wait_for_http "http://localhost:${BACKEND_PORT}/health" "Backend" "backend/backend.log" 30 || true
-
-    # 构建前端（生产模式）：已存在生产构建产物时跳过，可用 FORCE_BUILD=1 强制重建。
-    # 端口不再在构建期内联：前端经 next rewrites 在运行时代理到后端实际地址，因此后端端口变化无需重建。
+start_frontend_prod() {
+    # 生产构建产物已存在时跳过（FORCE_BUILD=1 强制重建）；端口不在构建期内联，
+    # 前端经 next rewrites 运行时代理到后端实际地址
     cd "$PROJECT_DIR/frontend"
     if [ -d .next/standalone ] && [ -f .next/BUILD_ID ] && [ -z "${FORCE_BUILD:-}" ]; then
         echo "   Skip build (existing .next found, set FORCE_BUILD=1 to rebuild)"
@@ -179,59 +171,51 @@ start_production() {
         echo "🔨 Building frontend (production)..."
         npm run build
     fi
-
-    # 启动前端（生产模式）
     echo ""
     echo "📱 Starting frontend server (production)..."
     setsid nohup npm run start -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
-    FRONTEND_PID=$!
-    echo "frontend_pid=${FRONTEND_PID}" >> "$RUNTIME_PORTS_FILE"
-    echo "   Frontend started (PID: $FRONTEND_PID)"
-
-    print_urls "Production"
-    health_check
 }
 
-# ───────────────────────── 开发模式 ─────────────────────────
-start_dev() {
-    echo -e "🚀 Starting PaperPulse (${YELLOW}Development${NC} Mode)..."
-    echo -e "${YELLOW}⚠️  DEV MODE: Hot reload enabled, not for production use${NC}"
+start_frontend_dev() {
+    # dev 与生产共用 .next；依赖或导入结构变更后，旧产物会导致浏览器端
+    # 「Loading CSS chunk ... failed」等问题，启动前一律清空重建
+    cd "$PROJECT_DIR/frontend"
+    rm -rf .next
     echo ""
+    echo "📱 Starting frontend server (dev with HMR)..."
+    setsid nohup npm run dev -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
+    echo "   Hot Module Replacement enabled"
+}
+
+start_services() {
+    local mode="${1:-prod}"
+    local label="Production" color="$GREEN"
+    if [ "$mode" = "dev" ]; then
+        label="Development"; color="$YELLOW"
+    fi
+    echo -e "🚀 Starting PaperPulse (${color}${label}${NC} Mode)..."
 
     stop_stale_instance
     load_ports
-    resolve_ports dev
+    resolve_ports "$mode"
     echo "   Ports: backend=${BACKEND_PORT}, frontend=${FRONTEND_PORT}"
 
-    # 启动后端服务
-    # 注意：WSL 环境下 uvicorn --reload 的 spawn 子进程存在 loopback SYN 不应答问题
-    # （端口在监听但 TCP 握手挂起），故 dev 模式也用无 reload 启动；改后端代码后需 restart
-    echo "📦 Starting backend server (dev, no reload)..."
-    cd "$PROJECT_DIR/backend"
-    require_venv
-    source "$VENV_DIR/bin/activate"
-    setsid nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" > backend.log 2>&1 &
-    BACKEND_PID=$!
-    echo "backend_pid=${BACKEND_PID}" >> "$RUNTIME_PORTS_FILE"
-    echo "   Backend started (PID: $BACKEND_PID) without hot reload"
+    start_backend
 
     # 等后端健康后再启前端：避免前端先就绪、浏览器打开即吃到代理 500（socket hang up）
     wait_for_http "http://localhost:${BACKEND_PORT}/health" "Backend" "backend/backend.log" 30 || true
 
-    # 启动前端（开发模式）
-    echo ""
-    echo "📱 Starting frontend server (dev with HMR)..."
-    cd "$PROJECT_DIR/frontend"
-    # dev 与生产共用 .next；依赖或导入结构变更后，旧产物会导致浏览器端
-    # 「Loading CSS chunk ... failed」等问题，启动前一律清空重建
-    rm -rf .next
-    setsid nohup npm run dev -- -H 0.0.0.0 -p "$FRONTEND_PORT" > frontend.log 2>&1 &
+    if [ "$mode" = "dev" ]; then
+        start_frontend_dev
+        echo -e "${YELLOW}⚠️  DEV MODE: Hot reload enabled, not for production use${NC}"
+    else
+        start_frontend_prod
+    fi
     FRONTEND_PID=$!
     echo "frontend_pid=${FRONTEND_PID}" >> "$RUNTIME_PORTS_FILE"
     echo "   Frontend started (PID: $FRONTEND_PID)"
-    echo "   Hot Module Replacement enabled"
 
-    print_urls "DEV"
+    print_urls "$label"
     health_check
 }
 
@@ -247,9 +231,9 @@ restart_services() {
     stop_services
     echo ""
     if [ "$target" = "dev" ]; then
-        start_dev
+        start_services dev
     else
-        start_production
+        start_services prod
     fi
 }
 
@@ -448,10 +432,10 @@ COMMAND="${1:-start}"
 
 case "$COMMAND" in
     start)
-        start_production
+        start_services prod
         ;;
     dev)
-        start_dev
+        start_services dev
         ;;
     stop)
         stop_services

@@ -12,6 +12,7 @@ import { Loader2, Search, X, Sparkles, FileDown } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
+import { usePreferences } from '@/lib/usePreferences';
 import { papersApi, producerApi } from '@/lib/api';
 import type { PaperCard as PaperCardType } from '@/types/paper';
 import { downloadTextFile } from '@/lib/utils';
@@ -44,16 +45,29 @@ function HomePageInner() {
   const [sortOrder, setSortOrder] = useState('desc');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // 「不感兴趣」屏蔽版本号：新增/删除屏蔽项时列表需重取（后端已在列表层过滤）
+  const { version: prefVersion } = usePreferences();
+
   // —— 批量操作（P1-8 / P2-11）：多选 -> AI 综述摘要 / 引用导出 ——
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState<'review' | 'cite' | null>(null);
   const [batchSummary, setBatchSummary] = useState<string | null>(null);
+  // #7 异步化：批量分析轮询句柄
+  const batchPollRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const batchPollCount = React.useRef(0);
 
   useEffect(() => {
     const journal = searchParams.get('journal');
     if (journal) setSelectedJournal([journal]);
   }, [searchParams]);
+
+  // #7：卸载时清理批量分析轮询定时器
+  useEffect(() => {
+    return () => {
+      if (batchPollRef.current) clearTimeout(batchPollRef.current);
+    };
+  }, []);
 
   const toggleSelect = useCallback((paperId: string) => {
     setSelectedIds((prev) => {
@@ -78,10 +92,11 @@ function HomePageInner() {
   // 数据流收敛在 lib/usePapersPage.ts（与搜索页共用），首页额外启用 3 页预取
   const {
     papers, loading, total, totalPages,
-    page, pageSize, handlePageChange, handlePageSizeChange,
+    page, pageSize, handlePageChange, handlePageSizeChange, readIds,
   } = usePapersPage({
     buildParams,
-    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal],
+    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, prefVersion],
+    cacheBust: prefVersion,
     prefetch: 3,
   });
 
@@ -99,12 +114,38 @@ function HomePageInner() {
   const handleBatchReview = async () => {
     if (selectedIds.size === 0 || batchBusy) return;
     setBatchBusy('review');
+    setBatchSummary(null);
+    batchPollCount.current = 0;
     try {
-      const res = await papersApi.batchAnalyzePapers(Array.from(selectedIds).slice(0, 10));
-      setBatchSummary(res.summary);
+      // #7 异步化：先提交拿 batch_id，后台生成，前端轮询（前密后疏）拿结果
+      const { batch_id } = await papersApi.startBatchAnalyze(Array.from(selectedIds).slice(0, 10));
+      const pollNext = () => {
+        if (batchPollRef.current) clearTimeout(batchPollRef.current);
+        const interval = [1500, 2000, 3000, 5000][Math.min(batchPollCount.current, 3)];
+        batchPollRef.current = setTimeout(async () => {
+          batchPollCount.current += 1;
+          try {
+            const res = await papersApi.getBatchAnalyze(batch_id);
+            if (res.status === 'success') {
+              setBatchSummary(res.content ?? '');
+              setBatchBusy(null);
+            } else if (res.status === 'failed') {
+              alert(`批量分析失败：${res.error_message || '未知错误'}`);
+              setBatchBusy(null);
+            } else if (batchPollCount.current > 60) {
+              alert('批量分析等待超时，请重试');
+              setBatchBusy(null);
+            } else {
+              pollNext();
+            }
+          } catch {
+            pollNext(); // 网络抖动继续轮询
+          }
+        }, interval);
+      };
+      pollNext();
     } catch (e) {
       alert(`批量分析失败：${e instanceof Error ? e.message : '未知错误'}`);
-    } finally {
       setBatchBusy(null);
     }
   };
@@ -231,6 +272,7 @@ function HomePageInner() {
               <PaperCard
                 key={paper.id}
                 paper={paper}
+                read={readIds.has(paper.id)}
                 selectable={selectionMode}
                 selected={selectedIds.has(paper.id)}
                 onToggleSelect={toggleSelect}

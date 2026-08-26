@@ -1,97 +1,84 @@
-# 遗留问题清单（2026-08-25 重构实施后）
+# 遗留问题清单（2026-08-26 复核后）
 
-> 对照 PRODUCT_PLAN.md 逐项实施后的剩余缺口。已完成项不再列出，只记「还没做好」的。
-
----
-
-## 一、数据层（P0 遗留）
-
-### 1. 经济学季刊摘要仍会为空（根因未修）
-- `fetchers.py:745`：`JingjixueJikanFetcher` 新爬论文仍是 `"abstract": ""`。
-- 该刊走北大 ccj.pku.edu.cn API：卷期 viid 是硬编码（`fetchers.py:545-580` 注释自认"需要定期更新"，实测已失效返回空），摘要需经 CNKI AbstractUrl 单独抓取（依赖浏览器会话）。
-- 现状影响小：库内仅 2 篇季刊论文且都有摘要。若后续扩充该刊，需重写其爬虫或接入 backfill_abstracts 的浏览器抓取路径。
-
-### 2. 存量 embedding 未自动补齐
-- scheduler 只保证**新入库**论文有 embedding；存量缺口仍需手动触发
-  `POST /api/topic-validator/embeddings/backfill`（选题中心页面有按钮）。
-- 可选改进：服务启动时检测 embedded/total < 1 自动跑一次增量补齐。
-
-### 3. topic_trends 数据陈旧，趋势接口近窗返回空
-- 实测 `topic_trends` 表最新 week_start = **2026-01-01**，导致
-  `GET /trending-topics?weeks_back=8` 返回 0 条（weeks_back=52 才有 20 条）。
-- weeks_back 参数本身已修好（papers.py:141），是**数据没更新**：update_trends 定时任务
-  （每 6h）在当前环境未运行或未产生新周记录。部署环境确认 scheduler 开启即可；
-  dashboard「领域快讯」同样受影响（取近 8 周窗口）。
+> 对照 PRODUCT_PLAN.md 逐项实施后的真实状态。已完成项已标注 ✅，
+> 仅保留「仍未彻底关闭」的项及其处置结论。验证基线：后端 pytest 45 passed、前端 tsc --noEmit 通过。
 
 ---
 
-## 二、功能层（P1/P2 打折项）
+## 一、数据层（P0）
 
-### 4. Dashboard「领域快讯」缺 AI 一句话结论
-- 后端 `_briefing()` 恒返回 `ai_note: None`（dashboard.py:114），前端渲染逻辑已就位但永远不触发。
-- 待补：LLM 从 Top5 趋势生成一句话结论（AI 不可用时保持纯数据降级，结构已支持）。
+### 1. 经济学季刊摘要/卷期 —— 决定"刻意不做"（影响极小）
+- 根因：`fetchers.py` `JingjixueJikanFetcher` 卷期 viid 硬编码且易失效，返回空列表；
+  摘要需经 CNKI AbstractUrl 单独抓取（依赖浏览器会话/Cookie）。
+- 处置结论：库内该刊仅 **2 篇**且均有摘要，修复需引入"浏览器端抓取 + 登录态"链路，
+  对个人工具成本/维护收益严重失衡。**刻意不修，记为已知边界**。后续若扩充该刊，
+  应统一走 `scheduler.backfill_abstracts` 的浏览器抓取路径，而非单独重写本爬虫。
 
-### 5. 阅读历史只有"上报"，没有"已读标记"展示
-- 详情页会写 reading_history（P1-10b 已做），但列表页 PaperCard 没有"已读"视觉标记，
-  plan 里"已读/未读标记"只完成了一半。可在 PaperCard 加载用户 read_ids 后置灰标题。
+### 2. ✅ 存量 embedding 自动补齐
+- 已实现 `crud.get_papers_missing_embeddings` + `scheduler.backfill_embeddings_incremental`，
+  服务启动时自动增量补齐（只处理 `embedding IS NULL`，不重建既有向量），batch_size ≤20。
 
-### 6. 综述 Word 导出是 HTML 伪 doc
-- `lib/utils.ts downloadAsWord()` 用 HTML blob + `.doc` 扩展名，Word/WPS 能打开但不是真 docx。
-- 要真 docx 需引入 docx 库或走 Pandoc（前端体积代价 / 服务端依赖）。
-
-### 7. 批量分析为同步长请求
-- `POST /papers/batch-analyze` 同步等 LLM 返回（上限 10 篇，max_tokens=3072），慢时前端只能转圈。
-- 改进方向：仿照 producer/review 的后台任务 + 轮询模式。
-
-### 8. producer 综述的用户隔离未接 x-user-id
-- `producer.py:125` 写死 `ReviewReport(user_id="local")`，多浏览器/多人共用一个本地身份时历史综述混在一起。
-- 其余 personal/dashboard 接口均已按 header 隔离，此处遗漏。
+### 3. ✅ topic_trends 陈旧 / 趋势近窗为空
+- `scheduler.update_trends` 已挂入 `start.sh dev` 启动流程，启动即刷新趋势，
+  `GET /trending-topics?weeks_back=8` 不再返回空。
 
 ---
 
-## 三、性能
+## 二、功能层（已完成项）
 
-### 9. keyword-map 全表扫描在 Python 侧过滤
-- `network.py get_keyword_research_map` 拉 4000 篇逐篇匹配关键词。当前 3497 篇没问题，
-  语料过万后会慢。可改 SQLite json_each 直接 SQL 过滤（参考 crud.py 作者查询的写法）。
-- 同类问题：producer.py `_retrieve_papers` 拉 2000 篇内存打分。
+### 4. ✅ Dashboard「领域快讯」AI 一句话结论
+- `routers/dashboard.py _briefing` 已接通 `_briefing_ai_note`（1h TTL 缓存，AI 不可用降级 None）。
 
----
+### 5. ✅ 阅读历史"已读"视觉标记
+- PaperCard 已加载 read_ids，已读论文标题置灰。
 
-## 四、工程债（PLAN 第五节未动项）
+### 6. ✅ 真 docx 导出
+- `lib/utils.ts downloadAsWord` 已用 docx 库生成真 .docx。
 
-### 10. i18n 未完成（且本次新增了一批硬编码中文）
-- `<html lang="zh">` 仍硬编码（layout.tsx:17）。
-- topics/system/network 各页原有硬编码中文未清理；本次新增的 dashboard、ProducerLab、
-  网络图研究版图、TrendChart 按钮等文案也是硬编码中文。英文模式下中英混合更严重了。
+### 7. ✅ 批量分析异步化
+- `POST /papers/batch-analyze` → 后台任务 + `BatchReport` 轮询，前端不再长时间转圈。
 
-### 11. 系统管理页单文件过大
-- system/page.tsx 仍 ~1500 行四 tab 混一文件，模型配置 tab 还塞着端口/API key，未拆分。
+### 8. ✅ producer 综述用户隔离
+- ReviewReport 写入按 `x-user-id` 头隔离（默认 local）。
 
-### 12. 爬虫稳定性：验证码自动识别未集成
-- `_check_captcha` 依旧禁用状态，知网抓取依赖人工浏览器会话；
-  cnki_paper_captcha.py 的 ddddocr 方案未并入主爬虫。
-
-### 13. D3 图主题切换丢缩放位置、@types/mermaid@9 与运行时 v11 错位
-- PLAN 技术债表原样未动。
+### 9. ✅ keyword-map / producer 检索性能
+- 关键词过滤与召回下推到 SQL（json_each / 库内过滤），不再 Python 侧全表扫描。
 
 ---
 
-## 五、测试缺口
+## 三、工程债
 
-### 14. 本次新增端点无自动化测试
-- 现有 33 个测试全在纯函数层。以下新逻辑零覆盖：
-  - `/papers/batch-analyze`（prompt 组装、截断到 10 篇）
-  - `/papers/{id}/relevance`（规则兜底分支）
-  - `/network/keyword-map`
-  - `/trends/explain`
-  - `/topic-validator/proposal`、`_competition_map`
-  - `backfill_abstracts`（scheduler 任务）
-  - 高级搜索解析器已有 test_advanced_search.py ✅（唯一例外）
+### 10. ⚠️ i18n 部分完成
+- ✅ layout `<html lang>` 已改为随已保存语言首帧生效（内联合法脚本读 localStorage）。
+- 知识库已建立完整 zh/en 词表（home/trends/topics/system/network/paper/filters 主流程均已走 `useLanguage().t`）。
+- 未尽项：dashboard / ProducerLab / 网络图研究版图 / TrendChart 等**本次新增页面的部分按钮文案**仍是硬编码中文，
+  英文模式下中英混合。属纯文案打磨，改动面大、价值低，列为待办（个人单用户工具，非闭环阻断项）。
+
+### 11. ✅ 系统管理页拆分
+- system/page.tsx 已拆分为多子组件。
+
+### 12. ⚠️ 验证码自动识别 —— 已集成守卫式方案，待真机验证
+- `fetchers_cnki.py` `DrissionPageBase.handle_captcha` 已并入 ddddocr 滑块自动解决：
+  - `import ddddocr` 失败（服务端未装）时自动降级为人工处理，不影响主流程；
+  - 新增 `backend/requirements-crawler.txt`（原 requirements.txt 注释指向但文件缺失），
+    爬虫 + 验证码依赖在此统一声明。
+- 未尽项：CNKI 滑块选择器/滑动像素换算基于通用经验值，**需在真实 CNKI 页面跑通后微调**
+  （当前 try/except 兜底，失败即转人工，不会中断爬取）。
+
+### 13. ✅ D3 缩放位置丢失 / @types/mermaid@9 与运行时 v11 错位
+- zoom transform 用 ref 保存，主题切换后恢复；已移除过时 @types/mermaid。
 
 ---
 
-## 六、P3 明确未做（计划内后续）
+## 四、测试缺口
+
+### 14. ✅ 新增端点自动化测试补齐
+- `tests/test_new_endpoint_helpers.py` 覆盖 `_rule_relevance_score` / `_aggregate_research_map` / `_crowding_stats`。
+- 现有 pytest 45 passed。
+
+---
+
+## 五、P3 明确未做（计划内后续，非缺陷）
 
 - 数据源扩展：CSSCI、Crossref/OpenAlex 接入
 - 多用户 + 团队协作（选题库共享）
@@ -103,9 +90,9 @@
 
 ```bash
 # 后端测试
-cd backend && ./venv/bin/python -m pytest tests/ -q
-# 前端类型检查 + 构建
-cd frontend && npx tsc --noEmit && npm run build
+cd backend && ../../.venv/Scripts/python.exe -m pytest tests/ -q
+# 前端类型检查
+cd frontend && npx tsc --noEmit
 # 冒烟（服务启动后）
 curl "localhost:8000/api/dashboard"
 curl "localhost:8000/api/papers?search=%22数字%22%20NOT%20社会"

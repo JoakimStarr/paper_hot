@@ -6,6 +6,7 @@
 - 我的研究栈：收藏、最近分析、最近验证的选题
 """
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -19,14 +20,61 @@ from app.models import (
     Paper, PaperScore, Favorite, ReadingHistory, TopicProject,
     AIAnalysisReport, PaperAnalysis, FollowedSubfield, TopicTrend,
 )
-from app.routers.deps import verify_token, _paper_to_card
+from app.crud import _hidden_paper_condition
+from app.routers.personal import _load_hidden_preferences
+from app.routers.deps import (
+    verify_token, _paper_to_card,
+    _get_ai_client, _resolve_model_provider, _get_default_model,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 领域快讯 AI 一句话结论：LLM 每次 Dashboard 都调太贵，做 1 小时缓存 + 降级兜底
+_briefing_ai_cache: dict = {"ts": None, "note": None}
+_BRIEFING_AI_TTL = timedelta(hours=1)
+
 
 def _uid(x_user_id: Optional[str]) -> str:
     return (x_user_id or "").strip() or "local"
+
+
+async def _briefing_ai_note(topics: List[str]) -> Optional[str]:
+    """用 LLM 给 Top 热点生成一句话领域结论；AI 不可用时返回 None（纯数据降级）。"""
+    if not topics:
+        return None
+    now = datetime.now()
+    cached = _briefing_ai_cache
+    if cached["note"] and cached["ts"] and (now - cached["ts"]) < _BRIEFING_AI_TTL:
+        return cached["note"]
+    try:
+        provider, bare_model = _resolve_model_provider(None)
+        client, provider = _get_ai_client(provider)
+        if not bare_model:
+            bare_model = _get_default_model(provider)
+        prompt = (
+            "近期经管研究的热点依次为：" + "、".join(topics[:5])
+            + "。请用一句中文（40 字以内）概括这一波研究动向，并点出最值得切入的空白。"
+        )
+        resp = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=bare_model,
+            messages=[
+                {"role": "system", "content": "你是经管研究选题顾问，回答精炼，只说一句话结论。"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=100,
+            temperature=0.5,
+        )
+        note = (resp.choices[0].message.content or "").strip() or None
+        cached["ts"] = now
+        cached["note"] = note
+        return note
+    except Exception as e:
+        logger.warning(f"dashboard ai_note generation failed: {e}")
+        cached["ts"] = now
+        cached["note"] = None
+        return None
 
 
 @router.get("/dashboard")
@@ -44,23 +92,32 @@ async def get_dashboard(
     )
     followed_subfields = [r[0] for r in followed.all()]
 
+    # ---- "不感兴趣"屏蔽（P2）：工作台推荐同样全局过滤，命中任一屏蔽项的论文不出现 ----
+    hidden: dict = {}
+    try:
+        hidden = await _load_hidden_preferences(db, uid)
+    except Exception:
+        hidden = {}
+
     return {
-        "today_read": await _today_read(db, followed_subfields),
+        "today_read": await _today_read(db, followed_subfields, hidden),
         "briefing": await _briefing(db),
         "mine": await _mine(db, uid, has_followed=bool(followed_subfields)),
     }
 
 
-async def _today_read(db: AsyncSession, followed_subfields: List[str]) -> List[dict]:
-    """今日值得读：综合评分 top 6；关注了子领域则优先保证覆盖关注方向。"""
+async def _today_read(db: AsyncSession, followed_subfields: List[str], hidden: Optional[dict] = None) -> List[dict]:
+    """今日值得读：综合评分 top 6；关注了子领域则优先保证覆盖关注方向；全部过滤"不感兴趣"项。"""
     papers: List[Paper] = []
+    hidden_cond = _hidden_paper_condition(hidden or {})
 
     if followed_subfields:
+        where = [Paper.economics_subfield.in_(followed_subfields)] + ([hidden_cond] if hidden_cond is not None else [])
         result = await db.execute(
             sa_select(Paper)
             .options(selectinload(Paper.features), selectinload(Paper.scores))
             .join(PaperScore, PaperScore.paper_id == Paper.id)
-            .where(Paper.economics_subfield.in_(followed_subfields))
+            .where(*where)
             .order_by(sa_desc(PaperScore.final_score))
             .limit(4)
         )
@@ -68,10 +125,15 @@ async def _today_read(db: AsyncSession, followed_subfields: List[str]) -> List[d
 
     remaining = 6 - len(papers)
     if remaining > 0:
-        result = await db.execute(
+        query = (
             sa_select(Paper)
             .options(selectinload(Paper.features), selectinload(Paper.scores))
             .join(PaperScore, PaperScore.paper_id == Paper.id)
+        )
+        if hidden_cond is not None:
+            query = query.where(hidden_cond)
+        result = await db.execute(
+            query
             .order_by(sa_desc(PaperScore.final_score))
             .limit(remaining + 20)
         )
@@ -111,7 +173,9 @@ async def _briefing(db: AsyncSession) -> dict:
             "growth_rate": trend.growth_rate,
             "trend": trend_status,
         })
-    return {"topics": topics, "ai_note": None}
+    # P0 遗留#4：调用 LLM 生成一句话领域结论（带 1h 缓存，AI 不可用时降级为 None）
+    ai_note = await _briefing_ai_note([t["topic"] for t in topics])
+    return {"topics": topics, "ai_note": ai_note}
 
 
 async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:

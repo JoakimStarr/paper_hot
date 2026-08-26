@@ -253,6 +253,50 @@ class Favorite(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class PinnedPaper(Base):
+    """手动置顶（P2 置顶改造）：用户主动置顶的论文在列表中始终排最前。
+
+    P1-10 之前"置顶"是 by 分数的自动徽章（语义误导）；本项目改为真正的
+    用户手动置顶：本表只存用户主动置顶的 paper_id，排序时置顶优先。
+    多用户预留：user_id 当前恒为 "local"，与收藏/阅读历史一致。
+    """
+
+    __tablename__ = "pinned_papers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "paper_id", name="uq_pinned_user_paper"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# 手动置顶上限：置顶超过该数量时不再新增置顶（前端据此提示）。
+# 与列表置顶置序查询的 limit 保持一致，避免"置顶了却不排最前"的静默问题。
+MAX_PINNED_PAPERS = 100
+
+
+class HiddenPreference(Base):
+    """不感兴趣/内容屏蔽（P2）：用户声明不想看的领域/期刊/关键词/作者。
+
+    命中（任一）屏蔽项（如 subfield 含某领域，或 keywords 含某关键词）的论文，
+    将从各论文列表（首页/搜索/工作台等）中被过滤，全局生效。
+    entity_type ∈ {subfield, journal, keyword, author}；多用户预留 user_id 恒 "local"。
+    """
+
+    __tablename__ = "hidden_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entity_type", "entity_value", name="uq_hidden_user_type_value"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    entity_type = Column(String(32), nullable=False)  # subfield | journal | keyword | author
+    entity_value = Column(String(200), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class ReadingHistory(Base):
     """阅读历史（P1-10 个人化）：已读/未读标记与"我的研究栈"数据源。"""
     __tablename__ = "reading_history"
@@ -291,6 +335,24 @@ class ReviewReport(Base):
     topic = Column(String(500), nullable=False)          # 综述选题
     content = Column(Text, nullable=True)                # markdown 综述正文
     papers_json = Column(UnicodeJSON, nullable=True)     # 引用的论文列表快照
+    model = Column(String(50), nullable=True)
+    status = Column(String(20), default="running", index=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class BatchReport(Base):
+    """批量分析报告（P1-8 异步化）：多选论文 -> 后台任务生成领域综述摘要。
+
+    #7 遗留改造：原同步长请求改为后台任务 + 轮询，前端不再长时间阻塞转圈。
+    """
+    __tablename__ = "batch_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    paper_ids_json = Column(UnicodeJSON, nullable=True)   # 参与分析的论文 id 列表
+    paper_count = Column(Integer, default=0)
+    content = Column(Text, nullable=True)                 # markdown 综述摘要
     model = Column(String(50), nullable=True)
     status = Column(String(20), default="running", index=True)
     error_message = Column(Text, nullable=True)

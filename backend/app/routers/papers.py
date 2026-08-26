@@ -9,10 +9,14 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select as sa_select
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.config import settings
 from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD
+from app.models import BatchReport, PinnedPaper, MAX_PINNED_PAPERS
+from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc, _paper_to_card,
     _compute_cache_key, _get_ai_client, _resolve_model_provider,
@@ -25,6 +29,19 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _rule_relevance_score(topic: str, paper_kws: list) -> tuple[float, list]:
+    """规则兜底相关性打分（#14 可测纯函数）：关键词重合度。
+
+    返回 (score∈[0,1], overlap_list)。无 AI 或 AI 失败时用于降级。
+    """
+    overlap = [
+        kw for kw in paper_kws
+        if kw and ((kw[:6] in topic) or (len(kw) > 1 and kw in topic))
+    ]
+    score = min(1.0, len(overlap) / max(1, min(5, len(paper_kws) or 1)))
+    return score, overlap
 
 
 @router.get("/papers")
@@ -46,6 +63,26 @@ async def get_papers(
     request: Request = None,
     db: AsyncSession = Depends(get_db)
 ):
+    # 手动置顶（P2）：解析当前用户置顶集合，置顶论文在列表中始终排最前
+    uid = (request.headers.get("x-user-id") if request else None) or "local"
+    pinned_ids: List[str] = []
+    try:
+        res = await db.execute(
+            sa_select(PinnedPaper.paper_id)
+            .where(PinnedPaper.user_id == uid)
+            .order_by(PinnedPaper.created_at.desc())
+            .limit(MAX_PINNED_PAPERS)
+        )
+        pinned_ids = [r[0] for r in res.all()]
+    except Exception:
+        pinned_ids = []
+    # "不感兴趣"屏蔽（P2）：加载当前用户屏蔽项，全局所有论文列表过滤生效
+    hidden: dict = {}
+    try:
+        hidden = await _load_hidden_preferences(db, uid)
+    except Exception:
+        hidden = {}
+
     papers, total = await PaperCRUD.get_papers(
         db,
         page=page,
@@ -61,7 +98,9 @@ async def get_papers(
         search=search,
         search_field=search_field,
         sort_by=sort_by,
-        sort_order=sort_order
+        sort_order=sort_order,
+        pinned_ids=pinned_ids,
+        hidden=hidden,
     )
 
     etag = _compute_cache_key(
@@ -108,8 +147,14 @@ async def get_paper(
     if paper.scores:
         should_read_score = paper.scores.final_score
 
+    # 详情页跳转链接：配置了自定义域名头（如高校 VPN 镜像）时改写展示 URL，库中存储不变
+    detail_data = PaperResponse.model_validate(paper).model_dump()
+    prefix = (settings.cnki_url_prefix or "").strip()
+    if prefix and detail_data.get("url", "").startswith("https://kns.cnki.net"):
+        detail_data["url"] = prefix.rstrip("/") + detail_data["url"][len("https://kns.cnki.net"):]
+
     return PaperDetailResponse(
-        **PaperResponse.model_validate(paper).model_dump(),
+        **detail_data,
         similar_papers=[
             SimilarPaper(
                 id=p.id,
@@ -139,7 +184,11 @@ async def get_trending_topics(
     from app.models import TopicTrend
     from datetime import timedelta
 
+    # TopicTrend.week_start 按「月」粒度存储（如 2026-07-01 00:00:00），故将周窗口
+    # 向下取整到月初零时，避免 4 周窗口（≈2026-07-29 14:xx）把最新月桶（07-01 00:00）
+    # 截掉导致热点为空
     cutoff_date = datetime.now() - timedelta(weeks=weeks_back)
+    cutoff_date = cutoff_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     result = await db.execute(
         select(TopicTrend)
@@ -184,7 +233,9 @@ async def explain_trend(
     from sqlalchemy import select as sa_select, desc as sa_desc
     from app.models import TopicTrend
 
+    # 与 trending-topics 一致：周窗口向下取整到月初零时，匹配月粒度存储
     cutoff = datetime.now() - timedelta(weeks=weeks_back)
+    cutoff = cutoff.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     result = await db.execute(
         sa_select(TopicTrend)
         .where(TopicTrend.topic == topic.strip(), TopicTrend.week_start >= cutoff)
@@ -254,17 +305,56 @@ async def analyze_paper(
     if pending:
         return {"analysis": None, "status": "pending", "message": "分析正在进行中"}
 
-    authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
-    keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
-    journal = paper.journal_name or "未知"
-    journal_issue = paper.journal_issue or ""
-    subfield = paper.economics_subfield or "未知"
+    # 先生成/解析模型与客户端：鉴权/配置问题在此以 503 明确提示，避免落入后台任务再返回笼统 500。
+    try:
+        if body and body.model:
+            context_provider, bare_model = _resolve_model_provider(body.model)
+            _, context_provider = _get_ai_client(context_provider)
+            model = bare_model
+        else:
+            _, context_provider = _get_ai_client()
+            model = _get_default_model(context_provider)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    system_prompt = (
-        "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
-        "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
-    )
-    prompt = f"""请从学术角度分析以下论文：
+    # 创建 pending 记录后立即返回，AI 生成放到后台任务（与批量分析一致），
+    # 前端对 status=pending 轮询 /analyses/latest 即可，避免同步长请求阻塞与偶发 500。
+    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
+    await db.commit()
+
+    spawn_background_task(_run_single_analyze_background(analysis_id, paper_id, model))
+    return {"analysis": None, "status": "pending", "message": "分析已提交，进行中", "model": model}
+
+
+async def _run_single_analyze_background(analysis_id: int, paper_id: str, model: Optional[str]):
+    """单篇论文 AI 分析后台任务：检索论文 -> LLM 生成结构化分析 -> 回写记录。
+
+    与批量分析同形：在事件循环内自建会话（AsyncSessionLocal）。失败不抛 HTTP 异常，
+    而是把记录标记为 failed（内容带原因），前端据此渲染重试按钮。
+    """
+    from app.database import AsyncSessionLocal
+    from app.crud import PaperAnalysisCRUD
+
+    try:
+        client, _ = _get_ai_client()
+        async with AsyncSessionLocal() as db:
+            paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+            if not paper:
+                await PaperAnalysisCRUD.update_analysis(db, analysis_id, "分析失败: 论文不存在", "failed")
+                await db.commit()
+                return
+
+            authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
+            keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
+            journal = paper.journal_name or "未知"
+            journal_issue = paper.journal_issue or ""
+            subfield = paper.economics_subfield or "未知"
+
+            system_prompt = (
+                "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
+                "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
+            )
+            prompt = f"""请从学术角度分析以下论文：
 
 - 标题：{paper.title}
 - 作者：{authors}
@@ -283,39 +373,28 @@ async def analyze_paper(
 
 要求：结构清晰，观点明确；基于给出的论文信息作答，不要臆造未提供的内容。"""
 
-    try:
-        if body and body.model:
-            provider, bare_model = _resolve_model_provider(body.model)
-            client, provider = _get_ai_client(provider)
-            model = bare_model
-        else:
-            client, provider = _get_ai_client()
-            model = _get_default_model(provider)
-    except HTTPException:
-        raise HTTPException(status_code=503, detail="AI API key not configured")
-
-    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
-    await db.commit()
-
-    try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2048,
-            temperature=0.4,
-        )
-        analysis_text = response.choices[0].message.content
-        await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
-        await db.commit()
-        return {"analysis": analysis_text, "status": "success", "model": model}
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=2048,
+                temperature=0.4,
+            )
+            analysis_text = response.choices[0].message.content
+            await PaperAnalysisCRUD.update_analysis(db, analysis_id, analysis_text, "success")
+            await db.commit()
+            logger.info(f"Single analyze {paper_id} done")
     except Exception as e:
-        await PaperAnalysisCRUD.update_analysis(db, analysis_id, f"分析失败: {str(e)}", "failed")
-        await db.commit()
-        raise HTTPException(status_code=500, detail=f"AI analysis failed: {str(e)}")
+        logger.error(f"Single analyze {paper_id} failed: {e}")
+        try:
+            async with AsyncSessionLocal() as db:
+                await PaperAnalysisCRUD.update_analysis(db, analysis_id, f"分析失败: {str(e)}", "failed")
+                await db.commit()
+        except Exception:
+            logger.exception("Failed marking single analyze record failed")
 
 
 class BatchAnalyzeRequest(BaseModel):
@@ -328,37 +407,103 @@ async def batch_analyze_papers(
     body: BatchAnalyzeRequest,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
 ):
-    """批量分析（P1-8）：多选 5-10 篇论文 -> 生成一份领域综述摘要。
+    """批量分析（P1-8）：多选 5-10 篇论文 -> 后台任务生成一份领域综述摘要。
 
-    同步返回 markdown 文本；论文数上限 10，超出截断。
+    #7 改造：原同步长请求（慢时前端只能转圈）改为后台任务 + 轮询，
+    先返回 batch_id，前端轮询 /papers/batch-analyze/{batch_id} 拿结果。
+    论文数上限 10，超出截断；与 producer/review 同套后台任务模式。
     """
     ids = [pid for pid in (body.paper_ids or []) if pid][:10]
     if not ids:
         raise HTTPException(status_code=400, detail="paper_ids is required")
 
-    papers = []
-    for pid in ids:
-        p = await PaperCRUD.get_paper_by_id(db, pid)
-        if p:
-            papers.append(p)
-    if not papers:
-        raise HTTPException(status_code=404, detail="No valid papers found")
-
-    papers_text = "\n\n".join([
-        f"【{i+1}】《{p.title}》\n"
-        f"- 期刊：{p.journal_name or '未知'} {p.journal_issue or ''}\n"
-        f"- 作者：{', '.join(_parse_json_list(p.authors)) or '未知'}\n"
-        f"- 关键词：{', '.join(_parse_json_list(p.keywords_cn)) or '未知'}\n"
-        f"- 摘要：{(p.abstract or '无')[:300]}"
-        for i, p in enumerate(papers)
-    ])
-
-    system_prompt = (
-        "你是一位严谨的学术综述专家。回答使用中文、清晰的 Markdown 结构，"
-        "引用文献时用【编号】标注，结论必须有文献支撑，不臆造。"
+    uid = (x_user_id or "").strip() or "local"
+    report = BatchReport(
+        user_id=uid,
+        paper_ids_json=ids,
+        paper_count=len(ids),
+        status="running",
     )
-    prompt = f"""以下是用户从论文库中挑选的 {len(papers)} 篇论文，请生成一份「领域综述摘要」：
+    db.add(report)
+    await db.commit()
+    await db.refresh(report)
+
+    from app.main import spawn_background_task
+    spawn_background_task(_run_batch_analyze_background(report.id, ids, model=body.model))
+    return {"batch_id": report.id, "status": "running", "paper_count": len(ids)}
+
+
+class BatchStatusResponse(BaseModel):
+    batch_id: int
+    status: str
+    content: Optional[str] = None
+    paper_count: Optional[int] = None
+    model: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@router.get("/papers/batch-analyze/{batch_id}", response_model=BatchStatusResponse)
+async def get_batch_analyze(
+    batch_id: int,
+    db: AsyncSession = Depends(get_db),
+    x_user_id: str = Header(default=None),
+):
+    """轮询批量分析结果（#7）：running 表示进行中，success/failed 表示终态。"""
+    from app.models import BatchReport as BatchReportModel
+    report = await db.get(BatchReportModel, batch_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Batch report not found")
+    uid = (x_user_id or "").strip() or "local"
+    if report.user_id not in (uid, "local"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return BatchStatusResponse(
+        batch_id=report.id,
+        status=report.status,
+        content=report.content,
+        paper_count=report.paper_count,
+        model=report.model,
+        error_message=report.error_message,
+    )
+
+
+async def _run_batch_analyze_background(batch_id: int, ids: List[str], model: Optional[str] = None):
+    """批量分析后台任务：检索论文 -> LLM 生成领域综述摘要 -> 回写报告。"""
+    from app.database import AsyncSessionLocal
+    from app.models import BatchReport as BatchReportModel
+    from app.crud import PaperAnalysisCRUD
+
+    async with AsyncSessionLocal() as db:
+        report = await db.get(BatchReportModel, batch_id)
+        if not report:
+            return
+        try:
+            papers = []
+            for pid in ids:
+                p = await PaperCRUD.get_paper_by_id(db, pid)
+                if p:
+                    papers.append(p)
+            if not papers:
+                report.status = "failed"
+                report.error_message = "未找到有效论文"
+                await db.commit()
+                return
+
+            papers_text = "\n\n".join([
+                f"【{i+1}】《{p.title}》\n"
+                f"- 期刊：{p.journal_name or '未知'} {p.journal_issue or ''}\n"
+                f"- 作者：{', '.join(_parse_json_list(p.authors)) or '未知'}\n"
+                f"- 关键词：{', '.join(_parse_json_list(p.keywords_cn)) or '未知'}\n"
+                f"- 摘要：{(p.abstract or '无')[:300]}"
+                for i, p in enumerate(papers)
+            ])
+
+            system_prompt = (
+                "你是一位严谨的学术综述专家。回答使用中文、清晰的 Markdown 结构，"
+                "引用文献时用【编号】标注，结论必须有文献支撑，不臆造。"
+            )
+            prompt = f"""以下是用户从论文库中挑选的 {len(papers)} 篇论文，请生成一份「领域综述摘要」：
 
 {papers_text}
 
@@ -372,38 +517,42 @@ async def batch_analyze_papers(
 ## 研究空白与下一步
 综合来看还有哪些空隙值得研究，给出 2-3 个可行切入点"""
 
-    try:
-        if body.model:
-            provider, bare_model = _resolve_model_provider(body.model)
-            client, provider = _get_ai_client(provider)
-            model = bare_model
-        else:
-            client, provider = _get_ai_client()
-            model = _get_default_model(provider)
-    except HTTPException:
-        raise HTTPException(status_code=503, detail="AI API key not configured")
+            if model:
+                provider, bare_model = _resolve_model_provider(model)
+                client, provider = _get_ai_client(provider)
+            else:
+                client, provider = _get_ai_client()
+                bare_model = _get_default_model(provider)
 
-    try:
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=3072,
-            temperature=0.4,
-        )
-        summary = (response.choices[0].message.content or "").strip()
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=bare_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=3072,
+                temperature=0.4,
+            )
+            summary = (response.choices[0].message.content or "").strip()
 
-        for p in papers:
-            analysis_id = await PaperAnalysisCRUD.create_pending(db, p.id, model=model)
-            await PaperAnalysisCRUD.update_analysis(db, analysis_id, summary, "success")
-        await db.commit()
-        return {"summary": summary, "model": model, "paper_count": len(papers)}
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Batch analyze failed: {str(e)}")
+            # 写回报告主体，供前端轮询展示
+            report.content = summary
+            report.model = f"{provider}/{bare_model}"
+            report.paper_count = len(papers)
+            report.status = "success"
+
+            # 保留原行为：摘要同时落入每篇论文的 analysis 记录
+            for p in papers:
+                analysis_id = await PaperAnalysisCRUD.create_pending(db, p.id, model=bare_model)
+                await PaperAnalysisCRUD.update_analysis(db, analysis_id, summary, "success")
+            await db.commit()
+            logger.info(f"Batch analyze {batch_id} done for {len(papers)} papers")
+        except Exception as e:
+            logger.error(f"Batch analyze {batch_id} failed: {e}")
+            report.status = "failed"
+            report.error_message = str(e)[:1000]
+            await db.commit()
 
 
 class RelevanceRequest(BaseModel):
@@ -441,8 +590,7 @@ async def paper_topic_relevance(
         return {"score": None, "reason": "尚未设置研究选题：在选题中心保存一个选题后即可评估相关性。", "ai_used": False}
 
     paper_kws = _parse_json_list(paper.keywords_cn)
-    overlap = [kw for kw in paper_kws if kw and kw[:6] in topic or (len(kw) > 1 and kw in topic)]
-    rule_score = min(1.0, len(overlap) / max(1, min(5, len(paper_kws) or 1)))
+    rule_score, overlap = _rule_relevance_score(topic, paper_kws)
 
     try:
         provider, bare_model = _resolve_model_provider(None)

@@ -35,6 +35,10 @@
 只需服务端依赖，一条命令装齐，**不需要安装任何爬虫库**：
 
 ```bash
+# 0. 一键安装（venv + 服务端依赖；--with-ollama 可选装本地向量模型 bge-m3，国内加速）
+./install.sh --with-ollama
+
+# 或手动安装：
 # 1. 克隆
 git clone <repo-url> paper-hot && cd paper-hot
 
@@ -57,7 +61,7 @@ cp backend/.env.example backend/.env
 | 后端 API | http://localhost:8000 |
 | API 文档 | http://localhost:8000/docs |
 
-> 服务器默认不启用调度（`SCHEDULER_ENABLED=false`），只展示与分析已入库数据；需先导入数据（见下文"数据来源"）。停止用 `./stop.sh`。
+> 服务器默认不启用调度（`SCHEDULER_ENABLED=false`），只展示与分析已入库数据；需先导入数据（见下文"数据来源"）。停止用 `./start.sh stop`。
 
 ### 方式二：Docker 部署（含前后端）
 
@@ -121,6 +125,34 @@ API_TOKEN=optional_restriction
 
 > 模型调用统一走 OpenAI 兼容格式，可在系统管理页面配置默认模型 / 模型优先级，并支持"链接测试"。
 
+### 本地 Embedding 模型（Ollama + bge-m3，可选）
+
+Run paper embeddings fully offline with Ollama (CPU is enough, no API cost):
+
+```bash
+# 1. Install Ollama (full runtime) and start it
+curl -fsSL https://ollama.com/install.sh | sh && systemctl start ollama
+
+# 2. Pull bge-m3 via ModelScope mirror (fastest in CN, ~1MB/s; official registry ~0.34MB/s)
+ollama pull modelscope.cn/gpustack/bge-m3-GGUF
+ollama cp modelscope.cn/gpustack/bge-m3-GGUF bge-m3
+```
+
+Configure `backend/.env`:
+
+```env
+CUSTOM_PROVIDERS=[{"name":"ollama","base_url":"http://localhost:11434/v1","api_key":"ollama","models":["bge-m3"]}]
+EMBEDDING_MODEL=ollama/bge-m3
+```
+
+**Important**: embeddings from different models are incompatible. After switching models, back up the DB, clear `paper_features.embedding`, restart, then trigger a full rebuild:
+
+```bash
+curl -X POST "http://localhost:8000/api/topic-validator/embeddings/backfill"
+```
+
+See [README_CN.md](README_CN.md) for the detailed guide (speed benchmarks, FP16 import fallback, troubleshooting).
+
 ---
 
 ## 🛠️ 技术栈
@@ -154,7 +186,7 @@ API_TOKEN=optional_restriction
 ├── requirements-crawler.txt  # 爬虫扩展依赖（可选）
 ├── cnki_paper_captcha.py     # 知网关键词检索脚本（爬虫）
 ├── docker-compose.yml        # 容器编排（预构建镜像）
-└── start.sh / stop.sh        # 快捷启动/停止
+└── start.sh / install.sh    # 启停控制 / 一键安装
 ```
 
 ---

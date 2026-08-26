@@ -12,6 +12,7 @@ import { Loader2, Search, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { usePapersPage } from '@/lib/usePapersPage';
+import { usePreferences } from '@/lib/usePreferences';
 
 export default function SearchPage() {
   return (
@@ -39,6 +40,9 @@ function SearchPageInner() {
   const [selectedJournal, setSelectedJournal] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
+
+  // 「不感兴趣」屏蔽版本号：新增/删除屏蔽项时列表需重取（后端已在列表层过滤）
+  const { version: prefVersion } = usePreferences();
 
   const currentSearch = searchParams.get('search') || '';
   const currentFieldParam = searchParams.get('search_field');
@@ -68,7 +72,8 @@ function SearchPageInner() {
     page, pageSize, handlePageChange, handlePageSizeChange,
   } = usePapersPage({
     buildParams,
-    deps: [currentSearch, currentField, activeJournals, minScore, selectedSubfield, selectedCnkiSubject, sortBy, sortOrder],
+    deps: [currentSearch, currentField, activeJournals, minScore, selectedSubfield, selectedCnkiSubject, sortBy, sortOrder, prefVersion],
+    cacheBust: prefVersion,
     enabled: !!(currentSearch || activeJournals.length > 0),
   });
 

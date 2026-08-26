@@ -15,7 +15,7 @@ import { select, type BaseType, type Selection } from 'd3-selection';
 import { scaleLinear, scaleOrdinal } from 'd3-scale';
 import { schemeCategory10 } from 'd3-scale-chromatic';
 import { max } from 'd3-array';
-import { zoom, zoomIdentity, zoomTransform, type ZoomBehavior } from 'd3-zoom';
+import { zoom, zoomIdentity, zoomTransform, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 import 'd3-transition'; // 仅为 d3-selection 注入 .transition() 扩展
 import { NetworkData, NetworkNode } from '@/types/paper';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -60,6 +60,8 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   const initializedRef = useRef(false);
   const gRef = useRef<any>(null);
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  // 持久保存当前缩放变换，重绘/主题切换后据此恢复用户的缩放与平移位置
+  const zoomTransformRef = useRef<ZoomTransform | null>(null);
   const prevHighlightRef = useRef<string | null>(null);
 
   const { isDark } = useTheme();
@@ -178,6 +180,7 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       const zoomBehavior = zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.2, 5])
         .on('zoom', (event) => {
+          zoomTransformRef.current = event.transform;
           g.attr('transform', event.transform);
         });
 
@@ -262,6 +265,12 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
 
       nodeGroup.attr('transform', d => `translate(${d.x},${d.y})`);
     });
+
+    // 重绘后恢复此前保存的缩放/平移变换，避免主题切换（触发本 effect 重跑）时丢失用户的视口位置
+    const svgEl = svgRef.current;
+    if (svgEl && zoomBehaviorRef.current && zoomTransformRef.current) {
+      select(svgEl).call(zoomBehaviorRef.current.transform, zoomTransformRef.current);
+    }
 
     return () => {
       if (simulationRef.current) {

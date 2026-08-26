@@ -22,8 +22,8 @@ export function useBookmarks() {
   }, []);
 
   const has = useCallback((paperId: string) => isBookmarked(paperId), [version]); // eslint-disable-line react-hooks/exhaustive-deps
-  const toggle = useCallback(async (paperId: string) => {
-    await toggleBookmarkStore(paperId);
+  const toggle = useCallback(async (paperId: string): Promise<boolean> => {
+    return toggleBookmarkStore(paperId);
   }, []);
 
   return { ready, has, toggle };

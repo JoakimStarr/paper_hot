@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,10 @@ from app.routers.deps import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _uid(x_user_id: Optional[str]) -> str:
+    return (x_user_id or "").strip() or "local"
 
 # 常用中文经管顶刊画像（内置，供期刊适配参考）
 JOURNAL_PROFILES = {
@@ -58,14 +62,31 @@ class ReviewResponse(BaseModel):
 
 
 async def _retrieve_papers(db: AsyncSession, topic: str, limit: int = 25) -> List[dict]:
-    """按选题关键词从论文库检索相关论文（标题/摘要/关键词命中 + 综合评分排序）。"""
-    # 论文库无真实全文检索，用关键词覆盖检索 + 标题命中，取综合评分 top
+    """按选题关键词从论文库检索相关论文（标题/摘要/关键词命中 + 综合评分排序）。
+
+    P0 遗留#9（性能）：不再把全库拉进内存做关键词匹配，而是用 SQL OR LIKE 在
+    数据库侧先筛掉无关论文，再取少量候选在 Python 侧按命中数排序。
+    """
     kws = [k for k in _tokenize_query(topic)]
+    if not kws:
+        return []
+
+    # 数据库侧 OR 条件：标题/摘要包含任一词，或 keywords_cn 序列里命中任一词
+    from sqlalchemy import or_ as sa_or, and_ as sa_and
+    like_clauses = []
+    for k in kws:
+        like_clauses.append(Paper.title.ilike(f"%{k}%"))
+        like_clauses.append(Paper.abstract.ilike(f"%{k}%"))
+        # keywords_cn 是 JSON 文本，直接 LIKE 子串足够（中文关键词无歧义）
+        like_clauses.append(Paper.keywords_cn.cast(str).ilike(f"%{k}%"))
+    cond = sa_or(*like_clauses)
+
     result = await db.execute(
         sa_select(Paper)
         .options(selectinload(Paper.scores))
+        .where(cond)
         .order_by(sa_desc(Paper.published_at))
-        .limit(2000)
+        .limit(500)
     )
     scored = []
     for p in result.scalars():
@@ -116,13 +137,15 @@ async def generate_review(
     body: ReviewRequest,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
 ):
     """生成综述：后台任务检索论文 -> LLM 生成结构化综述（非流式，前端轮询状态）。"""
     topic = (body.topic or "").strip()
     if not topic:
         raise HTTPException(status_code=400, detail="topic is required")
 
-    report = ReviewReport(user_id="local", topic=topic, status="running")
+    # P0 遗留#8：按 x-user-id 隔离综述历史，不再写死 "local"
+    report = ReviewReport(user_id=_uid(x_user_id), topic=topic, status="running")
     db.add(report)
     await db.commit()
     await db.refresh(report)
@@ -208,10 +231,15 @@ async def _run_review_background(review_id: int, topic: str, model: Optional[str
 async def get_review(
     review_id: int,
     db: AsyncSession = Depends(get_db),
+    x_user_id: str = Header(default=None),
 ):
     report = await db.get(ReviewReport, review_id)
     if not report:
         raise HTTPException(status_code=404, detail="Review not found")
+    # 仅本人（或历史遗留的 local 记录）可读
+    uid = _uid(x_user_id)
+    if report.user_id not in (uid, "local"):
+        raise HTTPException(status_code=403, detail="Forbidden")
     return ReviewResponse(
         review_id=report.id,
         status=report.status,
@@ -228,9 +256,12 @@ async def list_reviews(
     limit: int = 10,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
 ):
+    uid = _uid(x_user_id)
     result = await db.execute(
         sa_select(ReviewReport)
+        .where(sa_or(ReviewReport.user_id == uid, ReviewReport.user_id == "local"))
         .order_by(sa_desc(ReviewReport.created_at))
         .limit(limit)
     )

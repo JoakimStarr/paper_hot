@@ -211,11 +211,55 @@ class PaperScheduler:
             async with AsyncSessionLocal() as db:
                 topic_count = await PaperCRUD.update_keyword_trends(db, months_back=6)
                 paper_count = await PaperCRUD.bulk_update_paper_trend_scores(db)
-                
+                # 必须显式提交：async with 退出时会 close() 并回滚，
+                # 否则趋势每次都重算却从不落库（#3 陈旧根因）
+                await db.commit()
+
                 logger.info(f"Trend scores updated: {topic_count} topics, {paper_count} papers")
                 
         except Exception as e:
             logger.error(f"Error in update_trend_scores: {e}")
+
+    async def backfill_embeddings_incremental(self, batch_size: int = 20) -> Dict[str, int]:
+        """存量 embedding 增量补齐（P0 遗留#2）：只处理缺 embedding 的论文，不重建已有向量。"""
+        stats = {"checked": 0, "embedded": 0, "failed": 0}
+        try:
+            async with AsyncSessionLocal() as db:
+                papers = await PaperCRUD.get_papers_missing_embeddings(db, limit=batch_size)
+                stats["checked"] = len(papers)
+                for paper in papers:
+                    embedding = self.ai_processor.compute_embedding(
+                        f"{paper.title}\n{(paper.abstract or '')[:2000]}"
+                    )
+                    if not embedding:
+                        stats["failed"] += 1
+                        continue
+                    await PaperCRUD.ensure_paper_features(db, paper.id, embedding=embedding)
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    stats["embedded"] += 1
+                await db.commit()
+            logger.info(f"Embedding incremental backfill: {stats}")
+        except Exception as e:
+            logger.error(f"Embedding incremental backfill error: {e}")
+            stats["error"] = str(e)
+        return stats
+
+    async def run_startup_maintenance(self):
+        """服务启动时执行一次轻量维护：刷新趋势数据 + 存量 embedding 增量补齐。
+
+        不放依赖 settings.scheduler_enabled（趋势陈旧正因定时器被关），
+        保证无论定时器是否开启，一启动就能看到数据不是空的。
+        """
+        try:
+            # P0：#3 趋势数据陈旧根因修复 —— 启动时强制刷新一次，避免 weeks_back=8 空窗
+            await self.update_trend_scores()
+        except Exception as e:
+            logger.error(f"Startup trend refresh failed: {e}")
+        try:
+            # P0：#2 存量 embedding 未自动补齐
+            await self.backfill_embeddings_incremental(batch_size=20)
+        except Exception as e:
+            logger.error(f"Startup embedding backfill failed: {e}")
 
     async def backfill_abstracts(self, batch_size: int = 100) -> Dict[str, int]:
         """补抓空摘要论文（P0-2）：经济研究/中国工业经济经 ajcass 详情接口回填，

@@ -157,6 +157,97 @@
 
 ---
 
+## 🧬 本地向量模型（Ollama + bge-m3）
+
+论文 embedding 默认走云端 API，也可切换为 **Ollama 本地推理**：数据不出本机、零 API 成本。embedding 是轻量任务，纯 CPU 即可胜任（12 核跑 bge-m3 约 10~30 条/秒）。
+
+### 1. 安装并启动 Ollama
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh   # 需 root，会安装完整推理运行时
+systemctl start ollama                           # 或前台运行 ollama serve
+```
+
+> ⚠️ 若调用时报 `llama-server binary not found`，说明机器上只有残缺的客户端二进制（`ollama list` 能用不代表运行时完整），用上面脚本重装即可。
+
+### 2. 下载 bge-m3 模型（国内加速实测）
+
+推荐多语种检索效果好的 **bge-m3**（1024 维，FP16 约 1.1GB，中文论文质量最佳）；纯英文场景可用更小的 `nomic-embed-text`。
+
+国内源实测速度（2026-08）：
+
+| 来源 | 实测速度 | 说明 |
+|---|---|---|
+| 魔搭 ModelScope 直下 GGUF | ~1.0 MB/s | 最快，支持断点续传 |
+| hf-mirror.com | ~0.6 MB/s | 备选 |
+| registry.ollama.ai 官方 | ~0.34 MB/s | 最慢 |
+| GitHub 代理（gh-proxy.com 等） | ~0.4-0.57 MB/s | 仅运行时包可用 |
+
+> ⚠️ 网上流传的 `~/.ollama/config.json` 镜像配置和 `--registry-mirror` 参数**并不存在**（Ollama 无镜像机制），勿浪费时间尝试。
+
+**方式一：魔搭 OCI 直拉（最简单）**
+
+```bash
+ollama pull modelscope.cn/gpustack/bge-m3-GGUF
+ollama cp modelscope.cn/gpustack/bge-m3-GGUF bge-m3   # 改名为 bge-m3
+```
+
+注意 `latest` 标签可能指向量化版本；追求检索质量建议方式二拿 FP16。
+
+**方式二：魔搭直下 FP16 + 导入（质量最优，支持断点续传）**
+
+```bash
+# -C - 断点续传，中断重跑同一命令即可
+curl -L -C - -o bge-m3-FP16.gguf \
+  "https://modelscope.cn/models/gpustack/bge-m3-GGUF/resolve/master/bge-m3-FP16.gguf"
+
+# 标准导入（需完整运行时）
+printf 'FROM %s/bge-m3-FP16.gguf\nPARAMETER num_ctx 8192\n' "$(pwd)" > Modelfile
+ollama create bge-m3 -f Modelfile
+```
+
+若 `create` 报 `llama-quantize unavailable`，可用 **blob 预置法**——该文件与官方库 blob 字节一致，放入后 `pull` 秒级完成：
+
+```bash
+mkdir -p ~/.ollama/models/blobs
+cp bge-m3-FP16.gguf \
+  ~/.ollama/models/blobs/sha256-daec91ffb5dd0c27411bd71f29932917c49cf529a641d0168496c3a501e3062c
+ollama pull bge-m3
+```
+
+验证：
+
+```bash
+curl -s http://localhost:11434/api/embed -d '{"model":"bge-m3","input":"测试"}'
+# 返回 embeddings 数组即成功；首次调用需加载模型进内存，CPU 上约数秒
+```
+
+### 3. 配置 backend/.env
+
+```env
+CUSTOM_PROVIDERS=[{"name":"ollama","base_url":"http://localhost:11434/v1","api_key":"ollama","models":["bge-m3"]}]
+EMBEDDING_MODEL=ollama/bge-m3
+```
+
+`api_key` 填任意非空值即可（Ollama 不校验）。重启后端生效，设置页"链接测试"应可通过。
+
+### 4. 全量重建存量向量（切换 embedding 模型必做）
+
+不同模型的向量空间互不兼容——即使维度碰巧相同（qwen-text-embedding 与 bge-m3 都是 1024 维）也不能混用，否则相似度计算全部失真：
+
+```bash
+# 备份
+cp backend/data/paperpulse.db backend/data/paperpulse.db.bak
+
+# 清空旧向量
+venv/bin/python -c "import sqlite3; db=sqlite3.connect('backend/data/paperpulse.db'); db.execute(\"UPDATE paper_features SET embedding=NULL WHERE embedding IS NOT NULL\"); db.commit(); print('已清空')"
+
+# 重启后端 ./start.sh，然后触发全量重建（后台循环批量直到全部完成；设置了 API_TOKEN 时加 Header X-API-Token）
+curl -X POST "http://localhost:${BACKEND_PORT:-8000}/api/topic-validator/embeddings/backfill"
+```
+
+---
+
 ## 🗄️ 数据库架构
 
 | 表 | 说明 |
@@ -269,6 +360,16 @@
 
 ### 1. 安装依赖
 
+**方式A：一键脚本（推荐）**——创建 venv、装服务端依赖，可选一并装 Ollama 本地向量模型（国内加速下载 bge-m3、自动写配置）：
+
+```bash
+./install.sh                # 基础安装（交互询问是否装本地向量模型）
+./install.sh --with-ollama  # 基础安装 + 本地向量模型（跳过询问）
+./install.sh --base-only    # 仅基础安装
+```
+
+**方式B：手动安装**
+
 ```bash
 # 后端
 cd backend
@@ -314,7 +415,7 @@ API_TOKEN=your_api_token_here
 ### 5. 停止服务
 
 ```bash
-./stop.sh
+./start.sh stop
 ```
 
 ---
@@ -438,7 +539,8 @@ paper_hot/
 │           └── globals.css                 # 全局样式（含暗黑模式）
 ├── cnki_paper_captcha.py                   # CNKI 验证码识别模块
 ├── start.sh                                # 启动脚本
-├── stop.sh                                 # 停止脚本
+├── install.sh                              # 一键安装（venv/依赖，可选 Ollama 向量模型）
+├── start.sh                                # 启动/停止/重启/状态（start|dev|stop|restart|status）
 ├── README.md                               # 英文文档
 └── README_CN.md                            # 中文文档
 ```

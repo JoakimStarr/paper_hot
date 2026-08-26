@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from typing import List, Optional, Tuple
-from sqlalchemy import select, and_, desc, func, or_, text, update, bindparam, insert, delete
+from sqlalchemy import select, and_, desc, func, or_, text, update, bindparam, insert, delete, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
@@ -21,6 +21,43 @@ logger = logging.getLogger(__name__)
 
 # 研究级检索（P1-9）：触发高级语法解析的标记
 _ADVANCED_SEARCH_RE = re.compile(r'"|author:\S|\bAND\b|\bOR\b|\bNOT\b')
+
+
+def _hidden_paper_condition(hidden: Optional[dict]):
+    """根据"不感兴趣"屏蔽项生成论文保留条件（命中任一屏蔽项的论文被排除）。
+
+    hidden: {"subfield": [...], "journal": [...], "keyword": [...], "author": [...]}
+    无任一屏蔽项时返回 None（不影响查询）。与高级检索共用的 json_each 子查询技术，
+    关键词/作者两列 JSON 数组逐值判等，命中即屏蔽。
+    """
+    subfields = hidden.get("subfield") or []
+    journals = hidden.get("journal") or []
+    keywords = hidden.get("keyword") or []
+    authors = hidden.get("author") or []
+    conds = []
+    if subfields:
+        conds.append(~Paper.economics_subfield.in_(subfields))
+    if journals:
+        conds.append(~Paper.journal_name.in_(journals))
+    if keywords:
+        kws = or_(*[text(f"json_each.value = :hk{i}") for i in range(len(keywords))])
+        sub = (
+            select(text("p.id"))
+            .select_from(text("papers p, json_each(p.keywords_cn)"))
+            .where(kws)
+            .params(**{f"hk{i}": v for i, v in enumerate(keywords)})
+        )
+        conds.append(~Paper.id.in_(sub))
+    if authors:
+        aus = or_(*[text(f"json_each.value = :ha{i}") for i in range(len(authors))])
+        sub = (
+            select(text("p.id"))
+            .select_from(text("papers p, json_each(p.authors)"))
+            .where(aus)
+            .params(**{f"ha{i}": v for i, v in enumerate(authors)})
+        )
+        conds.append(~Paper.id.in_(sub))
+    return and_(*conds) if conds else None
 
 
 def _tokenize_advanced_search(search: str) -> List[str]:
@@ -212,7 +249,9 @@ class PaperCRUD:
         search: Optional[str] = None,
         search_field: Optional[str] = None,
         sort_by: Optional[str] = None,
-        sort_order: Optional[str] = "desc"
+        sort_order: Optional[str] = "desc",
+        pinned_ids: Optional[List[str]] = None,  # 手动置顶集合（按置顶时间倒序），传入则置顶论文始终排最前
+        hidden: Optional[dict] = None,  # "不感兴趣"屏蔽项（key: subfield/journal/keyword/author），命中即过滤
     ) -> Tuple[List[Paper], int]:
         query = (
             select(Paper)
@@ -303,7 +342,13 @@ class PaperCRUD:
                 query = query.where(Paper.journal_name.in_(journal_name.split(',')))
             else:
                 query = query.where(Paper.journal_name == journal_name)
-        
+
+        # "不感兴趣"屏蔽（全局生效）：命中任一屏蔽项（领域/期刊/关键词/作者）的论文不返回
+        if hidden:
+            hidden_cond = _hidden_paper_condition(hidden)
+            if hidden_cond is not None:
+                query = query.where(hidden_cond)
+
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar()
@@ -319,7 +364,15 @@ class PaperCRUD:
             # 默认按发表时间排序；journal_issue 是字符串字典序（"12期" < "2期"）不可靠
             order_col = Paper.published_at
 
-        if sort_order == "asc":
+        # 置顶置序（P2）：传入置顶集合时置顶论文始终排最前，置顶之间按置顶时间倒序
+        # （pinned_ids 已由路由按 created_at 倒序排好）；其余按所选排序。
+        if pinned_ids:
+            pinned_rank = case(
+                tuple((Paper.id == pid, idx) for idx, pid in enumerate(pinned_ids)),
+                else_=len(pinned_ids),
+            )
+            query = query.order_by(pinned_rank, desc(order_col), desc(Paper.id))
+        elif sort_order == "asc":
             query = query.order_by(order_col.asc(), Paper.id.asc())
         else:
             query = query.order_by(desc(order_col), desc(Paper.id))
@@ -349,6 +402,60 @@ class PaperCRUD:
         db.add(features)
         await db.flush()
         return features
+
+    @staticmethod
+    async def ensure_paper_features(
+        db: AsyncSession,
+        paper_id: str,
+        summary: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        embedding: Optional[str] = None,
+        topic: Optional[str] = None,
+    ) -> PaperFeatures:
+        """按 paper_id 增改特征行（存在即更新，不存在则新建），用于存量回填。"""
+        result = await db.execute(
+            select(PaperFeatures).where(PaperFeatures.paper_id == paper_id)
+        )
+        feats = result.scalar_one_or_none()
+        if feats is None:
+            feats = PaperFeatures(paper_id=paper_id)
+            db.add(feats)
+        if summary is not None:
+            feats.summary = summary
+        if keywords is not None:
+            feats.keywords = keywords
+        if embedding is not None:
+            feats.embedding = embedding
+        if topic is not None:
+            feats.topic = topic
+        await db.flush()
+        return feats
+
+    @staticmethod
+    async def get_papers_missing_embeddings(
+        db: AsyncSession,
+        limit: int = 50,
+    ) -> List[Paper]:
+        """查找尚未生成 embedding 的论文（P0：存量增量补齐用）。
+
+        覆盖两种情况：没有 features 行的论文，以及 features 行存在但 embedding 为空。
+        """
+        result = await db.execute(
+            select(Paper)
+            .outerjoin(PaperFeatures, PaperFeatures.paper_id == Paper.id)
+            .where(
+                or_(
+                    PaperFeatures.id.is_(None),
+                    or_(
+                        PaperFeatures.embedding.is_(None),
+                        PaperFeatures.embedding == "",
+                    ),
+                )
+            )
+            .order_by(Paper.published_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
     
     @staticmethod
     async def create_paper_score(

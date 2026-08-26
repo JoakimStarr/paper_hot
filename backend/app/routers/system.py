@@ -29,6 +29,46 @@ class TestModelRequest(BaseModel):
     model: str  # 'provider/model'
 
 
+class FetchModelsRequest(BaseModel):
+    name: Optional[str] = None    # 自定义 provider 名（编辑时用于回退已存的 key）
+    base_url: str
+    api_key: Optional[str] = None
+
+
+@router.post("/settings/fetch-models")
+async def fetch_provider_models(body: FetchModelsRequest, token: bool = Depends(verify_token)):
+    """拉取 OpenAI 兼容 provider 的模型列表（GET {base_url}/models），供自定义配置时填充模型。
+
+    api_key 为空时按 name 回退到已保存的 key（编辑自定义 provider 时前端不持有明文 key）。
+    """
+    from app.ai_service import _build_openai_client
+    base_url = (body.base_url or "").strip()
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url is required")
+
+    api_key = (body.api_key or "").strip()
+    if not api_key and body.name:
+        for p in settings.get_custom_providers():
+            if p.get("name") == body.name and p.get("api_key"):
+                api_key = p["api_key"]
+                break
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key is required")
+
+    try:
+        client = _build_openai_client(api_key, base_url)
+        models = await asyncio.to_thread(lambda: list(client.models.list()))
+        ids = [getattr(m, "id", None) for m in models if getattr(m, "id", None)]
+        if not ids:
+            return {"models": [], "message": "provider 未返回可用模型"}
+        return {"models": ids}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Fetch models failed for {base_url}: {e}")
+        raise HTTPException(status_code=400, detail=f"获取模型列表失败：{e}")
+
+
 @router.post("/settings/test-model")
 async def test_model_link(body: TestModelRequest, token: bool = Depends(verify_token)):
     """OpenAI 兼容链接测试：向指定模型发送最小请求，验证 base_url/api_key/model 是否可用。"""
@@ -65,6 +105,7 @@ class UpdateSettingsRequest(BaseModel):
     ports: Optional[dict] = None
     app_name: Optional[str] = None
     custom_providers: Optional[List[dict]] = None
+    cnki_url_prefix: Optional[str] = None
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -126,6 +167,7 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
         "custom_providers": custom_providers_status,
         "default_model": settings.default_model,
         "embedding_model": settings.embedding_model,
+        "cnki_url_prefix": settings.cnki_url_prefix,
     }
 
 
@@ -175,6 +217,9 @@ async def update_settings_endpoint(
 
     if body.app_name is not None:
         Settings.update_setting("app_name", body.app_name)
+
+    if body.cnki_url_prefix is not None:
+        Settings.update_setting("cnki_url_prefix", body.cnki_url_prefix.strip())
 
     if body.default_model is not None:
         Settings.update_setting("default_model", body.default_model)
@@ -308,5 +353,72 @@ async def get_system_stats(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to get system stats: {e}")
         raise HTTPException(status_code=500, detail=f"Internal error ({type(e).__name__})")
+
+
+@router.get("/data-health")
+async def get_data_health(db: AsyncSession = Depends(get_db)):
+    """数据健康中心聚合状态：embedding(向量覆盖) / trend(趋势分析) / similarity(论文相关性)。
+
+    统一供系统管理-数据页一次拉取三块状态；相关的"一键动作"（补齐向量、
+    刷新趋势、重算相似度）由各自既有接口触发。
+    """
+    from sqlalchemy import select as sa_select, func as sa_func
+    from app.models import PaperFeatures, TopicTrend, PaperSimilarity
+
+    # 1) 向量覆盖（复用 topic-validator/status 的同款统计）
+    embedded = (await db.execute(
+        sa_select(sa_func.count(PaperFeatures.id)).where(PaperFeatures.embedding.isnot(None))
+    )).scalar() or 0
+    total_feats = (await db.execute(
+        sa_select(sa_func.count(PaperFeatures.id))
+    )).scalar() or 0
+
+    # 2) 趋势分析情况（topic_trends 表覆盖度与最近生成）
+    trend_topics = (await db.execute(
+        sa_select(sa_func.count(sa_func.distinct(TopicTrend.topic)))
+    )).scalar() or 0
+    trend_records = (await db.execute(
+        sa_select(sa_func.count(TopicTrend.id))
+    )).scalar() or 0
+    latest_week = (await db.execute(
+        sa_select(sa_func.max(TopicTrend.week_start))
+    )).scalar()
+    latest_trend_update = (await db.execute(
+        sa_select(sa_func.max(TopicTrend.created_at))
+    )).scalar()
+
+    # 3) 论文内容相关性（paper_similarities 覆盖 + 是否正在重算）
+    sim_pairs = (await db.execute(
+        sa_select(sa_func.count(PaperSimilarity.id))
+    )).scalar() or 0
+    sim_papers = (await db.execute(
+        sa_select(sa_func.count(sa_func.distinct(PaperSimilarity.paper_id_a)))
+    )).scalar() or 0
+    latest_sim = (await db.execute(
+        sa_select(sa_func.max(PaperSimilarity.computed_at))
+    )).scalar()
+
+    from app.routers.crawler import _similarity_task_state
+    similarity_running = bool(_similarity_task_state.get("running"))
+
+    return {
+        "embedding": {
+            "embedded": embedded,
+            "total": total_feats,
+            "missing": max(total_feats - embedded, 0),
+        },
+        "trend": {
+            "topics": trend_topics,
+            "records": trend_records,
+            "latest_week_start": str(latest_week) if latest_week else None,
+            "latest_updated_at": str(latest_trend_update) if latest_trend_update else None,
+        },
+        "similarity": {
+            "pairs": sim_pairs,
+            "covered_papers": sim_papers,
+            "latest_computed_at": str(latest_sim) if latest_sim else None,
+            "running": similarity_running,
+        },
+    }
 
 
