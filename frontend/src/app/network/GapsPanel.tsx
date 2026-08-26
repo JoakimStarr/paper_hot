@@ -1,13 +1,23 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ExternalLink, Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2, Target } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { topicsApi } from '@/lib/api';
 import { ResearchGapsResponse } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function GapsPanel() {
   const { t } = useLanguage();
+  const router = useRouter();
+
+  /** 一键验证：组合命题预填选题验证器（跨页 localStorage 预填机制） */
+  const toValidator = (source: string, target: string) => {
+    try {
+      localStorage.setItem('pp_topic_prefill', `${source} 与 ${target} 的交叉研究`);
+    } catch { /* ignore */ }
+    router.push('/topics?tab=validator');
+  };
   const [data, setData] = useState<ResearchGapsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -57,6 +67,13 @@ export default function GapsPanel() {
               >
                 <ExternalLink className="w-4 h-4" />
               </a>
+              <button
+                onClick={() => toValidator(g.source, g.target)}
+                title={t('net.gapToValidator')}
+                className="shrink-0 p-1.5 rounded-md text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/40 transition-colors"
+              >
+                <Target className="w-4 h-4" />
+              </button>
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs text-gray-500 dark:text-gray-400 mb-2">
               <span>{t('net.gapSourceCount')}: <b className="text-gray-800 dark:text-gray-200">{g.source_count}</b></span>

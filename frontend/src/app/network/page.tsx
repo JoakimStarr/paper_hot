@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import SkeletonCard from '@/components/SkeletonCard';
 import { papersApi } from '@/lib/api';
+import KeywordContextActions from '@/components/KeywordContextActions';
+import EntryCard from '@/components/EntryCard';
 import { NetworkData, NetworkNode } from '@/types/paper';
 import { Loader2, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target, TrendingUp, Crosshair } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -13,10 +15,9 @@ import type { KeywordMapResponse } from '@/lib/api';
 
 const NetworkGraph = dynamic(() => import('./NetworkGraph'), { ssr: false });
 const ClusterMap = dynamic(() => import('./ClusterMap'), { ssr: false });
-const TrendChart = dynamic(() => import('./TrendChart'), { ssr: false });
 const GapsPanel = dynamic(() => import('./GapsPanel'), { ssr: false });
 
-type TabType = 'keywords' | 'clusters' | 'trends' | 'gaps';
+type TabType = 'clusters' | 'keywords' | 'gaps';
 
 interface ConnectedNode {
   id: string;
@@ -35,7 +36,7 @@ function getLinkNodeId(node: string | { id?: string }): string {
 export default function NetworkPage() {
   const { t } = useLanguage();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabType>('keywords');
+  const [activeTab, setActiveTab] = useState<TabType>('clusters');
   const [data, setData] = useState<NetworkData | null>(null);
   const [loading, setLoading] = useState(true);
   const [infoNode, setInfoNode] = useState<NetworkNode | null>(null);
@@ -167,6 +168,14 @@ export default function NetworkPage() {
         </p>
       </div>
 
+      <EntryCard
+        href="/trends"
+        icon={<TrendingUp className="w-5 h-5" />}
+        title={t('net.entryTrendsTitle')}
+        desc={t('net.entryTrendsDesc')}
+        className="mb-4 sm:mb-6"
+      />
+
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4 sm:mb-6">
         <button
           onClick={() => setActiveTab('keywords')}
@@ -191,17 +200,6 @@ export default function NetworkPage() {
           {t('net.clusters')}
         </button>
         <button
-          onClick={() => setActiveTab('trends')}
-          className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
-            activeTab === 'trends'
-              ? 'bg-primary-600 text-white'
-              : 'bg-white dark:bg-gray-800 border border-gray-300 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4" />
-          {t('net.trends')}
-        </button>
-        <button
           onClick={() => setActiveTab('gaps')}
           className={`flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
             activeTab === 'gaps'
@@ -216,8 +214,6 @@ export default function NetworkPage() {
 
       {activeTab === 'clusters' ? (
         <ClusterMap />
-      ) : activeTab === 'trends' ? (
-        <TrendChart />
       ) : activeTab === 'gaps' ? (
         <GapsPanel />
       ) : loading ? (
@@ -328,6 +324,11 @@ export default function NetworkPage() {
                       </div>
                     </div>
                   )}
+
+                  <div className="pt-3 border-t border-gray-100 dark:border-gray-700 mt-2">
+                    <span className="text-gray-400 block text-xs mb-1.5">{t('net.contextActions')}</span>
+                    <KeywordContextActions keyword={infoNode.name} />
+                  </div>
 
                   <div className="pt-2 border-t border-gray-100 dark:border-gray-700 mt-2">
                     <span className="text-gray-400 block text-xs">提示</span>
