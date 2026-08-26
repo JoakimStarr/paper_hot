@@ -209,7 +209,7 @@ class PaperScheduler:
         
         try:
             async with AsyncSessionLocal() as db:
-                topic_count = await PaperCRUD.update_keyword_trends(db, months_back=6)
+                topic_count = await PaperCRUD.update_keyword_trends(db, months_back=12)
                 paper_count = await PaperCRUD.bulk_update_paper_trend_scores(db)
                 # 必须显式提交：async with 退出时会 close() 并回滚，
                 # 否则趋势每次都重算却从不落库（#3 陈旧根因）

@@ -844,7 +844,7 @@ class PaperCRUD:
             query = text("""
                 SELECT 
                     value as keyword,
-                    strftime('%Y-%m', published_at) as month_start,
+                    strftime('%Y', published_at) as month_start,
                     COUNT(*) as count
                 FROM papers, json_each(keywords_cn)
                 WHERE published_at >= :cutoff_date
@@ -858,13 +858,13 @@ class PaperCRUD:
             query = text("""
                 SELECT 
                     keyword,
-                    DATE_TRUNC('month', published_at)::date as month_start,
+                    DATE_TRUNC('year', published_at)::date as month_start,
                     COUNT(*) as count
                 FROM papers,
                 jsonb_array_elements_text(keywords_cn::jsonb) as keyword
                 WHERE published_at >= :cutoff_date
                     AND keywords_cn IS NOT NULL
-                GROUP BY keyword, DATE_TRUNC('month', published_at)
+                GROUP BY keyword, DATE_TRUNC('year', published_at)
                 ORDER BY keyword, month_start
             """)
         
@@ -886,10 +886,11 @@ class PaperCRUD:
     @staticmethod
     async def update_keyword_trends(db: AsyncSession, months_back: int = 6) -> int:
         """
-        更新关键词趋势数据
-        1. 调用 get_keyword_monthly_counts 获取数据
-        2. 计算月增长率
-        3. 存储到 TopicTrend 表（复用该表，但存储的是关键词数据）
+        更新关键词趋势数据（按「年」粒度：CNKI 来源 52% 论文仅有年份精度，
+        月度桶会出现"每年1月假峰值"，趋势必须以年为最小单位才真实）。
+        1. 调用 get_keyword_monthly_counts 获取逐年计数
+        2. 计算同比变化率
+        3. 存储到 TopicTrend 表（复用该表，week_start 存年份桶）
         返回更新的记录数
         """
         monthly_counts = await PaperCRUD.get_keyword_monthly_counts(db, months_back)
@@ -909,7 +910,7 @@ class PaperCRUD:
                         growth_rate = (current_count - previous_count) / previous_count
                 trend_rows.append({
                     "topic": keyword,
-                    "week_start": month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01", "%Y-%m-%d"),
+                    "week_start": month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01-01", "%Y-%m-%d"),
                     "paper_count": current_count,
                     "growth_rate": growth_rate,
                 })

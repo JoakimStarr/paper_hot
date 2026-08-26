@@ -180,44 +180,78 @@ async def get_trending_topics(
     weeks_back: int = Query(4, ge=1, le=52),
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import select, desc
+    """热点话题：窗口内聚合热度 + 近月动量排名。
+
+    v2 修复：此前直接返回 TopicTrend 原始行并按 growth_rate 排序，而该表
+    存储的是逐词逐月计数——作者自造长尾词大多只出现 1 次（growth=0），
+    导致"热点"被 count=1 的噪声词霸榜。现改为：
+      - total_heat: 窗口内累计论文数，低于 MIN_HEAT 的长尾词剔除
+      - last_count: 最近一个月桶的论文数（近期热度）
+      - momentum:   近月相对此前月均的增量（growth_rate 输出该比值）
+    排序：近月热度优先，其次累计热度。
+    """
+    from sqlalchemy import select
     from app.models import TopicTrend
     from datetime import timedelta
 
-    # TopicTrend.week_start 按「月」粒度存储（如 2026-07-01 00:00:00），故将周窗口
-    # 向下取整到月初零时，避免 4 周窗口（≈2026-07-29 14:xx）把最新月桶（07-01 00:00）
-    # 截掉导致热点为空
-    cutoff_date = datetime.now() - timedelta(weeks=weeks_back)
-    cutoff_date = cutoff_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-    result = await db.execute(
-        select(TopicTrend)
-        .where(TopicTrend.week_start >= cutoff_date)
-        .order_by(desc(TopicTrend.growth_rate))
-    )
+    # TopicTrend 为「年」粒度（CNKI 来源 52% 论文仅有年份精度，月度桶是伪信号），
+    # 故热点排名基于：当年计数（近期热度）+ 同比动量（按当前月份年化修正）。
+    now = datetime.now()
+    result = await db.execute(select(TopicTrend))
     trends = result.scalars().all()
 
-    trending_topics = []
-    for trend in trends:
-        if trend.growth_rate > 0.2:
-            trend_status = "rising"
-        elif trend.growth_rate < -0.1:
-            trend_status = "declining"
+    latest_year = max((tr.week_start.year for tr in trends), default=now.year)
+    prev_year = latest_year - 1
+
+    per_topic: dict[str, dict[int, int]] = {}
+    for tr in trends:
+        y = tr.week_start.year
+        per_topic.setdefault(tr.topic, {})[y] = per_topic.get(tr.topic, {}).get(y, 0) + (tr.paper_count or 0)
+
+    MIN_HEAT = 3  # 全历史累计 <3 次 = 作者自定义长尾词，无趋势意义
+    months_elapsed = max(now.month, 1)
+    scored: list[tuple[int, float, int, str, float, str]] = []
+    for topic, years in per_topic.items():
+        total = sum(years.values())
+        if total < MIN_HEAT:
+            continue
+        current = years.get(latest_year, 0)
+        prev = years.get(prev_year, 0)
+        # 年化修正：当前年尚未走完，按已过月份折算全年预估
+        cur_annual = round(current * 12 / months_elapsed)
+        if prev > 0:
+            ratio = cur_annual / prev
+            momentum = cur_annual - prev
+            growth_rate = round(ratio - 1, 3)
         else:
-            trend_status = "stable"
+            momentum = float(cur_annual)
+            growth_rate = 1.0 if current else 0.0
 
-        trending_topics.append(TrendingTopic(
-            topic=trend.topic,
-            paper_count=trend.paper_count,
-            growth_rate=trend.growth_rate,
-            trend=trend_status
-        ))
+        if momentum > max(2, prev * 0.25):
+            status = "rising"
+        elif momentum < -max(2, prev * 0.33):
+            status = "declining"
+        else:
+            status = "stable"
 
-    now = datetime.now()
+        scored.append((current, total, topic, growth_rate, status))
+
+    # 当年热度优先，同热度看全历史累计
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+
+    trending_topics = [
+        TrendingTopic(topic=t, paper_count=cur, growth_rate=g, trend=s)
+        for cur, _tot, t, g, s in scored[:20]
+    ]
+    trending_topics = [
+        TrendingTopic(topic=t, paper_count=heat, growth_rate=g, trend=s)
+        for heat, _m, t, g, s in scored[:20]
+    ]
+
     week_start = now - timedelta(days=7)
 
     return TrendingTopicsResponse(
-        topics=trending_topics[:20],
+        topics=trending_topics,
         week_start=week_start,
         week_end=now
     )
