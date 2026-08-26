@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.config import settings
+from app.cache_util import ttl_cache
 from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD
 from app.models import BatchReport, PinnedPaper, MAX_PINNED_PAPERS
 from app.routers.personal import _load_hidden_preferences
@@ -65,23 +66,20 @@ async def get_papers(
 ):
     # 手动置顶（P2）：解析当前用户置顶集合，置顶论文在列表中始终排最前
     uid = (request.headers.get("x-user-id") if request else None) or "local"
-    pinned_ids: List[str] = []
-    try:
+    from app.routers.deps import _safe_query
+
+    async def _q_pinned():
         res = await db.execute(
             sa_select(PinnedPaper.paper_id)
             .where(PinnedPaper.user_id == uid)
             .order_by(PinnedPaper.created_at.desc())
             .limit(MAX_PINNED_PAPERS)
         )
-        pinned_ids = [r[0] for r in res.all()]
-    except Exception:
-        pinned_ids = []
+        return [r[0] for r in res.all()]
+
+    pinned_ids: List[str] = await _safe_query(db, _q_pinned(), [])
     # "不感兴趣"屏蔽（P2）：加载当前用户屏蔽项，全局所有论文列表过滤生效
-    hidden: dict = {}
-    try:
-        hidden = await _load_hidden_preferences(db, uid)
-    except Exception:
-        hidden = {}
+    hidden: dict = await _safe_query(db, _load_hidden_preferences(db, uid), {})
 
     papers, total = await PaperCRUD.get_papers(
         db,
@@ -178,6 +176,15 @@ async def get_filter_statistics(db: AsyncSession = Depends(get_db)):
 @router.get("/trending-topics", response_model=TrendingTopicsResponse)
 async def get_trending_topics(
     weeks_back: int = Query(4, ge=1, le=52),
+    db: AsyncSession = Depends(get_db)
+):
+    """热点话题（60s 进程内缓存；聚合实现见 _build_trending_topics）。"""
+    async def _compute():
+        return await _build_trending_topics(db)
+    return await ttl_cache(f"agg:trending:{weeks_back}", 60, _compute)
+
+
+async def _build_trending_topics(
     db: AsyncSession = Depends(get_db)
 ):
     """热点话题：窗口内聚合热度 + 近月动量排名。

@@ -189,3 +189,21 @@ def _compute_cache_key(prefix: str, total: int, page: int, page_size: int, **fil
     return hashlib.md5(f"{prefix}:{total}:{page}:{page_size}:{filter_str}".encode()).hexdigest()
 
 
+
+
+async def _safe_query(db, coro, default):
+    """PERF_PLAN 1.2：容错查询统一 helper（P0 会话卫生）。
+
+    异常时先回滚会话（防止 PendingRollbackError 使后续查询整请求 500），
+    再降级返回 default，并以 warning 日志保留首因。
+    """
+    import logging
+    try:
+        return await coro
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("_safe_query: query failed, rolled back", exc_info=True)
+        return default

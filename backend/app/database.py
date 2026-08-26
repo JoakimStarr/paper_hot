@@ -5,7 +5,8 @@ from app.config import settings
 if settings.database_url.startswith("sqlite"):
     engine = create_async_engine(
         settings.database_url,
-        echo=False
+        echo=False,
+        pool_pre_ping=True  # PERF_PLAN 1.2：坏连接先探测，减少脏会话复用
     )
 
     # SQLite 默认不启用外键约束，模型里的 ondelete=CASCADE 需要每次连接时打开 PRAGMA 才生效
