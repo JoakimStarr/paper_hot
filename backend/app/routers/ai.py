@@ -488,6 +488,18 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
+    # PAGE_REDESIGN §9 P0：趋势追问接入简易 Agent——模型可按需查库
+    # （检索论文/关键词趋势/研究空白/子领域分布/作者论文），失败自动降级为纯对话。
+    try:
+        from app.agent import run_agent_chat
+        messages, _trace = await run_agent_chat(
+            messages, client, bare_model or "", surface="trend_chat",
+        )
+        if _trace:
+            logger.info(f"agent tools used: {[x['tool'] for x in _trace]}")
+    except Exception as e:
+        logger.warning(f"agent loop failed, fallback to plain chat: {e}")
+
     return _stream_chat_response(client, provider, messages, model=bare_model)
 
 
