@@ -79,7 +79,7 @@ export default function DataTab({
 
   const loadKo = useCallback(async () => {
     try {
-      const res = await papersApi.getKeywordNetwork(12);
+      const res = await papersApi.getKeywordNetwork();
       const nodes = (res.nodes || [])
         .slice()
         .sort((a, b) => ((b.count ?? b.papers ?? 0)) - ((a.count ?? a.papers ?? 0)))
