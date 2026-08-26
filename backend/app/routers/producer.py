@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
-from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func
+from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func, or_ as sa_or
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
