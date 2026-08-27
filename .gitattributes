@@ -1,1 +1,2 @@
-*.db filter=lfs diff=lfs merge=lfs -text
+# 论文数据库不再纳入 git/LFS 跟踪:以压缩快照发布在 GitHub Release(见 download-db.sh)
+# 如需恢复 LFS 跟踪,在此加入: *.db filter=lfs diff=lfs merge=lfs -text

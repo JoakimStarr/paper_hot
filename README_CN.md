@@ -426,6 +426,18 @@ API_TOKEN=your_api_token_here
 
 完整配置参考 [.env.example](backend/.env.example)
 
+### 2.5 获取论文数据库（快照）
+
+论文数据库以压缩快照发布在 GitHub Release（不随 git/LFS 跟踪），克隆仓库后运行：
+
+```bash
+./download-db.sh                  # 下载默认快照并解压到 backend/data/paperpulse.db
+./download-db.sh <tag>            # 指定标签（如 data-20260827）
+./download-db.sh <tag> <sha256>   # 指定校验和验证
+```
+
+也可以选择自己爬取（见下文"爬虫架构"），爬取结果写入同一 `backend/data/paperpulse.db`。
+
 ### 3. 启动服务
 
 ```bash
@@ -568,6 +580,7 @@ paper_hot/
 │           └── globals.css                 # 全局样式（含暗黑模式）
 ├── cnki_paper_captcha.py                   # CNKI 验证码识别模块
 ├── start.sh                                # 启动脚本
+├── download-db.sh                          # 从 GitHub Release 下载论文数据库快照
 ├── install.sh                              # 一键安装（venv/依赖，可选 Ollama 向量模型）
 ├── start.sh                                # 启动/停止/重启/状态（start|dev|stop|restart|status）
 ├── README.md                               # 英文文档

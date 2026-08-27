@@ -109,6 +109,18 @@ pip install -r requirements-crawler.txt
 
 爬取论文会写入同一数据库（`backend/data/paperpulse.db`），随后即可在 Web 端展示分析。
 
+### 直接获取论文数据库快照（推荐）
+
+数据库以压缩快照发布在 GitHub Release，克隆仓库后无需自己爬取：
+
+```bash
+./download-db.sh                    # 下载默认快照并解压到 backend/data/paperpulse.db
+./download-db.sh <tag>              # 指定标签（如 data-20260827）
+./download-db.sh <tag> <sha256>     # 指定校验和验证
+```
+
+> 数据库不再纳入 git/LFS 跟踪（174MB 太大且消耗 LFS 配额），更新快照时我们会发布新的 Release 标签。
+
 ---
 
 ## 🤖 配置
@@ -203,6 +215,7 @@ RERANK_BASE_URL=https://api.siliconflow.cn/v1
 ├── cnki_paper_captcha.py     # 知网关键词检索脚本（爬虫）
 ├── docker-compose.yml        # 容器编排（预构建镜像）
 └── start.sh / install.sh    # 启停控制 / 一键安装
+    download-db.sh            # 从 GitHub Release 下载论文数据库快照
 ```
 
 ---
