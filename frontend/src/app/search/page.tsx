@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, Suspense, useState } from 'react';
+import React, { useCallback, useMemo, Suspense, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import SearchBar from '@/components/SearchBar';
@@ -49,9 +49,14 @@ function SearchPageInner() {
   const urlJournal = searchParams.get('journal') || '';
   const currentField = currentFieldParam || 'all';
 
-  const activeJournals = selectedJournal.length > 0
-    ? selectedJournal
-    : urlJournal ? [urlJournal] : [];
+  // 用 useMemo 稳定引用：否则每帧生成新数组，会被 usePapersPage 的 deps 判定为变化，
+  // 触发 queryKey 无限 bump → 列表不停重拉重渲（表现为页面卡顿）。
+  const activeJournals = useMemo(
+    () => selectedJournal.length > 0
+      ? selectedJournal
+      : urlJournal ? [urlJournal] : [],
+    [selectedJournal, urlJournal],
+  );
 
   const buildParams = useCallback((p: number, pageSize: number) => ({
     page: p,
@@ -91,7 +96,7 @@ function SearchPageInner() {
       <div className="mb-4 sm:mb-6">
         <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors mb-3 sm:mb-4">
           <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm sm:text-base">{t('home.previous')}</span>
+          <span className="text-sm sm:text-base">{t('nav.backHome')}</span>
         </Link>
 
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3 sm:mb-4">研究级检索</h1>
@@ -106,8 +111,8 @@ function SearchPageInner() {
         <p className="mt-2 text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
           高级语法：多词默认 AND；<code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">OR</code> 连接可选词；
           <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded mx-0.5">NOT</code> 排除；
-          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">"精确短语"</code> 匹配标题/摘要；
-          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded ml-0.5">author:姓名</code> 按作者检索（字段选"全部"时生效）
+          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded">&quot;精确短语&quot;</code> 匹配标题/摘要；
+          <code className="px-1 bg-gray-100 dark:bg-gray-700 rounded ml-0.5">author:姓名</code> 按作者检索（字段选&quot;全部&quot;时生效）
         </p>
 
         {activeJournals.length > 0 && !selectedJournal.length && (
@@ -133,6 +138,7 @@ function SearchPageInner() {
         selectedJournal={selectedJournal}
         sortBy={sortBy}
         sortOrder={sortOrder}
+        hideBookmarksFilter
         showBookmarksOnly={false}
         onMinScoreChange={(v) => setMinScore(v)}
         onSubfieldChange={(v) => setSelectedSubfield(v)}

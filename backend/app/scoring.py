@@ -6,20 +6,16 @@ crud.PaperCRUD 的公式（0.35/0.35/0.30 + 180 天半衰期）并存，同一�
 方法与常量，保证 scheduler（本模块）与 crud（PaperCRUD._xxx）结果完全一致。
 
 保留原类接口（compute_recency_score / compute_venue_score / compute_trend_score /
-compute_final_score / compute_should_read_score）以兼容既有调用方，仅内部实现收敛。
+compute_final_score）以兼容既有调用方，仅内部实现收敛。
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 
 class ScoringSystem:
-    # 统一权重 / 半衰期：以 crud.PaperCRUD 为唯一事实源
-    SCORE_WEIGHTS = None  # 运行时从 PaperCRUD 读取
-    RECENCY_HALF_LIFE_DAYS = None
-
     def __init__(self):
-        self.recency_decay_rate = 0.1  # 保留字段名，下面实际不再用它
-        self._w = None
+        # 注意：本类不自持任何权重/衰减参数，全部以 crud.PaperCRUD 为唯一事实源。
+        pass
 
     @staticmethod
     def _crud():
@@ -41,11 +37,13 @@ class ScoringSystem:
         previous_frequencies: dict,
         topic_growth_rate: Optional[float] = None
     ) -> float:
-        # 委托 PaperCRUD._trend_score（tanh 平滑 0..1）
-        if topic_growth_rate is not None:
-            return self._crud()._trend_score(topic_growth_rate)
-        # 回退：旧普通频率法（无增长率时按 0.5 中性分，行为与 crud 一致）
-        return self._crud()._trend_score(0.0)
+        """委托 PaperCRUD._trend_score（tanh 平滑 0..1）。
+
+        keyword_frequencies / previous_frequencies 参数自 P0 统一后不再参与
+        公式（历史签名兼容保留）；趋势分只来自 topic_growth_rate，
+        缺省时按增长率 0 取中性分。
+        """
+        return self._crud()._trend_score(topic_growth_rate if topic_growth_rate is not None else 0.0)
 
     def compute_final_score(
         self,
@@ -55,16 +53,3 @@ class ScoringSystem:
     ) -> float:
         # 委托 PaperCRUD._final_score：0.35/0.35/0.30 加权
         return self._crud()._final_score(recency_score, venue_score, trend_score)
-
-    def compute_should_read_score(
-        self,
-        final_score: float,
-        has_summary: bool,
-        topic_relevance: Optional[float] = None
-    ) -> float:
-        score = final_score
-        if has_summary:
-            score *= 1.1
-        if topic_relevance is not None:
-            score = score * 0.7 + topic_relevance * 0.3
-        return min(max(score, 0.0), 1.0)

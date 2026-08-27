@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { papersApi, FilterStatistics } from '@/lib/api';
-import { ArrowUpDown, Filter, X, ChevronDown } from 'lucide-react';
+import { ArrowUpDown, Filter, X, ChevronDown, Search } from 'lucide-react';
 
 interface FiltersProps {
   minScore: number | null;
@@ -13,6 +13,8 @@ interface FiltersProps {
   sortBy: string;
   sortOrder: string;
   showBookmarksOnly: boolean;
+  /** true 时隐藏「仅看收藏」开关（如搜索页无收藏过滤上下文，避免留死开关） */
+  hideBookmarksFilter?: boolean;
   onMinScoreChange: (score: number | null) => void;
   onSubfieldChange: (subfields: string[]) => void;
   onCnkiSubjectChange: (subjects: string[]) => void;
@@ -20,6 +22,15 @@ interface FiltersProps {
   onSortByChange: (sort: string) => void;
   onSortOrderToggle: () => void;
   onBookmarksChange: (v: boolean) => void;
+  /** 关键词搜索（就地过滤，命中标题/作者/关键词）。不传则隐藏搜索框 */
+  searchQuery?: string;
+  onSearchChange?: (v: string) => void;
+  /** 搜索范围：title/author/keyword/abstract；空串=全文(标题+摘要)。仅当传入 onSearchChange 时展示 */
+  searchField?: string;
+  onSearchFieldChange?: (v: string) => void;
+  /** 批量多选模式开关（情景式浮动条方案：默认浏览视图不显示任何批量入口） */
+  selectionMode?: boolean;
+  onToggleSelection?: () => void;
 }
 
 const scoreThresholds = [0.5, 0.6, 0.7, 0.8, 0.9];
@@ -30,6 +41,22 @@ const SORT_OPTIONS = [
   { value: 'title', label: '标题' },
 ];
 
+const SEARCH_FIELD_OPTIONS = [
+  { value: '', label: '全文' },
+  { value: 'title', label: '标题' },
+  { value: 'author', label: '作者' },
+  { value: 'keyword', label: '关键词' },
+  { value: 'abstract', label: '摘要' },
+];
+
+const SEARCH_PLACEHOLDERS: Record<string, string> = {
+  '': '搜索标题/作者/关键词...',
+  title: '搜索标题...',
+  author: '搜索作者...',
+  keyword: '搜索关键词...',
+  abstract: '搜索摘要...',
+};
+
 function MultiSelect({ options, selected, onChange, label, counts }: {
   options: string[];
   selected: string[];
@@ -38,17 +65,32 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
   counts: Record<string, number>;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        setQuery('');
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // 打开时自动聚焦输入框，方便直接打字筛选
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      inputRef.current?.focus();
+    }
+  }, [open]);
+
+  const filtered = query.trim()
+    ? options.filter((o) => o.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
 
   const toggle = (value: string) => {
     if (selected.includes(value)) {
@@ -67,22 +109,36 @@ function MultiSelect({ options, selected, onChange, label, counts }: {
         {selected.length > 0 ? `${label} (${selected.length})` : label}
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-48 overflow-y-auto min-w-[240px]">
-          {options.map((opt) => (
-            <label
-              key={opt}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer text-gray-900 dark:text-gray-100"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(opt)}
-                onChange={() => toggle(opt)}
-                className="rounded"
-              />
-              <span className="flex-1 truncate">{opt}</span>
-              <span className="text-gray-400 dark:text-gray-500 shrink-0">({counts[opt] || 0})</span>
-            </label>
-          ))}
+        <div className="absolute z-20 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg min-w-[240px]">
+          <div className="p-2 border-b border-gray-200 dark:border-gray-700">
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="输入筛选选项..."
+              className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
+            />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {filtered.map((opt) => (
+              <label
+                key={opt}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer text-gray-900 dark:text-gray-100"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt)}
+                  onChange={() => toggle(opt)}
+                  className="rounded"
+                />
+                <span className="flex-1 truncate">{opt}</span>
+                <span className="text-gray-400 dark:text-gray-500 shrink-0">({counts[opt] || 0})</span>
+              </label>
+            ))}
+            {filtered.length === 0 && (
+              <div className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">无匹配选项</div>
+            )}
+          </div>
           {selected.length > 0 && (
             <button
               onClick={() => onChange([])}
@@ -105,6 +161,7 @@ export default function Filters({
   sortBy,
   sortOrder,
   showBookmarksOnly,
+  hideBookmarksFilter = false,
   onMinScoreChange,
   onSubfieldChange,
   onCnkiSubjectChange,
@@ -112,10 +169,33 @@ export default function Filters({
   onSortByChange,
   onSortOrderToggle,
   onBookmarksChange,
+  searchQuery = '',
+  onSearchChange,
+  searchField = '',
+  onSearchFieldChange,
+  selectionMode = false,
+  onToggleSelection,
 }: FiltersProps) {
   const { t } = useLanguage();
-  const [stats, setStats] = useState<FilterStatistics | null>(null);
+  const [stats, setStats] =  useState<FilterStatistics | null>(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  // 搜索防抖：本地输入即时回显，停顿 300ms 才上送父组件触发列表重拉
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => { setSearchInput(searchQuery); }, [searchQuery]);
+  useEffect(() => () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  }, []);
+  const handleSearchInput = (v: string) => {
+    setSearchInput(v);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => onSearchChange?.(v), 300);
+  };
+  const clearSearch = () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    onSearchChange?.('');
+  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -153,7 +233,8 @@ export default function Filters({
         .map(([name]) => name)
     : [];
 
-  const hasActiveFilters = minScore || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0;
+  const hasActiveFilters = minScore || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0 || searchQuery.trim() !== '';
+  const searchScopeLabel = SEARCH_FIELD_OPTIONS.find((o) => o.value === searchField)?.label || '';
   const activeFilterCount = selectedSubfield.length + selectedCnkiSubject.length + selectedJournal.length + (minScore ? 1 : 0);
 
   return (
@@ -211,12 +292,22 @@ export default function Filters({
                 </button>
               </span>
             )}
+            {searchQuery.trim() && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs rounded">
+                {searchField && <span className="opacity-70">{searchScopeLabel}:</span>}
+                “{searchQuery.trim()}”
+                <button onClick={() => onSearchChange?.('')} title="清除搜索">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
             <button
               onClick={() => {
                 onMinScoreChange(null);
                 onSubfieldChange([]);
                 onCnkiSubjectChange([]);
                 onJournalChange([]);
+                onSearchChange?.('');
               }}
               className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
             >
@@ -229,6 +320,40 @@ export default function Filters({
       {/* Desktop Filters */}
       <div className="hidden md:flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
+          {onSearchChange && (
+            <div className="flex items-center gap-2">
+              <select
+                value={searchField}
+                onChange={(e) => onSearchFieldChange?.(e.target.value)}
+                title="搜索范围"
+                className="border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                {SEARCH_FIELD_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                  placeholder={SEARCH_PLACEHOLDERS[searchField] || SEARCH_PLACEHOLDERS['']}
+                  className="pl-8 pr-7 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500 min-w-[200px]"
+                />
+                {searchInput && (
+                  <button
+                    onClick={clearSearch}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                    title="清除搜索"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <MultiSelect
             options={subfields}
             selected={selectedSubfield}
@@ -285,35 +410,95 @@ export default function Filters({
             </button>
           </div>
 
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showBookmarksOnly}
-              onChange={(e) => onBookmarksChange(e.target.checked)}
-              className="rounded"
-            />
-            仅看收藏
-          </label>
+          {!hideBookmarksFilter && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showBookmarksOnly}
+                onChange={(e) => onBookmarksChange(e.target.checked)}
+                className="rounded"
+              />
+              仅看收藏
+            </label>
+          )}
 
           {hasActiveFilters && (
-            <button
-              onClick={() => {
-                onMinScoreChange(null);
-                onSubfieldChange([]);
-                onCnkiSubjectChange([]);
-                onJournalChange([]);
-              }}
-              className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 underline"
-            >
-              {t('filters.clearAll')}
-            </button>
+            <div className="flex items-center gap-2">
+              {searchQuery.trim() && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs rounded">
+                  {searchField && <span className="opacity-70">{searchScopeLabel}:</span>}
+                  “{searchQuery.trim()}”
+                  <button onClick={() => onSearchChange?.('')} title={t('filters.clearAll')}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  onMinScoreChange(null);
+                  onSubfieldChange([]);
+                  onCnkiSubjectChange([]);
+                  onJournalChange([]);
+                  onSearchChange?.('');
+                }}
+                className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 underline"
+              >
+                {t('filters.clearAll')}
+              </button>
+            </div>
           )}
         </div>
+        {onToggleSelection && (
+          <button
+            onClick={onToggleSelection}
+            className={`text-xs rounded-md px-2.5 py-1.5 border border-dashed transition-colors shrink-0 ${
+              selectionMode
+                ? 'border-primary-500 text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20'
+                : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400'
+            }`}
+          >
+            {selectionMode ? '退出多选' : '批量'}
+          </button>
+        )}
       </div>
 
       {/* Mobile Filters Panel */}
       {mobileFiltersOpen && (
         <div className="md:hidden space-y-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          {onSearchChange && (
+            <div className="space-y-2">
+              <select
+                value={searchField}
+                onChange={(e) => onSearchFieldChange?.(e.target.value)}
+                title="搜索范围"
+                className="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                {SEARCH_FIELD_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                placeholder={SEARCH_PLACEHOLDERS[searchField] || SEARCH_PLACEHOLDERS['']}
+                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              {searchInput && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  title="清除搜索"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+          )}
+
           <div className="grid grid-cols-1 gap-3">
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">子领域</label>
@@ -409,15 +594,30 @@ export default function Filters({
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-              <input
-                type="checkbox"
-                checked={showBookmarksOnly}
-                onChange={(e) => onBookmarksChange(e.target.checked)}
-                className="rounded"
-              />
-              仅看收藏
-            </label>
+            {!hideBookmarksFilter && (
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={showBookmarksOnly}
+                  onChange={(e) => onBookmarksChange(e.target.checked)}
+                  className="rounded"
+                />
+                仅看收藏
+              </label>
+            )}
+
+            {onToggleSelection && (
+              <button
+                onClick={onToggleSelection}
+                className={`w-full text-center py-2 rounded-md border border-dashed text-sm transition-colors ${
+                  selectionMode
+                    ? 'border-primary-500 text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/20'
+                    : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400'
+                }`}
+              >
+                {selectionMode ? '退出多选' : '进入批量选择'}
+              </button>
+            )}
           </div>
         </div>
       )}

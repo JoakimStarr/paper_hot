@@ -346,3 +346,14 @@ export async function removePreference(entity_type: string, entity_value: string
     throw e;
   }
 }
+
+// —— 应用启动期预初始化（PERF）：收藏 / 置顶 / 屏蔽三个全局 store 在模块首次加载时
+// 仅触发一次拉取（各自有 *_hydrated 幂等保护）。这样列表/搜索页进入时，卡片挂载即读到
+// 已就绪的快照，避免「每张卡片各自初始化 → 初始化完成 notify → 全列表大规模重渲染」的抖动
+// （弱机器上表现为进入页面不丝滑）。卡片内的 useBookmarks/usePins/usePreferences 仍会在
+// 挂载时调用 initX，但此时已是 no-op，不会重复拉取。
+if (typeof window !== 'undefined') {
+  initBookmarks().catch(() => {});
+  initPins().catch(() => {});
+  initPreferences().catch(() => {});
+}

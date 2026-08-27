@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { BookMarked, Building2, Loader2, Sparkles, Download, History, FileText, Trash2 } from 'lucide-react';
 import { producerApi, ReviewBrief } from '@/lib/api';
+import { useToast } from '@/components/Toast';
 import { downloadTextFile, downloadAsWord } from '@/lib/utils';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -16,7 +17,9 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
 // 后台综述生成轮询间隔（前密后疏）
 const POLL_INTERVALS = [3000, 5000, 8000, 12000, 15000];
 
-export default function ProducerLab() {
+export default function ProducerLab({ initialReviewId }: { initialReviewId?: number | null }) {
+  const { toast } = useToast();
+
   // —— 综述生成 ——
   const [topic, setTopic] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -26,6 +29,16 @@ export default function ProducerLab() {
   const [reviewError, setReviewError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollCountRef = useRef(0);
+
+  // 综述引用编号 → 论文：正文 [n] 渲染为可点击的论文详情页链接（对应下方引用文献列表序号）
+  const reviewCitations = useMemo(() => {
+    const map: Record<number, { id: string; title?: string }> = {};
+    reviewPapers.forEach((p, i) => {
+      const pid = p.id ? String(p.id) : '';
+      if (pid) map[i + 1] = { id: pid, title: p.title ? String(p.title) : undefined };
+    });
+    return map;
+  }, [reviewPapers]);
 
   // —— 期刊适配 ——
   const [journalResult, setJournalResult] = useState<{ recommendations: string; ai_used: boolean; suggestions: Array<{ journal: string; reason: string }> } | null>(null);
@@ -47,31 +60,60 @@ export default function ProducerLab() {
     };
   }, []);
 
-  // 综述后台任务轮询
+  // 综述后台任务轮询：ref 式自调度（对齐 trends 页 startPolling），
+  // 网络抖动不断链；连续失败超过 10 次或总次数超限才放弃
   useEffect(() => {
     if (!reviewBusy || reviewId === null) return;
-    const interval = POLL_INTERVALS[Math.min(pollCountRef.current, POLL_INTERVALS.length - 1)];
-    pollRef.current = setTimeout(async () => {
-      pollCountRef.current += 1;
+
+    const stopPolling = () => {
+      if (pollRef.current) {
+        clearTimeout(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+
+    if (pollRef.current) return;
+    pollCountRef.current = 0;
+    let failCount = 0;
+
+    const tick = async () => {
       try {
         const res = await producerApi.getReview(reviewId);
+        failCount = 0;
         if (res.status === 'success') {
           setReviewContent(res.content || '');
           setReviewPapers((res.papers as Array<Record<string, unknown>>) || []);
           setReviewBusy(false);
           loadHistory();
+          pollRef.current = null;
+          return;
         } else if (res.status === 'failed') {
           setReviewError(res.content || '生成失败，请重试');
           setReviewBusy(false);
+          pollRef.current = null;
+          return;
         } else if (pollCountRef.current > 40) {
           setReviewError('等待超时，请稍后在历史记录中查看结果');
           setReviewBusy(false);
+          pollRef.current = null;
+          return;
         }
-      } catch { /* 网络抖动继续轮询 */ }
-    }, interval);
-    return () => {
-      if (pollRef.current) clearTimeout(pollRef.current);
+      } catch {
+        // 网络抖动继续轮询；连续失败超过 10 次则放弃
+        failCount += 1;
+        if (failCount > 10) {
+          setReviewError('网络连接不稳定，已停止等待，请稍后在历史记录中查看结果');
+          setReviewBusy(false);
+          pollRef.current = null;
+          return;
+        }
+      }
+      pollCountRef.current = Math.min(pollCountRef.current + 1, POLL_INTERVALS.length - 1);
+      pollRef.current = setTimeout(tick, POLL_INTERVALS[pollCountRef.current]);
     };
+
+    pollRef.current = setTimeout(tick, POLL_INTERVALS[0]);
+    return stopPolling;
   }, [reviewBusy, reviewId]);
 
   const startReview = async () => {
@@ -97,10 +139,11 @@ export default function ProducerLab() {
     setJournalBusy(true);
     setJournalResult(null);
     try {
-      const res = await producerApi.suggestJournal(t, reviewContent ? undefined : undefined);
+      // 把已生成的综述作为 abstract 上下文传给后端（可提升期刊推荐贴合度）
+      const res = await producerApi.suggestJournal(t, reviewContent || undefined);
       setJournalResult(res);
     } catch (e) {
-      alert(`期刊适配失败：${e instanceof Error ? e.message : '未知错误'}`);
+      toast(`期刊适配失败：${e instanceof Error ? e.message : '未知错误'}`, 'error');
     } finally {
       setJournalBusy(false);
     }
@@ -127,6 +170,14 @@ export default function ProducerLab() {
       }
     } catch { /* ignore */ }
   };
+
+  // 深链：从工作台点开某条历史综述时直接加载（切到 producer tab 后挂载本组件）
+  useEffect(() => {
+    if (initialReviewId) {
+      loadHistoryItem(initialReviewId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReviewId]);
 
   const exportReview = (fmt: 'md' | 'doc') => {
     if (!reviewContent) return;
@@ -224,19 +275,33 @@ export default function ProducerLab() {
               </button>
             </div>
           </div>
-          <MarkdownRenderer content={reviewContent} />
+          <MarkdownRenderer content={reviewContent} citations={reviewCitations} />
 
           {reviewPapers.length > 0 && (
             <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
               <h5 className="text-xs font-medium text-gray-500 mb-2">引用文献（{reviewPapers.length} 篇，与综述【编号】对应）</h5>
               <ol className="space-y-1 max-h-64 overflow-y-auto">
-                {reviewPapers.map((p, i) => (
-                  <li key={i} className="text-xs text-gray-500 leading-relaxed">
-                    <span className="text-gray-400 mr-1">【{i + 1}】</span>
-                    {(p.title as string) || ''}
-                    <span className="text-gray-400"> — {(p.journal_name as string) || ''}</span>
-                  </li>
-                ))}
+                {reviewPapers.map((p, i) => {
+                  const pid = p.id ? String(p.id) : '';
+                  return (
+                    <li key={i} className="text-xs text-gray-500 leading-relaxed">
+                      <span className="text-gray-400 mr-1">【{i + 1}】</span>
+                      {pid ? (
+                        <a
+                          href={`/paper/${pid}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-gray-700 dark:text-gray-300 hover:text-primary-600"
+                        >
+                          {(p.title as string) || ''}
+                        </a>
+                      ) : (
+                        <span>{(p.title as string) || ''}</span>
+                      )}
+                      <span className="text-gray-400"> — {(p.journal_name as string) || ''}</span>
+                    </li>
+                  );
+                })}
               </ol>
             </div>
           )}

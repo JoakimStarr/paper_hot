@@ -7,7 +7,8 @@ import { FileText, TrendingUp, Home, Settings, Share2, WifiOff, Sun, Moon, Menu,
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { initBookmarks, initPins } from '@/lib/cache';
-import ToastProvider from '@/components/Toast';
+import ClientErrorReporter from '@/components/ClientErrorReporter';
+import AIAssistant from '@/components/AIAssistant';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -102,8 +103,8 @@ export default function Layout({ children }: LayoutProps) {
   const retryHealth = () => setHealthRetry(healthRetry + 1);
 
   return (
-    <ToastProvider>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+      <ClientErrorReporter />
       <header className="sticky top-0 z-40 bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -337,7 +338,9 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </div>
       </footer>
+
+      {/* 全局 AI 悬浮助手 */}
+      <AIAssistant />
       </div>
-    </ToastProvider>
   );
 }

@@ -3,6 +3,7 @@ import '../styles/globals.css';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AiAnalysisModalProvider } from '@/components/AiAnalysisModalContext';
+import ToastProvider from '@/components/Toast';
 
 export const metadata: Metadata = {
   title: 'PaperPulse - Discover Trending Research Papers',
@@ -28,7 +29,9 @@ export default function RootLayout({
         <ThemeProvider>
           <LanguageProvider>
             <AiAnalysisModalProvider>
-              {children}
+              <ToastProvider>
+                {children}
+              </ToastProvider>
             </AiAnalysisModalProvider>
           </LanguageProvider>
         </ThemeProvider>

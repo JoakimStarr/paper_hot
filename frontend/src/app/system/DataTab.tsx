@@ -42,6 +42,9 @@ function StatCard({ label, value, icon }: { label: string; value: string | numbe
   );
 }
 
+// 数据健康轮询保护：200 次（约 10 分钟）仍未完成则停止自动刷新，提示手动查看
+const POLL_ATTEMPTS_LIMIT = 200;
+
 export default function DataTab({
   stats,
   cleaning,
@@ -72,8 +75,10 @@ export default function DataTab({
     try {
       const res = await papersApi.getDataHealth();
       setDataHealth(res);
+      return res;
     } catch {
       // 后端不可用时保留旧值
+      return null;
     }
   }, []);
 
@@ -90,33 +95,47 @@ export default function DataTab({
     }
   }, []);
 
+  // 补齐向量是否在进行中（ref 镜像，供常驻轮询检测完成/超时）
+  const backfillRef = useRef(false);
+  // t 每次渲染都会重建，轮询回调里经 ref 读取，避免把它加进 effect 依赖导致轮询反复重启
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  // 常驻健康轮询：向量覆盖 / 趋势 / 相似度每 3s 实时刷新。
+  // 后台补齐向量（无论从本页还是别处触发）进行时，"已向量化"数字会自动滚动更新。
   useEffect(() => {
     loadHealth();
     loadKo();
-    return stopPoll;
+    let attempts = 0;
+    const id = setInterval(async () => {
+      const res = await loadHealth();
+      if (backfillRef.current) {
+        attempts += 1;
+        if (res && res.embedding.missing <= 0) {
+          backfillRef.current = false;
+          setBackfilling(false);
+          setActionMessage(tRef.current('sys.bfDone'));
+        } else if (attempts > POLL_ATTEMPTS_LIMIT) {
+          backfillRef.current = false;
+          setBackfilling(false);
+          setActionMessage('向量补齐耗时较长，已复位按钮；页面仍会自动刷新进度');
+        }
+      }
+    }, 3000);
+    return () => { clearInterval(id); stopPoll(); };
   }, [loadHealth, loadKo, stopPoll]);
 
-  // 补齐向量：触发后轮询直到缺失清零
+  // 补齐向量：只负责启动后台任务，进度由上面的常驻轮询实时更新
   const handleBackfill = async () => {
     setActionMessage('');
     setBackfilling(true);
+    backfillRef.current = true;
     try {
       await topicsApi.backfillEmbeddings(100);
       setActionMessage(t('sys.bfStarted'));
-      stopPoll();
-      pollRef.current = setInterval(async () => {
-        const res = await papersApi.getDataHealth().catch(() => null);
-        if (res) {
-          setDataHealth(res);
-          if (res.embedding.missing <= 0) {
-            stopPoll();
-            setBackfilling(false);
-            setActionMessage(t('sys.bfDone'));
-          }
-        }
-      }, 3000);
     } catch {
       setBackfilling(false);
+      backfillRef.current = false;
       setActionMessage(t('sys.bfFailed'));
     }
   };
@@ -143,7 +162,16 @@ export default function DataTab({
       await papersApi.triggerRecomputeSimilarities();
       setActionMessage(t('sys.simStarted'));
       stopPoll();
+      let attempts = 0;
       pollRef.current = setInterval(async () => {
+        attempts += 1;
+        if (attempts > POLL_ATTEMPTS_LIMIT) {
+          stopPoll();
+          setRecomputing(false);
+          loadHealth();
+          setActionMessage('相似度重算耗时较长，已停止自动刷新，请稍后手动刷新查看进度');
+          return;
+        }
         const st = await papersApi.getSimilaritiesStatus().catch(() => null);
         if (st && !st.running) {
           stopPoll();

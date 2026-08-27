@@ -62,67 +62,134 @@ def _get_default_model(provider: str) -> Optional[str]:
     return models[0] if models else None
 
 
-def _stream_chat_response(client, provider: str, messages: list, model: Optional[str] = None):
+def _stream_chat_response(client, provider: str, messages: list, model: Optional[str] = None,
+                          meta_events: Optional[list[dict]] = None):
     """统一的 SSE 流式对话。所有 provider 均为 OpenAI 兼容接口，
-    思考型模型的 reasoning_content 与正文 content 都会转发给前端。"""
+    思考型模型的 reasoning_content 与正文 content 都会转发给前端。
+
+    meta_events：正文流开始前先发射的结构化事件（如 Agent 工具调用轨迹 / 检索到的论文），
+    前端经 streamChat 的 onMeta 回调接收。
+    """
     if not model:
         model = _get_default_model(provider)
 
     async def event_generator():
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-        timeout_seconds = 120
+        for ev in (meta_events or []):
+            yield f"data: {json.dumps(ev)}\n\n"
+        async for frame in _stream_llm_content(client, model, messages):
+            yield frame
 
-        def run_stream():
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    stream=True,
-                    max_tokens=4096,
-                )
-                for chunk in response:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        content = getattr(delta, "content", None)
-                        reasoning = getattr(delta, "reasoning_content", None)
-                        if reasoning:
-                            loop.call_soon_threadsafe(queue.put_nowait, ("reasoning", reasoning))
-                        if content:
-                            loop.call_soon_threadsafe(queue.put_nowait, ("content", content))
-                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
-            except Exception as e:
-                loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
-                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-        future = _shared_executor.submit(run_stream)
-        start_time = time.time()
 
+async def _stream_llm_content(client, model: str, messages: list):
+    """流式拉取 LLM 正文/reasoning 的异步生成器（SSE 帧），供各流式接口复用。"""
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    timeout_seconds = 120
+
+    def run_stream():
         try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    elapsed = time.time() - start_time
-                    if elapsed > timeout_seconds:
-                        logger.warning(f"Stream timeout after {timeout_seconds}s")
-                        yield f"data: {json.dumps({'done': True})}\n\n"
-                        break
-                    continue
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=True,
+                max_tokens=4096,
+            )
+            for chunk in response:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    content = getattr(delta, "content", None)
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        loop.call_soon_threadsafe(queue.put_nowait, ("reasoning", reasoning))
+                    if content:
+                        loop.call_soon_threadsafe(queue.put_nowait, ("content", content))
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+        except Exception as e:
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
 
-                msg_type, msg_content = item
-                if msg_type == "done":
+    future = _shared_executor.submit(run_stream)
+    start_time = time.time()
+
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                if elapsed > timeout_seconds:
+                    logger.warning(f"Stream timeout after {timeout_seconds}s")
                     yield f"data: {json.dumps({'done': True})}\n\n"
                     break
-                elif msg_type == "error":
-                    yield f"data: {json.dumps({'content': f'[ERROR] {msg_content}'})}\n\n"
-                elif msg_type == "reasoning":
-                    yield f"data: {json.dumps({'reasoning': msg_content})}\n\n"
-                elif msg_type == "content":
-                    yield f"data: {json.dumps({'content': msg_content})}\n\n"
+                continue
+
+            msg_type, msg_content = item
+            if msg_type == "done":
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                break
+            elif msg_type == "error":
+                yield f"data: {json.dumps({'content': f'[ERROR] {msg_content}'})}\n\n"
+            elif msg_type == "reasoning":
+                yield f"data: {json.dumps({'reasoning': msg_content})}\n\n"
+            elif msg_type == "content":
+                yield f"data: {json.dumps({'content': msg_content})}\n\n"
+    finally:
+        # 客户端断开（生成器被关闭）时取消后台拉流任务，避免继续消耗 LLM token
+        future.cancel()
+
+
+def _stream_agent_chat_response(client, provider: str, messages: list, model: Optional[str] = None,
+                                surface: str = "trend_chat"):
+    """追问 SSE：默认跑 Agent 工具循环（实时推送工具调用进度 → 工具轨迹 → 正文）；
+    当 AGENT_ENABLED=false 时退化为普通对话——不调用任何工具，直接流式输出回答。
+    """
+    from app.agent import run_agent_chat
+
+    if not model:
+        model = _get_default_model(provider)
+
+    async def event_generator():
+        # Agent 开关关闭：普通追问，无检索、无工具轨迹/进度
+        if not settings.agent_enabled:
+            async for frame in _stream_llm_content(client, model, messages):
+                yield frame
+            return
+
+        progress_q: asyncio.Queue = asyncio.Queue()
+        box: dict = {"messages": messages, "trace": []}
+
+        async def _run_agent():
+            try:
+                msgs, trace = await run_agent_chat(
+                    messages, client, model, surface=surface,
+                    on_progress=progress_q.put_nowait,
+                )
+                box["messages"] = msgs
+                box["trace"] = trace
+            except Exception as e:
+                logger.warning(f"agent loop failed, fallback to plain chat: {e}")
+            finally:
+                # 结束哨兵（put_nowait：任务被取消时也能安全退出循环）
+                progress_q.put_nowait(None)
+
+        task = asyncio.create_task(_run_agent())
+        try:
+            while True:
+                ev = await progress_q.get()
+                if ev is None:
+                    break
+                yield f"data: {json.dumps({'tool_progress': ev})}\n\n"
+            await task
         finally:
-            # 客户端断开（生成器被关闭）时取消后台拉流任务，避免继续消耗 LLM token
-            future.cancel()
+            if not task.done():
+                task.cancel()
+
+        if box["trace"]:
+            yield f"data: {json.dumps({'tools': _compact_agent_trace(box['trace'])})}\n\n"
+        async for frame in _stream_llm_content(client, model, box["messages"]):
+            yield frame
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -148,6 +215,29 @@ def _parse_json_list(value):
         except (json.JSONDecodeError, TypeError):
             pass
     return []
+
+
+def _compact_agent_trace(trace: list) -> list[dict]:
+    """把 Agent 工具调用轨迹压缩成可发给前端展示的结构（工具名/参数/检索到的论文卡片）。"""
+    out: list[dict] = []
+    for t in trace or []:
+        item: dict = {"tool": t.get("tool"), "args": t.get("args", {})}
+        result = t.get("result")
+        if isinstance(result, dict) and result.get("papers"):
+            item["papers"] = [
+                {
+                    "n": p.get("n"),
+                    "id": p.get("id"),
+                    "title": p.get("title"),
+                    "url": p.get("url") or (f"/paper/{p.get('id')}" if p.get("id") else None),
+                    "source": p.get("source"),
+                    "published_at": p.get("published_at"),
+                    "similarity": p.get("similarity"),
+                }
+                for p in result["papers"][:10]
+            ]
+        out.append(item)
+    return out
 
 
 def _isoformat_utc(dt: datetime) -> str:

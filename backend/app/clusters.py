@@ -1,5 +1,6 @@
 """主题聚类地图：基于本地 bge-m3 向量的全库语义聚类（KMeans + PCA 二维投影）。"""
 import logging
+import random
 import time
 from collections import Counter
 
@@ -8,6 +9,10 @@ logger = logging.getLogger(__name__)
 # 进程内缓存：向量数据变更不频繁，聚类结果按签名（论文数+最新向量行）缓存 30 分钟
 _CACHE: dict = {"sig": None, "data": None, "at": 0.0}
 _TTL_SECONDS = 1800
+
+# 散点图单簇/总量上限：全库向量论文数可能数千，前端只画密度形状，
+# 按簇等比例抽样到该上限即可（簇大小/代表论文仍用全量统计，视觉密度不变）
+MAX_POINTS = 1500
 
 
 def _cluster_label(top_keywords: list[str], idx: int) -> str:
@@ -88,7 +93,7 @@ def _compute_clusters(rows: list[dict], k: int = 18) -> dict:
     mat = np.array([r["vec"] for r in rows], dtype=np.float32)
     effective_k = max(4, min(k, len(rows) // 40 or 4))
 
-    km = KMeans(n_clusters=effective_k, n_init=10, random_state=42)
+    km = KMeans(n_clusters=effective_k, n_init=4, random_state=42)
     labels = km.fit_predict(mat)
     coords = PCA(n_components=2, random_state=42).fit_transform(mat)
 
@@ -132,6 +137,15 @@ def _compute_clusters(rows: list[dict], k: int = 18) -> dict:
     clusters_out.sort(key=lambda c: c["size"], reverse=True)
     for rank, c in enumerate(clusters_out, start=1):
         c["rank"] = rank
+
+    # 轻量化：散点总量超过 MAX_POINTS 时按簇等比例抽样（固定随机种子，多次请求结果稳定）
+    total_pts = sum(len(c["points"]) for c in clusters_out)
+    if total_pts > MAX_POINTS:
+        rng = random.Random(42)
+        for c in clusters_out:
+            quota = min(len(c["points"]), max(1, round(len(c["points"]) / total_pts * MAX_POINTS)))
+            c["points"] = rng.sample(c["points"], quota)
+
     return {"total": len(rows), "k": len(clusters_out), "clusters": clusters_out}
 
 
@@ -159,9 +173,10 @@ async def compute_keyword_trends(db, top: int = 12, keywords: list[str] | None =
     """
     from sqlalchemy import select as sa_select
     from app.models import Paper
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    cutoff = datetime.utcnow() - timedelta(days=365)
+    # published_at 比较基准：与 utcnow 同值的 naive-UTC（无弃用告警的等价写法）
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=365)
     prev_cut = cutoff - timedelta(days=365)
 
     result = await db.execute(

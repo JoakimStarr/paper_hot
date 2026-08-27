@@ -2,17 +2,18 @@
 
 import React, { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
-import { papersApi } from '@/lib/api';
+import { papersApi, ApiError } from '@/lib/api';
 import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo } from '@/types/paper';
-import { Activity, Settings, Database, Brain, Loader2 } from 'lucide-react';
+import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide-react';
 import { KeywordCrawlForm } from './CrawlerTab';
 import { useLanguage } from '@/contexts/LanguageContext';
 import OverviewTab from './OverviewTab';
 import CrawlerTab from './CrawlerTab';
 import DataTab from './DataTab';
 import ModelConfigTab from './ModelConfigTab';
+import LogsTab from './LogsTab';
 
-type TabType = 'overview' | 'crawler' | 'data' | 'modelConfig';
+type TabType = 'overview' | 'crawler' | 'data' | 'modelConfig' | 'logs';
 
 export default function SystemPage() {
   const { t } = useLanguage();
@@ -45,7 +46,9 @@ export default function SystemPage() {
   // 关键词检索爬取
   const [kwInfo, setKwInfo] = useState<CNKISearchInfo | null>(null);
   const [kwStarting, setKwStarting] = useState(false);
-  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', show_browser: false });
+  const [kwStopping, setKwStopping] = useState(false);
+  const [rerunningLogId, setRerunningLogId] = useState<number | null>(null);
+  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', detail_workers: '3', show_browser: false });
   const kwPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadKwStatus = async () => {
@@ -53,6 +56,28 @@ export default function SystemPage() {
       const info = await papersApi.getCNKISearchStatus();
       setKwInfo(info);
     } catch { /* ignore */ }
+  };
+
+  // 关键词爬取状态轮询（启动/重跑共用）；上限 200 次（约 10 分钟），超时停止自动刷新
+  const startKwStatusPoll = () => {
+    if (kwPollRef.current) clearInterval(kwPollRef.current);
+    let kwAttempts = 0;
+    kwPollRef.current = setInterval(async () => {
+      kwAttempts += 1;
+      const info = await papersApi.getCNKISearchStatus().catch(() => null);
+      if (!info) return;
+      setKwInfo(info);
+      if (!info.running && kwPollRef.current) {
+        clearInterval(kwPollRef.current);
+        kwPollRef.current = null;
+        setKwStarting(false);
+      } else if (kwAttempts > 200 && kwPollRef.current) {
+        clearInterval(kwPollRef.current);
+        kwPollRef.current = null;
+        setKwStarting(false);
+        setMessage('关键词爬取仍在后台进行，已停止状态轮询，请稍后手动刷新查看进度');
+      }
+    }, 3000);
   };
 
   useEffect(() => () => { if (kwPollRef.current) clearInterval(kwPollRef.current); }, []);
@@ -67,24 +92,14 @@ export default function SystemPage() {
         search_field: kwForm.search_field || '主题',
         years: kwForm.years.trim() || undefined,
         max_pages: kwForm.max_pages ? Number(kwForm.max_pages) : undefined,
+        detail_workers: kwForm.detail_workers ? Math.min(Math.max(1, Number(kwForm.detail_workers)), 12) : 3,
         show_browser: kwForm.show_browser,
       });
       setMessage(t('sys.kwStarted'));
-      if (kwPollRef.current) clearInterval(kwPollRef.current);
-      kwPollRef.current = setInterval(async () => {
-        const info = await papersApi.getCNKISearchStatus().catch(() => null);
-        if (info) {
-          setKwInfo(info);
-          if (!info.running && kwPollRef.current) {
-            clearInterval(kwPollRef.current);
-            kwPollRef.current = null;
-            setKwStarting(false);
-          }
-        }
-      }, 3000);
+      startKwStatusPoll();
       void res;
     } catch (error: any) {
-      setMessage(error.response?.data?.detail || t('sys.kwStartFailed'));
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwStartFailed'));
       setKwStarting(false);
     }
   };
@@ -94,7 +109,7 @@ export default function SystemPage() {
       const res = await papersApi.pauseCNKISearch();
       setMessage(res.status === 'paused' ? t('sys.kwPaused') : t('sys.kwPauseFailed'));
     } catch (error: any) {
-      setMessage(error.response?.data?.detail || t('sys.kwPauseFailed'));
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwPauseFailed'));
     }
   };
 
@@ -103,7 +118,42 @@ export default function SystemPage() {
       await papersApi.resumeCNKISearch();
       setMessage(t('sys.kwResumed'));
     } catch (error: any) {
-      setMessage(error.response?.data?.detail || t('sys.kwResumeFailed'));
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwResumeFailed'));
+    }
+  };
+
+  const handleStopKeywordCrawl = async () => {
+    if (!kwInfo?.running) return;
+    setKwStopping(true);
+    try {
+      await papersApi.stopCNKISearch();
+      setMessage(t('sys.kwStopped'));
+      setKwStopping(false);
+      // 状态轮询很快会拉到 running=false 并自动复位
+    } catch (error: any) {
+      setKwStopping(false);
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwStopFailed'));
+    }
+  };
+
+  const handleRerunTask = async (logId: number) => {
+    if (rerunningLogId !== null) return;
+    setRerunningLogId(logId);
+    try {
+      const res = await papersApi.rerunCrawl(logId);
+      setMessage(res.task_type === 'keyword'
+        ? `已重新启动关键词爬取：${res.name}`
+        : `已重新启动期刊爬取：${res.name}`);
+      if (res.task_type === 'keyword') {
+        // 关键词任务重跑：立即拉一次状态并启动轮询，进度实时更新
+        loadKwStatus();
+        startKwStatusPoll();
+      }
+    } catch (error: any) {
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || '任务重跑失败');
+    } finally {
+      setRerunningLogId(null);
+      fetchData();
     }
   };
 
@@ -239,7 +289,7 @@ export default function SystemPage() {
       setMessage(res.message || t('sys.crawlStarted'));
       setTimeout(fetchData, 3000);
     } catch (error: any) {
-      setMessage(error.response?.data?.detail || t('sys.crawlStartFailed'));
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.crawlStartFailed'));
     } finally {
       setCrawling(false);
     }
@@ -254,7 +304,7 @@ export default function SystemPage() {
         : await papersApi.startCNKNaviCrawl();
       setMessage(res.message || t('sys.cnkiStarted'));
     } catch (error: any) {
-      setMessage(error.response?.data?.detail || t('sys.cnkiStartFailed'));
+      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.cnkiStartFailed'));
     } finally {
       setCnkiCrawling(null);
     }
@@ -271,7 +321,7 @@ export default function SystemPage() {
       setApiKeys(prev => ({ ...prev, [provider]: '' }));
       fetchSettings();
     } catch (error: any) {
-      setApiMessage(prev => ({ ...prev, [provider]: error.response?.data?.detail || t('sys.updateFailedMsg') }));
+      setApiMessage(prev => ({ ...prev, [provider]: error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.updateFailedMsg') }));
     } finally {
       setUpdatingKey(null);
     }
@@ -295,7 +345,7 @@ export default function SystemPage() {
       setModelMessage(t('sys.orderSaved'));
       fetchSettings();
     } catch (error: any) {
-      setModelMessage(error.response?.data?.detail || t('sys.saveFailed'));
+      setModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
     } finally {
       setSavingModels(false);
     }
@@ -336,7 +386,7 @@ export default function SystemPage() {
       setCleanupMessage(t('sys.cleanupDone'));
       fetchData();
     } catch (error: any) {
-      setCleanupMessage(error.response?.data?.detail || t('sys.cleanupFailed'));
+      setCleanupMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.cleanupFailed'));
     } finally {
       setCleaning(false);
     }
@@ -353,7 +403,7 @@ export default function SystemPage() {
       setCnkiPrefixMessage(t('sys.cnkiPrefixSaved'));
       fetchData();
     } catch (error: any) {
-      setCnkiPrefixMessage(error.response?.data?.detail || t('sys.saveFailed'));
+      setCnkiPrefixMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
     } finally {
       setSavingCnkiPrefix(false);
     }
@@ -366,7 +416,7 @@ export default function SystemPage() {
       await papersApi.updateSettings({ ports: { backend_port: ports.backend, frontend_port: ports.frontend } });
       setPortMessage(t('sys.portSaved'));
     } catch (error: any) {
-      setPortMessage(error.response?.data?.detail || t('sys.saveFailed'));
+      setPortMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
     } finally {
       setSavingPorts(false);
     }
@@ -381,7 +431,7 @@ export default function SystemPage() {
       setEditingAppName(false);
       fetchData();
     } catch (error: any) {
-      setAppNameMessage(error.response?.data?.detail || t('sys.saveFailed'));
+      setAppNameMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
     } finally {
       setSavingAppName(false);
     }
@@ -447,7 +497,7 @@ export default function SystemPage() {
       handleCancelEditProvider();
       fetchSettings();
     } catch (error: any) {
-      setCustomProviderMessage(error.response?.data?.detail || t('sys.saveFailed'));
+      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
     } finally {
       setSavingCustomProvider(false);
     }
@@ -463,7 +513,7 @@ export default function SystemPage() {
       setCustomProviderMessage(t('sys.providerDeleteMsg', { name }));
       fetchSettings();
     } catch (error: any) {
-      setCustomProviderMessage(error.response?.data?.detail || t('sys.deleteFailed'));
+      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.deleteFailed'));
     } finally {
       setSavingCustomProvider(false);
     }
@@ -477,7 +527,7 @@ export default function SystemPage() {
       setDefaultModel(model);
       setDefaultModelMessage(t('sys.defaultSaved'));
     } catch (error: any) {
-      setDefaultModelMessage(error.response?.data?.detail || t('sys.defaultSaveFailed'));
+      setDefaultModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.defaultSaveFailed'));
     } finally {
       setSavingDefaultModel(false);
     }
@@ -491,7 +541,7 @@ export default function SystemPage() {
       setDefaultModel(null);
       setDefaultModelMessage(t('sys.defaultSaved'));
     } catch (error: any) {
-      setDefaultModelMessage(error.response?.data?.detail || t('sys.defaultSaveFailed'));
+      setDefaultModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.defaultSaveFailed'));
     } finally {
       setSavingDefaultModel(false);
     }
@@ -506,7 +556,7 @@ export default function SystemPage() {
       setEmbeddingModel(value || null);
       setEmbeddingModelMessage(t('sys.embeddingSaved'));
     } catch (error: any) {
-      setEmbeddingModelMessage(error.response?.data?.detail || t('sys.embeddingSaveFailed'));
+      setEmbeddingModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.embeddingSaveFailed'));
     } finally {
       setSavingEmbeddingModel(false);
     }
@@ -521,7 +571,7 @@ export default function SystemPage() {
     } catch (error: any) {
       setTestResults(prev => ({
         ...prev,
-        [model]: { ok: false, message: error.response?.data?.detail || error.message || t('sys.testFailed') },
+        [model]: { ok: false, message: error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.testFailed') },
       }));
     } finally {
       setTestingModel('');
@@ -550,7 +600,7 @@ export default function SystemPage() {
         setCustomProviderMessage(res.message || t('sys.fetchModelsEmpty'));
       }
     } catch (error: any) {
-      setCustomProviderMessage(error.response?.data?.detail || t('sys.fetchModelsFailed'));
+      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.fetchModelsFailed'));
     } finally {
       setFetchingModels(false);
     }
@@ -561,6 +611,7 @@ export default function SystemPage() {
     { key: 'crawler', label: t('systemTab.crawler'), icon: <Settings className="w-4 h-4" /> },
     { key: 'data', label: t('systemTab.data'), icon: <Database className="w-4 h-4" /> },
     { key: 'modelConfig', label: t('systemTab.modelConfig'), icon: <Brain className="w-4 h-4" /> },
+    { key: 'logs', label: '日志', icon: <ScrollText className="w-4 h-4" /> },
   ];
 
   const renderTabContent = () => {
@@ -602,13 +653,17 @@ export default function SystemPage() {
             onTriggerJob={handleTriggerJob}
             crawlLogs={crawlLogs}
             onRefresh={fetchData}
+            onRerunTask={handleRerunTask}
+            rerunningLogId={rerunningLogId}
             kwInfo={kwInfo}
             kwStarting={kwStarting}
+            kwStopping={kwStopping}
             kwForm={kwForm}
             setKwForm={setKwForm}
             onStartKeywordCrawl={handleStartKeywordCrawl}
             onPauseKeywordCrawl={handlePauseKeywordCrawl}
             onResumeKeywordCrawl={handleResumeKeywordCrawl}
+            onStopKeywordCrawl={handleStopKeywordCrawl}
           />
         );
       case 'data':
@@ -667,6 +722,8 @@ export default function SystemPage() {
             onFetchModels={handleFetchModels}
           />
         );
+      case 'logs':
+        return <LogsTab />;
     }
   };
 

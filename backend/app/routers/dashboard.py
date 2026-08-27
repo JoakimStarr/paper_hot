@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header
-from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func
+from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func, or_ as sa_or
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,11 +20,12 @@ from app.database import get_db
 from app.models import (
     Paper, PaperScore, Favorite, ReadingHistory, TopicProject,
     AIAnalysisReport, PaperAnalysis, FollowedSubfield, TopicTrend,
+    ReviewReport,
 )
 from app.crud import _hidden_paper_condition
 from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
-    verify_token, _paper_to_card,
+    verify_token, _paper_to_card, _isoformat_utc,
     _get_ai_client, _resolve_model_provider, _get_default_model,
 )
 
@@ -151,17 +152,32 @@ async def _today_read(db: AsyncSession, followed_subfields: List[str], hidden: O
 
 
 async def _briefing(db: AsyncSession) -> dict:
-    """领域快讯：热点趋势 Top 5（复用 TopicTrend）+ 一句话结论。"""
-    cutoff = datetime.now() - timedelta(weeks=8)
+    """领域快讯：热点趋势 Top 5（复用 TopicTrend）+ 一句话结论。
+
+    注意：TopicTrend.week_start 存「年份桶」（当年1月1日，CNKI 半数论文仅有年份精度），
+    按自然周/月窗口过滤会在每年 2 月后恒返回空——这里取最近 3 个年份桶作为窗口。
+    """
+    recent_buckets = (
+        await db.execute(
+            sa_select(TopicTrend.week_start)
+            .distinct()
+            .order_by(sa_desc(TopicTrend.week_start))
+            .limit(3)
+        )
+    ).scalars().all()
+
+    if not recent_buckets:
+        return {"topics": [], "ai_note": None}
+
     result = await db.execute(
         sa_select(TopicTrend)
-        .where(TopicTrend.week_start >= cutoff)
+        .where(TopicTrend.week_start.in_(recent_buckets))
         .order_by(sa_desc(TopicTrend.growth_rate))
         .limit(5)
     )
     total_result = await db.execute(
         sa_select(TopicTrend.topic, TopicTrend.paper_count)
-        .where(TopicTrend.week_start >= cutoff)
+        .where(TopicTrend.week_start.in_(recent_buckets))
     )
     stats = {row[0]: row[1] for row in total_result.all()}
 
@@ -248,10 +264,31 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
     )
     report = latest_report.scalar_one_or_none()
 
+    # 最近文献综述（producer 生成，按用户隔离；随记录带上其引用的论文数）
+    review_rows = await db.execute(
+        sa_select(ReviewReport)
+        .where(
+            sa_or(ReviewReport.user_id == uid, ReviewReport.user_id == "local"),
+            ReviewReport.status == "success",
+        )
+        .order_by(sa_desc(ReviewReport.created_at))
+        .limit(5)
+    )
+    reviews = [
+        {
+            "id": r.id,
+            "topic": r.topic,
+            "paper_count": len(r.papers_json or []),
+            "created_at": _isoformat_utc(r.created_at),
+        }
+        for r in review_rows.scalars()
+    ]
+
     return {
         "favorites": fav_papers,
         "recent_analyses": recent_analyses,
         "topic_projects": proj_out,
+        "reviews": reviews,
         "latest_report_summary": report.summary if report else None,
         "latest_report_id": report.id if report else None,
         "favorite_count": len(fav_papers),
@@ -267,8 +304,9 @@ _TODAY_BRIEF_TTL_SECONDS = 60
 async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = now - timedelta(days=7)
+    month_start = now - timedelta(days=30)
 
+    # 速览条展示「新发表」论文数，按论文发表时间 published_at 统计
     today_count = (
         await db.execute(
             sa_select(sa_func.count())
@@ -277,11 +315,11 @@ async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
         )
     ).scalar() or 0
 
-    week_count = (
+    month_count = (
         await db.execute(
             sa_select(sa_func.count())
             .select_from(Paper)
-            .where(Paper.published_at >= week_start)
+            .where(Paper.published_at >= month_start)
         )
     ).scalar() or 0
 
@@ -298,14 +336,14 @@ async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
                 .select_from(Paper)
                 .where(
                     Paper.economics_subfield.in_(subfields),
-                    Paper.published_at >= week_start,
+                    Paper.published_at >= month_start,
                 )
             )
         ).scalar() or 0
 
     return {
         "today_count": int(today_count),
-        "week_count": int(week_count),
+        "month_count": int(month_count),
         "watch_subfield_count": watch_subfield_count,
         "generated_at": now.isoformat(),
     }
@@ -317,7 +355,7 @@ async def get_today_brief(
     token: bool = Depends(verify_token),
     x_user_id: str = Header(default=None),
 ):
-    """今日速览：今日/近7天入库论文数 + 关注子领域近7天数（60s TTL 缓存，按用户隔离）。"""
+    """今日速览：今日/近一个月新发表论文数 + 关注子领域近一个月数（60s TTL 缓存，按用户隔离）。"""
     uid = _uid(x_user_id)
 
     async def _compute() -> dict:

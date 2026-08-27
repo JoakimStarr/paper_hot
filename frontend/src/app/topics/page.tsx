@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { Compass, Sparkles, Loader2, Table2, ShieldCheck, RefreshCw, Database, Square, CheckCircle2, ChevronRight, ChevronDown, Brain, Save, Trash2, FolderKanban, BookMarked, FileText } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { topicsApi, streamValidateTopic, generateTopicProposal } from '@/lib/api';
+import { reportPageContext } from '@/lib/assistantBus';
 import { downloadTextFile } from '@/lib/utils';
 import type { GapAnalysisResponse, ResearchGap, RetrievedPaper, TopicProject, ValidatorStatus } from '@/types/paper';
 import ProducerLab from './ProducerLab';
@@ -26,6 +27,8 @@ type TabKey = 'gaps' | 'validator' | 'library' | 'producer';
 export default function TopicsPage() {
   const { t } = useLanguage();
   const [tab, setTab] = useState<TabKey>('gaps');
+  // 工作台深链：?review={id} 直接打开指定综述
+  const [initialReviewId, setInitialReviewId] = useState<number | null>(null);
 
   // ---- 研究空白 ----
   const [gaps, setGaps] = useState<ResearchGap[]>([]);
@@ -47,9 +50,18 @@ export default function TopicsPage() {
   const [reasoningOpen, setReasoningOpen] = useState(true);
   const [retrievedPapers, setRetrievedPapers] = useState<RetrievedPaper[]>([]);
   const [retrievedMode, setRetrievedMode] = useState('');
+  // 召回论文 → [n] 引用映射：让验证报告里的 [n] 可点击跳转论文详情
+  const reportCitations = useMemo(() => {
+    const map: Record<number, { id: string; title?: string }> = {};
+    for (const p of retrievedPapers) {
+      if (p.n !== undefined) map[p.n] = { id: String(p.id), title: p.title };
+    }
+    return map;
+  }, [retrievedPapers]);
   const [savingProject, setSavingProject] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const backfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ---- P2-12b 竞争地图 / P2-12a 立项书 ----
   const [competition, setCompetition] = useState<{
@@ -118,6 +130,10 @@ export default function TopicsPage() {
     loadGapAnalysis();
     loadValidatorStatus();
     loadProjects();
+    // 卸载清理：向量补齐轮询定时器
+    return () => {
+      if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current);
+    };
   }, [loadGaps, loadGapAnalysis, loadValidatorStatus, loadProjects]);
 
   // 跨页预填：网络图「转选题」等入口把题目写入 localStorage，这里读取并切到验证 tab
@@ -134,29 +150,57 @@ export default function TopicsPage() {
     if (tabParam === 'validator' || tabParam === 'library' || tabParam === 'producer') {
       setTab(tabParam);
     }
+    // 工作台深链：?review={id} 直接打开指定综述
+    const reviewParam = new URLSearchParams(window.location.search).get('review');
+    if (reviewParam && /^\d+$/.test(reviewParam)) {
+      setInitialReviewId(Number(reviewParam));
+    }
   }, []);
 
-  // 后台任务轮询：running 期间按递增间隔查状态，完成后刷新
+  // 后台任务轮询：running 期间按递增间隔查状态，完成后刷新。
+  // ref 式自调度（对齐 trends 页 startPolling）：网络抖动等异常不断链，连续失败超限才放弃
   useEffect(() => {
     if (!gapAnalyzing) return;
-    const interval = POLL_INTERVALS[Math.min(pollCountRef.current, POLL_INTERVALS.length - 1)];
-    pollTimerRef.current = setTimeout(async () => {
-      pollCountRef.current += 1;
+
+    const stopPolling = () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    if (pollTimerRef.current) return;
+    pollCountRef.current = 0;
+    let failCount = 0;
+
+    const tick = async () => {
       try {
         const res = await topicsApi.getGapAnalysis();
+        failCount = 0;
         setGapAnalysis(res);
         if (!res.is_running) {
           setGapAnalyzing(false);
           pollCountRef.current = 0;
+          pollTimerRef.current = null;
+          return;
         }
       } catch {
-        /* 网络抖动继续轮询 */
+        // 网络抖动继续轮询；连续失败超过 10 次则放弃，避免轮询悬挂
+        failCount += 1;
+        if (failCount > 10) {
+          setGapAnalyzing(false);
+          pollCountRef.current = 0;
+          pollTimerRef.current = null;
+          return;
+        }
       }
-    }, interval);
-    return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      pollCountRef.current = Math.min(pollCountRef.current + 1, POLL_INTERVALS.length - 1);
+      pollTimerRef.current = setTimeout(tick, POLL_INTERVALS[pollCountRef.current]);
     };
-  }, [gapAnalyzing, gapAnalysis]);
+
+    pollTimerRef.current = setTimeout(tick, POLL_INTERVALS[0]);
+    return stopPolling;
+  }, [gapAnalyzing]);
 
   // ---- 交互 ----
   const startGapAnalysis = async () => {
@@ -177,20 +221,22 @@ export default function TopicsPage() {
     try {
       // 触发一次性全量增量补建（后端内部循环直到补齐），期间轮询刷新进度
       await topicsApi.backfillEmbeddings(500);
-      // 后台构建需要时间：轮询刷新，直至达到全量或失败
-      const deadline = Date.now() + 10 * 60 * 1000; // 最多查询 10 分钟
+      // 后台构建需要时间：轮询刷新，直至达到全量；attempts 上限 60 次（约 3 分钟）防无限轮询
+      let attempts = 0;
+      if (backfillTimerRef.current) clearTimeout(backfillTimerRef.current);
       const poll = async () => {
+        attempts += 1;
         const s = await loadValidatorStatus();
         const done = s && s.embedded_papers && s.total_papers
           ? s.embedded_papers >= s.total_papers
           : true;
-        if (done || Date.now() > deadline) {
+        if (done || attempts > 60) {
           setBackfilling(false);
         } else {
-          setTimeout(poll, 3000);
+          backfillTimerRef.current = setTimeout(poll, 3000);
         }
       };
-      setTimeout(poll, 3000);
+      backfillTimerRef.current = setTimeout(poll, 3000);
     } catch {
       setBackfilling(false);
     }
@@ -327,7 +373,7 @@ export default function TopicsPage() {
       {/* Tab 切换 */}
       <div className="flex gap-2 mb-6">
         <button
-          onClick={() => setTab('gaps')}
+          onClick={() => { setTab('gaps'); reportPageContext({ tab: 'gaps' }); }}
           className={`flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-md transition-colors ${
             tab === 'gaps'
               ? 'bg-primary-600 text-white'
@@ -338,7 +384,7 @@ export default function TopicsPage() {
           {t('tp.tabGaps')}
         </button>
         <button
-          onClick={() => setTab('validator')}
+          onClick={() => { setTab('validator'); reportPageContext({ tab: 'validator' }); }}
           className={`flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-md transition-colors ${
             tab === 'validator'
               ? 'bg-primary-600 text-white'
@@ -349,7 +395,7 @@ export default function TopicsPage() {
           {t('tp.tabValidator')}
         </button>
         <button
-          onClick={() => setTab('library')}
+          onClick={() => { setTab('library'); reportPageContext({ tab: 'library' }); }}
           className={`flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-md transition-colors ${
             tab === 'library'
               ? 'bg-primary-600 text-white'
@@ -360,7 +406,7 @@ export default function TopicsPage() {
           选题库
         </button>
         <button
-          onClick={() => setTab('producer')}
+          onClick={() => { setTab('producer'); reportPageContext({ tab: 'producer' }); }}
           className={`flex items-center gap-1.5 px-3.5 py-2 text-sm rounded-md transition-colors ${
             tab === 'producer'
               ? 'bg-primary-600 text-white'
@@ -596,6 +642,7 @@ export default function TopicsPage() {
                           className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-md hover:border-primary-400 transition-colors"
                         >
                           <span className="flex-1 min-w-0 text-xs sm:text-sm text-gray-700 dark:text-gray-300 truncate">
+                            {p.n !== undefined && <span className="text-gray-400 mr-1.5 font-mono">[{p.n}]</span>}
                             {p.title}
                           </span>
                           <span className="flex items-center gap-2 shrink-0">
@@ -692,7 +739,7 @@ export default function TopicsPage() {
                 <div className="text-sm text-red-500 py-4">{reportError}</div>
               ) : (
                 <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <MarkdownRenderer content={reportContent || '...'} />
+                  <MarkdownRenderer content={reportContent || '...'} citations={reportCitations} />
                 </div>
               )}
 
@@ -912,7 +959,7 @@ export default function TopicsPage() {
       )}
 
       {/* ==================== Tab 4：产出工作台（综述生成 + 期刊适配） ==================== */}
-      {tab === 'producer' && <ProducerLab />}
+      {tab === 'producer' && <ProducerLab initialReviewId={initialReviewId} />}
     </Layout>
   );
 }

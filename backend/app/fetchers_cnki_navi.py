@@ -117,8 +117,26 @@ class CNKINaviFetcher:
         time.sleep(delay)
     
     def _check_captcha(self) -> bool:
-        """检查是否有验证码 - 已禁用"""
-        # 验证码检测已关闭，直接返回False
+        """检查是否有验证码
+
+        恢复元素级探测：命中知网已知验证元素即认为出现验证码。
+        选择器未经真机充分校准，找不到任何已知元素时保守返回 False，
+        避免误报持续阻塞爬取主流程。
+        TODO: 待真机校准选择器（滑块容器等）后再收紧判断逻辑。
+        """
+        if not self.page:
+            return False
+
+        known_selectors = [
+            'div[title="验证"]',
+        ]
+        for selector in known_selectors:
+            try:
+                if self.page.ele(selector, timeout=1):
+                    logger.info(f"Captcha detected via selector: {selector}")
+                    return True
+            except Exception:
+                continue
         return False
     
     def _handle_captcha(self):
@@ -473,7 +491,14 @@ class CNKINaviFetcher:
     async def fetch_all_papers(self, max_journals: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         爬取所有期刊的论文
+
+        DrissionPage 的浏览器操作/时间等待均为同步阻塞调用，
+        必须放到工作线程执行，避免卡死事件循环（F3）
         """
+        return await asyncio.to_thread(self._fetch_all_papers_sync, max_journals)
+
+    def _fetch_all_papers_sync(self, max_journals: Optional[int] = None) -> List[Dict[str, Any]]:
+        """fetch_all_papers 的同步实现（在 to_thread 中执行）"""
         all_papers = []
         
         try:
@@ -546,7 +571,11 @@ class CNKINaviFetcher:
             logger.error(f"Error saving papers to JSON: {e}")
     
     async def save_papers_to_db(self, db) -> int:
-        """保存论文数据到数据库"""
+        """保存论文数据到数据库
+
+        ⚠ 与 scheduler.fetch_and_process_cnki_navi_journals 内联入库逻辑重复，
+        P2 单栈化时合并（scheduler 侧代码由他人维护，此处暂不做行为变更）。
+        """
         from app.crud import PaperCRUD
         
         saved_count = 0

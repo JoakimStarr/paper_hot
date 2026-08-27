@@ -5,16 +5,17 @@ import time
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.database import get_db, AsyncSessionLocal
+from app.config import settings
 from app.crud import AIAnalysisReportCRUD, TrendChatCRUD
 from app.ai_service import ai_trend_service
 from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc,
-    _get_ai_client, _resolve_model_provider, _get_default_model, _stream_chat_response,
+    _get_ai_client, _resolve_model_provider, _get_default_model, _stream_agent_chat_response,
 )
 from app.schemas import AIAnalysisReportResponse, AIAnalysisReportListResponse
 
@@ -465,6 +466,16 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
     if len(analysis_context) > 6000:
         analysis_context = analysis_context[:6000] + "\n\n...(内容过长已截断)"
 
+    # Agent 工具检索开关：关闭时移除工具规则，追问退化为普通对话（不检索论文库）
+    tool_rules = """\
+## 工具使用规则（重要）
+你可以在论文库中检索数据。当用户询问涉及库内具体内容的问题时——例如"有哪些相关论文"、"某方向的研究脉络/方法/结论"、"论文数量/趋势"、"谁在研究"——**必须**先调用工具检索，再基于检索结果回答：
+- `search_papers`：按关键词/期刊/年份检索论文
+- `retrieve_context`：语义召回最相关的论文（返回标题/摘要/编号，适合"研究到哪了/结论是什么"）
+- `paper_trend` / `keyword_gaps` / `subfield_distribution` / `author_papers`：趋势、空白、子领域分布、作者论文
+
+引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空，如实说明。""" if settings.agent_enabled else ""
+
     system_prompt = f"""你是一位专业的论文选题分析师。你的职责是基于AI趋势分析结果，帮助用户深入理解研究热点、发现选题机会、评估研究方向可行性。
 
 以下是当前AI趋势分析的结果：
@@ -478,7 +489,9 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
 4. 分析不同研究方向之间的关联和差异
 5. 结合分析数据给出选题的优劣势分析
 
-如果问题超出分析数据范围，请诚实说明，但可以基于你的专业知识给出合理建议。用中文回答，回答要有深度和针对性。"""
+如果问题超出分析数据范围，请诚实说明，但可以基于你的专业知识给出合理建议。用中文回答，回答要有深度和针对性。
+
+{tool_rules}"""
 
     messages = [{"role": "system", "content": system_prompt}] + body.messages
 
@@ -488,19 +501,15 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    # PAGE_REDESIGN §9 P0：趋势追问接入简易 Agent——模型可按需查库
-    # （检索论文/关键词趋势/研究空白/子领域分布/作者论文），失败自动降级为纯对话。
-    try:
-        from app.agent import run_agent_chat
-        messages, _trace = await run_agent_chat(
-            messages, client, bare_model or "", surface="trend_chat",
-        )
-        if _trace:
-            logger.info(f"agent tools used: {[x['tool'] for x in _trace]}")
-    except Exception as e:
-        logger.warning(f"agent loop failed, fallback to plain chat: {e}")
+    # 未指定模型时取默认模型：agent 工具循环需要真实模型名，空字符串会让工具调用直接失败
+    # （之前这里传 bare_model or ""，导致追问静默降级为纯对话、检索不到论文库）
+    if not bare_model:
+        bare_model = _get_default_model(provider)
 
-    return _stream_chat_response(client, provider, messages, model=bare_model)
+    # PAGE_REDESIGN §9 P0：趋势追问接入简易 Agent——模型可按需查库
+    # （检索论文/语义召回/关键词趋势/研究空白/子领域分布/作者论文），失败自动降级为纯对话。
+    # 流式过程中实时推送工具调用进度，前端展示"正在调用…"，结束再输出工具轨迹与正文。
+    return _stream_agent_chat_response(client, provider, messages, model=bare_model, surface="trend_chat")
 
 
 @router.get("/ai-analysis/reports/{report_id}/chats")
@@ -536,3 +545,36 @@ async def clear_trend_chat_history(report_id: int, db: AsyncSession = Depends(ge
     return {"status": "cleared"}
 
 
+
+
+class AIFeedbackRequest(BaseModel):
+    """AI 回答反馈（👍/👎，P2）。surface: trend_chat/paper_chat/validator/producer/gap 等。"""
+    surface: str = "chat"
+    ref_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    rating: int  # 1 赞 / -1 踩
+    model: Optional[str] = None
+
+
+@router.post("/ai/feedback")
+async def submit_ai_feedback(
+    body: AIFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """记录用户对某条 AI 回答的赞/踩，供评估与提示词迭代。"""
+    if body.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="rating 必须为 1（赞）或 -1（踩）")
+    from app.models import AIFeedback
+    fb = AIFeedback(
+        user_id=(x_user_id or "").strip() or "local",
+        surface=(body.surface or "chat")[:30],
+        ref_id=body.ref_id,
+        content_hash=body.content_hash,
+        rating=body.rating,
+        model=body.model,
+    )
+    db.add(fb)
+    await db.commit()
+    return {"status": "ok"}

@@ -37,7 +37,6 @@ class Settings(BaseSettings):
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
 
     scheduler_enabled: bool = True
-    fetch_interval_hours: int = 24
 
     api_token: str = Field(default="", description="API token for protected endpoints")
 
@@ -51,6 +50,18 @@ class Settings(BaseSettings):
 
     backend_port: int = 8000
     frontend_port: int = 3000
+
+    # ── 日志系统 ──
+    # 日志级别（DEBUG/INFO/WARNING/ERROR）；文件日志默认关闭，仅控制台输出
+    log_level: str = "INFO"
+    log_file_enabled: bool = False
+    log_file_path: str = f"{BASE_DIR}/data/logs/app.log"
+    # 启动时清理超过该天数的动作/错误日志（0 表示不清理）
+    log_retention_days: int = 30
+
+    # 追问 Agent（工具检索）开关：开启后 AI 追问可调用工具检索论文库；
+    # 关闭则退化为普通对话（不调用任何工具、不检索）。
+    agent_enabled: bool = False
 
     cors_origins: Union[list[str], str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
 
@@ -90,30 +101,12 @@ class Settings(BaseSettings):
                 return [origin.strip() for origin in self.cors_origins.split(",")]
         return self.cors_origins
 
-    @staticmethod
-    def update_setting(key: str, value: str):
-        env_path = BASE_DIR / ".env"
-        lines = []
-        if env_path.exists():
-            with open(env_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        found = False
-        new_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#") and "=" in stripped:
-                k = stripped.split("=", 1)[0].strip()
-                if k == key:
-                    new_lines.append(f"{key}={value}\n")
-                    found = True
-                    continue
-            new_lines.append(line)
-        if not found:
-            new_lines.append(f"{key}={value}\n")
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-        if hasattr(settings, key):
-            setattr(settings, key, value)
-
 
 settings = Settings()
+
+# 启动早期应用 DB 覆盖（必须在 FastAPI app 构建前，否则 CORS/标题/端口用基线值）
+from app.settings_store import apply_boot_overrides as _apply_boot_overrides
+try:
+    _apply_boot_overrides(settings)
+except Exception:
+    pass

@@ -1,11 +1,20 @@
 export function getIssuePeriod(doi: string | null, publishedAt: string | null, journalIssue: string | null): string {
+  // 未来年份兜底：CNKI「网络首发」文章常被编入超前卷期（如 2027 年第01期），
+  // 此时 published_at / DOI 里都是未来年份，显示为具体未来年月会误导用户，
+  // 统一标注为「网络首发」。
+  const maskFuture = (s: string): string => {
+    const m = s.match(/(20\d{2})/);
+    if (m && parseInt(m[1], 10) > new Date().getFullYear()) return '网络首发';
+    return s;
+  };
+
   // 优先级 1: journal_issue（最准，CNKI 源为"2026年第03期"格式）
-  if (journalIssue?.trim()) return journalIssue.trim();
+  if (journalIssue?.trim()) return maskFuture(journalIssue.trim());
   // 优先级 2: published_at（回退到"YYYY年M月"，比只显示年更有信息量）
   if (publishedAt) {
     const d = new Date(publishedAt);
     if (!Number.isNaN(d.getTime())) {
-      return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+      return maskFuture(`${d.getFullYear()}年${d.getMonth() + 1}月`);
     }
   }
   // 优先级 3: DOI 启发式兜底（arXiv 等缺 issue 缺可靠日期时的最后一道）
@@ -13,14 +22,14 @@ export function getIssuePeriod(doi: string | null, publishedAt: string | null, j
     const fy = doi.match(/f\.(\d{4})\.(\d+)$/);
     if (fy && fy[2].length === 4) {
       const issue = Math.min(Math.ceil(parseInt(fy[2], 10) / 5), 12);
-      return `${fy[1]}年 第${issue}期`;
+      return maskFuture(`${fy[1]}年 第${issue}期`);
     }
     const mm = doi.match(/\.(\d{4})\.(\d{2})\.(\d+)$/);
-    if (mm) return `${mm[1]}年${parseInt(mm[2], 10)}月`;
+    if (mm) return maskFuture(`${mm[1]}年${parseInt(mm[2], 10)}月`);
     const ymd = doi.match(/\.(\d{4})(\d{2})(\d{2})\.(\d+)$/);
-    if (ymd) return `${ymd[1]}年${parseInt(ymd[2], 10)}月`;
+    if (ymd) return maskFuture(`${ymd[1]}年${parseInt(ymd[2], 10)}月`);
     const y4 = doi.match(/(19|20)\d{2}/);
-    if (y4) return `${y4[0]}年`;
+    if (y4) return maskFuture(`${y4[0]}年`);
   }
   return '';
 }

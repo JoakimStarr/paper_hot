@@ -1,10 +1,24 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+/**
+ * 主题聚类地图（Canvas 轻量渲染版）。
+ *
+ * 历史性能问题：旧实现用 Recharts(SVG) 渲染全量散点（数千个带事件监听的 SVG
+ * 节点 + Tooltip 悬停 O(N) 扫描），明显卡顿。
+ *
+ * 轻量化手段（继续在 Canvas 方案上做减法）：
+ * - 基础层先渲染到离屏 canvas：悬停/高亮时直接 blit 基础层 + 只画高亮点，
+ *   每次 mousemove 的绘制成本从「数千个 arc」降为「一次 drawImage + 一个圆」
+ * - 按「簇」批量绘制：每簇一次 beginPath + 多个 arc + 一次 fill，
+ *   数千个点只产生 ~k 次填充调用（k = 簇数），而非逐点 fill
+ * - 悬停命中用「均匀网格空间索引」：只检查鼠标周围 3×3 个网格单元，
+ *   不再每次 mousemove O(N) 全扫
+ * - 数据量在服务端已按簇等比例抽样到上限（见 clusters.py MAX_POINTS），
+ *   簇大小/代表论文仍用全量统计，视觉密度不变
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from 'recharts';
 import { Loader2, Map as MapIcon } from 'lucide-react';
 import { papersApi } from '@/lib/api';
 import { TopicClustersResponse, TopicCluster } from '@/types/paper';
@@ -16,6 +30,22 @@ const PALETTE = [
   '#f43f5e', '#0ea5e9', '#a855f7', '#64748b',
 ];
 
+const POINT_R = 3;        // 点半径（CSS px）
+const HIT_R = 9;          // 命中测试半径
+const CELL = HIT_R * 2;   // 空间索引网格单元尺寸（CSS px）
+const CHART_H = 520;
+
+interface CanvasPoint {
+  id: string;
+  title: string;
+  x: number;   // 数据域 0~100
+  y: number;
+  px: number;  // CSS px（layout 时由数据域换算）
+  py: number;
+  color: string;
+  clusterId: number;
+}
+
 interface Props { onData?: () => void }
 
 export default function ClusterMap({ onData }: Props) {
@@ -25,6 +55,15 @@ export default function ClusterMap({ onData }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<TopicCluster | null>(null);
+
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const baseRef = useRef<HTMLCanvasElement | null>(null);   // 离屏基础层
+  const ptsRef = useRef<CanvasPoint[]>([]);
+  const gridRef = useRef<{ cols: number; cells: Map<number, number[]> }>({ cols: 0, cells: new Map() });
+  const sizeRef = useRef({ w: 0, h: CHART_H });
+  const hoverRef = useRef(-1);
 
   useEffect(() => {
     let alive = true;
@@ -44,11 +83,220 @@ export default function ClusterMap({ onData }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const labelById = useMemo(() => {
-    const m = new Map<number, TopicCluster>();
-    data?.clusters.forEach(c => m.set(c.id, c));
-    return m;
+  // 数据 → 点集（仅存数据域坐标，像素坐标在 layout 里按容器宽度换算）
+  useEffect(() => {
+    if (!data) return;
+    const pts: CanvasPoint[] = [];
+    data.clusters.forEach((c, i) => {
+      const color = PALETTE[i % PALETTE.length];
+      for (const pt of c.points) {
+        pts.push({ id: pt.id, title: pt.title, x: pt.x, y: pt.y, px: 0, py: 0, color, clusterId: c.id });
+      }
+    });
+    ptsRef.current = pts;
   }, [data]);
+
+  /** 按当前容器尺寸换算像素坐标并重建空间索引（数据/尺寸变化时调用）。 */
+  const layout = useCallback(() => {
+    const { w, h } = sizeRef.current;
+    const pts = ptsRef.current;
+    const cols = Math.max(1, Math.ceil(w / CELL));
+    const rows = Math.max(1, Math.ceil(h / CELL));
+    const cells = new Map<number, number[]>();
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      p.px = (p.x / 100) * w;
+      p.py = (p.y / 100) * h;
+      const ci = Math.min(cols - 1, Math.floor(p.px / CELL));
+      const cj = Math.min(rows - 1, Math.floor(p.py / CELL));
+      const key = cj * cols + ci;
+      let arr = cells.get(key);
+      if (!arr) { arr = []; cells.set(key, arr); }
+      arr.push(i);
+    }
+    gridRef.current = { cols, cells };
+  }, []);
+
+  /** 渲染离屏基础层：网格 + 全部点（按簇批量绘制，选中时淡化其余簇）。 */
+  const renderBase = useCallback((selectedId: number | null) => {
+    const { w, h } = sizeRef.current;
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    let base = baseRef.current;
+    if (!base) { base = document.createElement('canvas'); baseRef.current = base; }
+    if (base.width !== Math.round(w * dpr)) {
+      base.width = Math.round(w * dpr);
+      base.height = Math.round(h * dpr);
+    }
+    const bctx = base.getContext('2d');
+    if (!bctx) return;
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.clearRect(0, 0, w, h);
+
+    // 十字参考网格（浅色，装饰性）
+    bctx.strokeStyle = 'rgba(128,128,128,0.12)';
+    bctx.lineWidth = 1;
+    for (let g = 20; g < 100; g += 20) {
+      const gx = (g / 100) * w;
+      const gy = (g / 100) * h;
+      bctx.beginPath(); bctx.moveTo(gx, 0); bctx.lineTo(gx, h); bctx.stroke();
+      bctx.beginPath(); bctx.moveTo(0, gy); bctx.lineTo(w, gy); bctx.stroke();
+    }
+
+    // 按簇分组，每簇一次 path + 一次 fill
+    const pts = ptsRef.current;
+    const groups = new Map<number, { color: string; idxs: number[] }>();
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      let g = groups.get(p.clusterId);
+      if (!g) { g = { color: p.color, idxs: [] }; groups.set(p.clusterId, g); }
+      g.idxs.push(i);
+    }
+    groups.forEach((g, cid) => {
+      bctx.globalAlpha = selectedId === null ? 0.75 : (cid === selectedId ? 0.95 : 0.10);
+      bctx.fillStyle = g.color;
+      bctx.beginPath();
+      for (let i = 0; i < g.idxs.length; i++) {
+        const p = pts[g.idxs[i]];
+        bctx.moveTo(p.px + POINT_R, p.py);  // 隔离子路径，避免相邻圆之间出现连线
+        bctx.arc(p.px, p.py, POINT_R, 0, Math.PI * 2);
+      }
+      bctx.fill();
+    });
+    bctx.globalAlpha = 1;
+  }, []);
+
+  /** 主画布：blit 基础层 + 可选的高亮点。悬停路径是 O(1)。 */
+  const draw = useCallback((hoverIdx: number) => {
+    const canvas = canvasRef.current;
+    const base = baseRef.current;
+    const { w, h } = sizeRef.current;
+    if (!canvas || !base || !w) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(base, 0, 0, w, h);
+
+    if (hoverIdx >= 0) {
+      const p = ptsRef.current[hoverIdx];
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, POINT_R + 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }, []);
+
+  // 数据 / 选中变化：重建布局与基础层并重绘
+  useEffect(() => {
+    if (!data) return;
+    layout();
+    renderBase(selected?.id ?? null);
+    draw(hoverRef.current);
+  }, [data, selected, layout, renderBase, draw]);
+
+  // 容器尺寸变化重绘（ResizeObserver，仅监听宽度变化）
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0 && Math.abs(width - sizeRef.current.w) > 1) {
+        sizeRef.current.w = width;
+        layout();
+        renderBase(selected?.id ?? null);
+        draw(hoverRef.current);
+      }
+    });
+    ro.observe(el);
+    sizeRef.current.w = el.clientWidth || 600;
+    layout();
+    renderBase(selected?.id ?? null);
+    draw(hoverRef.current);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  /** 最近邻命中：均匀网格索引，只扫鼠标周围 3×3 个单元。 */
+  const hitTest = useCallback((mx: number, my: number): number => {
+    const { cols, cells } = gridRef.current;
+    if (cols === 0) return -1;
+    const cx = Math.floor(mx / CELL);
+    const cy = Math.floor(my / CELL);
+    const pts = ptsRef.current;
+    let best = -1, bestD2 = HIT_R * HIT_R;
+    for (let gy = Math.max(0, cy - 1); gy <= cy + 1; gy++) {
+      for (let gx = Math.max(0, cx - 1); gx <= cx + 1; gx++) {
+        const arr = cells.get(gy * cols + gx);
+        if (!arr) continue;
+        for (const i of arr) {
+          const p = pts[i];
+          const dx = p.px - mx;
+          const dy = p.py - my;
+          const d2 = dx * dx + dy * dy;
+          if (d2 <= bestD2) { bestD2 = d2; best = i; }
+        }
+      }
+    }
+    return best;
+  }, []);
+
+  const toLocal = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return { mx: e.clientX - rect.left, my: e.clientY - rect.top };
+  };
+
+  const handleMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { mx, my } = toLocal(e);
+    const idx = hitTest(mx, my);
+    if (idx === hoverRef.current) return;
+    hoverRef.current = idx;
+    draw(idx);
+    const tip = tipRef.current;
+    if (!tip) return;
+    if (idx >= 0) {
+      const p = ptsRef.current[idx];
+      const c = data?.clusters.find(c => c.id === p.clusterId);
+      tip.innerHTML = '';
+      const title = document.createElement('div');
+      title.className = 'text-xs font-medium text-gray-900 dark:text-white line-clamp-3 max-w-xs';
+      title.textContent = p.title;
+      tip.appendChild(title);
+      if (c) {
+        const sub = document.createElement('div');
+        sub.className = 'text-[10px] text-primary-600 mt-1';
+        sub.textContent = c.label;
+        tip.appendChild(sub);
+      }
+      tip.style.display = 'block';
+      const flip = mx > (sizeRef.current.w - 180);
+      tip.style.left = `${flip ? mx - 170 : mx + 12}px`;
+      tip.style.top = `${Math.max(4, my - 40)}px`;
+    } else {
+      tip.style.display = 'none';
+    }
+  }, [data, draw, hitTest]);
+
+  const handleLeave = useCallback(() => {
+    hoverRef.current = -1;
+    draw(-1);
+    if (tipRef.current) tipRef.current.style.display = 'none';
+  }, [draw]);
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { mx, my } = toLocal(e);
+    const idx = hitTest(mx, my);
+    if (idx >= 0) router.push(`/paper/${ptsRef.current[idx].id}`);
+  }, [hitTest, router]);
 
   if (loading) {
     return (
@@ -69,40 +317,19 @@ export default function ClusterMap({ onData }: Props) {
           <MapIcon className="w-4 h-4" />
           {t('net.clusterScatterHint').replace('{total}', String(data.total))}
         </div>
-        <ResponsiveContainer width="100%" height={520}>
-          <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#8884" />
-            <XAxis type="number" dataKey="x" domain={[0, 100]} hide />
-            <YAxis type="number" dataKey="y" domain={[0, 100]} hide />
-            <Tooltip
-              content={({ payload }) => {
-                const p = payload?.[0]?.payload as { title: string; id: string } | undefined;
-                if (!p) return null;
-                const c = Array.from(labelById.values()).find(c => c.points.some(pt => pt.id === p.id));
-                return (
-                  <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg px-3 py-2 max-w-xs">
-                    <div className="text-xs font-medium text-gray-900 dark:text-white line-clamp-3">{p.title}</div>
-                    {c && <div className="text-[10px] text-primary-600 mt-1">{c.label}</div>}
-                  </div>
-                );
-              }}
-            />
-            {data.clusters.map((c, i) => (
-              <Scatter
-                key={c.id}
-                name={c.label}
-                data={c.points}
-                fill={PALETTE[i % PALETTE.length]}
-                fillOpacity={selected ? (selected.id === c.id ? 0.95 : 0.15) : 0.75}
-                className="cursor-pointer"
-                onClick={(pt: unknown) => {
-                  const pid = (pt as { id?: string })?.id;
-                  if (pid) router.push(`/paper/${pid}`);
-                }}
-              />
-            ))}
-          </ScatterChart>
-        </ResponsiveContainer>
+        <div ref={wrapRef} className="relative w-full" style={{ height: CHART_H }}>
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full cursor-pointer"
+            onMouseMove={handleMove}
+            onMouseLeave={handleLeave}
+            onClick={handleClick}
+          />
+          <div
+            ref={tipRef}
+            className="absolute pointer-events-none bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg px-3 py-2 hidden"
+          />
+        </div>
       </div>
 
       <div className="space-y-2">

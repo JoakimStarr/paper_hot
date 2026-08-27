@@ -25,6 +25,50 @@ function buildHeaders(): Record<string, string> {
   return headers;
 }
 
+/** 后端业务错误：携带 HTTP 状态码与 detail 文案。
+ *  调用方以 `e instanceof ApiError ? e.detail : e.message` 取可展示信息（对应旧 axios 响应体的 detail 字段）。 */
+export class ApiError extends Error {
+  status?: number;
+  detail?: string;
+
+  constructor(message: string, status?: number, detail?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+// —— 前端错误上报（日志系统）：统一入口，静默失败，按内容去重防刷屏 ——
+const _reportedErrors = new Map<string, number>();
+const _REPORT_DEDUP_MS = 10_000;
+
+export function logClientError(message: string, stack?: string, level: 'error' | 'warning' = 'error') {
+  try {
+    const key = `${level}:${String(message).slice(0, 120)}`;
+    const now = Date.now();
+    const last = _reportedErrors.get(key);
+    if (last && now - last < _REPORT_DEDUP_MS) return;
+    _reportedErrors.set(key, now);
+    if (_reportedErrors.size > 200) {
+      _reportedErrors.forEach((t, k) => {
+        if (Date.now() - t > 60_000) _reportedErrors.delete(k);
+      });
+    }
+    void fetch(`${API_BASE_URL}/logs/client`, {
+      method: 'POST',
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        message: String(message).slice(0, 2000),
+        stack: stack ? stack.slice(0, 20_000) : undefined,
+        url: typeof window !== 'undefined' ? window.location.href.slice(0, 500) : undefined,
+        level,
+        user_agent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 300) : undefined,
+      }),
+    }).catch(() => {});
+  } catch { /* 上报本身失败忽略，不影响业务 */ }
+}
+
 async function request<T>(
   url: string,
   options?: { method?: string; params?: Record<string, unknown>; body?: unknown; signal?: AbortSignal },
@@ -59,6 +103,9 @@ async function request<T>(
         await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
         continue;
       }
+      if (e?.name !== 'AbortError') {
+        logClientError(`API network error: ${method} ${url} — ${e?.message || ''}`, e?.stack);
+      }
       throw e;
     }
 
@@ -70,7 +117,9 @@ async function request<T>(
 
     if (!res.ok) {
       const err = (await res.json().catch(() => null)) as { detail?: string } | null;
-      throw new Error(err?.detail || `Request failed: ${res.status}`);
+      const detail = err?.detail || `Request failed: ${res.status}`;
+      if (res.status >= 500) logClientError(`API ${res.status}: ${method} ${url} — ${detail}`);
+      throw new ApiError(detail, res.status, typeof detail === 'string' ? detail : undefined);
     }
 
     // 部分 DELETE/空响应无 body，返回 undefined
@@ -220,6 +269,10 @@ export const papersApi = {
     request('/crawl/cnki/search/pause', { method: 'POST' }),
   resumeCNKISearch: async (): Promise<{ status: string }> =>
     request('/crawl/cnki/search/resume', { method: 'POST' }),
+  stopCNKISearch: async (): Promise<{ status: string }> =>
+    request('/crawl/cnki/search/stop', { method: 'POST' }),
+  sendFeedback: async (body: { surface: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
+    request('/ai/feedback', { method: 'POST', body }),
 
   getKeywordNetwork: async (): Promise<NetworkData> =>
     request('/network/keywords'),
@@ -232,6 +285,9 @@ export const papersApi = {
 
   getCrawlStatus: async (limit: number = 10): Promise<{ logs: CrawlLog[]; total: number }> =>
     request('/crawl/status', { params: { limit } }),
+
+  rerunCrawl: async (logId: number): Promise<{ status: string; task_type: string; name: string }> =>
+    request('/crawl/rerun', { method: 'POST', body: { log_id: logId } }),
 
   startCrawl: async (journalNames?: string[]): Promise<{ crawl_log_id: string; status: string; message: string }> =>
     request('/crawl/start', { method: 'POST', body: { journal_names: journalNames || null } }),
@@ -359,6 +415,7 @@ export interface DashboardData {
     favorites: PaperCard[];
     recent_analyses: Array<{ paper_id: string; title: string; status: string | null; created_at: string | null }>;
     topic_projects: Array<{ id: number; title: string; status: string; novelty: number | null; crowding: number | null }>;
+    reviews: Array<{ id: number; topic: string; paper_count: number; created_at: string | null }>;
     latest_report_summary: string | null;
     latest_report_id: number | null;
     favorite_count: number;
@@ -366,8 +423,62 @@ export interface DashboardData {
   };
 }
 
+// —— 个人页「今日速览条」统计（首页 TodayBriefBar 用）——
+export interface TodayBrief {
+  today_count: number;
+  month_count: number;
+  watch_subfield_count: number | null;
+  generated_at: string;
+}
+
 export const dashboardApi = {
   getDashboard: async (): Promise<DashboardData> => request<DashboardData>('/dashboard'),
+
+  getTodayBrief: async (): Promise<TodayBrief> => request<TodayBrief>('/dashboard/today-brief'),
+};
+
+// —— 日志系统（系统页「日志」标签页）——
+export interface ActionLogItem {
+  id: number;
+  request_id: string;
+  user_id: string;
+  method: string;
+  path: string;
+  status_code: number;
+  duration_ms: number;
+  query: string | null;
+  created_at: string | null;
+}
+
+export interface ErrorLogItem {
+  id: number;
+  source: string;
+  request_id: string;
+  user_id: string;
+  method: string | null;
+  path: string | null;
+  status_code: number | null;
+  error_type: string;
+  error_message: string;
+  traceback: string | null;
+  request_info: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface LogListResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export const logsApi = {
+  listActionLogs: async (params: Record<string, unknown>): Promise<LogListResponse<ActionLogItem>> =>
+    request('/system/action-logs', { params }),
+  listErrorLogs: async (params: Record<string, unknown>): Promise<LogListResponse<ErrorLogItem>> =>
+    request('/system/error-logs', { params }),
+  getErrorLog: async (id: number): Promise<ErrorLogItem> =>
+    request(`/system/error-logs/${id}`),
 };
 
 // —— 产出环节（P2-11）：综述生成 / 期刊适配 / 引用导出 ——
@@ -475,12 +586,13 @@ export function rememberModel(context: string, model: string | null): void {
 // —— 统一的 SSE 流式对话封装 ——
 // 原先 trends/paper 页用裸 fetch 调 /chat，既不经过 apiClient 注入 token，又各自重复解析 SSE。
 // 这里收敛为单一实现，随后端 _stream_chat_response 的 SSE 数据格式对齐：
-//   data: {"content": "..."} | {"reasoning": "..."} | {"done": true}
+//   data: {"content": "..."} | {"reasoning": "..."} | {"tool_progress": {...}} | {"tools": [...]} | {"done": true}
 export interface ChatStreamCallbacks {
   onContent: (text: string) => void;        // 累积全文内容
   onReasoning?: (text: string) => void;     // 累积思考内容（可选，调用方不关心思考时可不传）
   onDone: (fullContent: string) => void;    // 流结束，传完整正文
   onError: (message: string) => void;
+  onToolProgress?: (data: { tool: string; args?: Record<string, unknown> }) => void;  // 可选：Agent 正在调用工具
   onMeta?: (data: Record<string, unknown>) => void;  // 可选：非 content/reasoning/done 的结构化 SSE 载荷
 }
 
@@ -560,6 +672,9 @@ export async function streamChat(
           } else if (data.content) {
             fullContent += data.content;
             cb.onContent(fullContent);
+          } else if (data.tool_progress && cb.onToolProgress) {
+            // Agent 工具调用进度：前端显示"正在调用…"提示
+            cb.onToolProgress(data.tool_progress);
           } else if (cb.onMeta) {
             // 结构化元消息（如验证器的 papers 召回载荷）原样交回调处理
             cb.onMeta(data);
@@ -595,4 +710,49 @@ export function streamPaperChat(
   signal?: AbortSignal,
 ): Promise<void> {
   return streamChat(`/papers/${paperId}/chat`, messages, model, cb, signal);
+}
+
+// —— 全局 AI 悬浮助手（会话管理 + 历史记录）——
+export interface AssistantSession {
+  id: number;
+  title: string | null;
+  page: string;
+  paper_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+}
+
+export interface AssistantSessionDetail extends AssistantSession {
+  messages: Array<{ role: string; content: string }>;
+}
+
+export const assistantApi = {
+  createSession: async (page: string, opts?: { paper_id?: string; context_text?: string }): Promise<AssistantSession> =>
+    request('/assistant/sessions', {
+      method: 'POST',
+      body: {
+        page,
+        ...(opts?.paper_id ? { paper_id: opts.paper_id } : {}),
+        ...(opts?.context_text ? { context_text: opts.context_text } : {}),
+      },
+    }),
+  listSessions: async (limit = 50): Promise<AssistantSession[]> =>
+    request('/assistant/sessions', { params: { limit } }),
+  getSession: async (id: number): Promise<AssistantSessionDetail> =>
+    request(`/assistant/sessions/${id}`),
+  deleteSession: async (id: number): Promise<{ ok: boolean }> =>
+    request(`/assistant/sessions/${id}`, { method: 'DELETE' }),
+  saveMessages: async (id: number, messages: Array<{ role: string; content: string }>): Promise<{ ok: boolean }> =>
+    request(`/assistant/sessions/${id}/messages`, { method: 'POST', body: { messages } }),
+};
+
+/** 全局悬浮助手对话（SSE 流式）：基于某个会话继续，后端加载历史消息。 */
+export function streamAssistantChat(
+  sessionId: number,
+  messages: Array<{ role: string; content: string }>,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamChat('/assistant/chat', messages, undefined, cb, signal, { session_id: sessionId });
 }

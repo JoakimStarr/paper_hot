@@ -5,6 +5,7 @@
 - 每个工具独立 DB 会话（异常回滚不污染外层）；LIMIT 封顶；max_rounds 防死循环；
   模型不返回合法 tool_calls 时原样返回消息（降级为普通对话）。
 """
+import asyncio
 import json
 import logging
 from typing import Any
@@ -149,6 +150,36 @@ async def _t_author_papers(db: AsyncSession, args: dict) -> dict:
     }
 
 
+async def _t_retrieve_context(db: AsyncSession, args: dict) -> dict:
+    """语义召回：按查询词在论文库中找最相关的论文（含摘要），供回答引用。
+
+    与 search_papers（SQL 关键词命中）互补：适合"该方向研究到哪了/有哪些结论"这类
+    需要读论文内容的提问。返回按相似度降序的 top-k，每篇带 [n] 编号与摘要。
+    """
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "query 参数必填"}
+    from app.routers.topic import _retrieve_similar_papers
+    k = min(int(args.get("limit") or 6), 10)
+    try:
+        papers, mode = await _retrieve_similar_papers(db, query, k=k)
+    except Exception as e:
+        return {"error": f"retrieval failed: {type(e).__name__}"}
+    items = []
+    for i, p in enumerate(papers, start=1):
+        items.append({
+            "n": i,
+            "id": p.get("id"),
+            "title": p.get("title"),
+            "abstract": (p.get("abstract") or "")[:600],
+            "source": p.get("source"),
+            "published_at": p.get("published_at"),
+            "similarity": p.get("similarity"),
+            "url": f"/paper/{p.get('id')}",
+        })
+    return {"mode": mode, "count": len(items), "papers": items}
+
+
 # ---------------------------------------------------------------- 工具注册表
 
 def _schema(name: str, description: str, props: dict, required: list[str]) -> dict:
@@ -172,6 +203,7 @@ TOOL_HANDLERS = {
     "keyword_gaps": _t_keyword_gaps,
     "subfield_distribution": _t_subfield_distribution,
     "author_papers": _t_author_papers,
+    "retrieve_context": _t_retrieve_context,
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
@@ -181,12 +213,27 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"keyword": {"type": "string"}, "year_from": {"type": "integer"},
                  "year_to": {"type": "integer"}, "journal": {"type": "string"},
                  "limit": {"type": "integer"}}, ["keyword"]),
+        _schema("retrieve_context", "语义召回最相关的论文（含摘要，带 [n] 编号），回答涉及论文内容/结论/方法时使用",
+                {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
         _schema("paper_trend", "查询某关键词的逐年发文量趋势",
                 {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
                 {"top_n": {"type": "integer"}}, []),
         _schema("subfield_distribution", "获取经济学子领域论文分布",
                 {}, []),
+        _schema("author_papers", "按作者名查询其论文列表",
+                {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
+    ],
+    # 单篇论文追问（P0）：在论文自身内容之上，可跨库检索相关文献
+    "paper_chat": [
+        _schema("search_papers", "按关键词/年份/期刊检索论文库中的论文",
+                {"keyword": {"type": "string"}, "year_from": {"type": "integer"},
+                 "year_to": {"type": "integer"}, "journal": {"type": "string"},
+                 "limit": {"type": "integer"}}, ["keyword"]),
+        _schema("retrieve_context", "语义召回最相关的论文（含摘要，带 [n] 编号），回答涉及相关文献/结论/方法时使用",
+                {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
+        _schema("paper_trend", "查询某关键词的逐年发文量趋势",
+                {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("author_papers", "按作者名查询其论文列表",
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
     ],
@@ -209,26 +256,48 @@ async def run_agent_chat(
     surface: str = "trend_chat",
     max_rounds: int = MAX_ROUND_TRIPS,
     outer_db: AsyncSession | None = None,
+    on_progress: Any = None,
 ) -> tuple[list[dict], list[dict]]:
     """带工具调用循环的对话。
 
     返回 (messages, tool_trace)：messages 为补全了助手/工具轮次的完整消息，
     可直接交给流式接口做最终回答；tool_trace 供日志/调试。
     若模型未发起任何工具调用，messages 原样返回（普通对话降级）。
+
+    on_progress：可选回调，每次执行工具前调用 on_progress({"tool": name, "args": args})，
+    供上层实时推送工具调用进度（SSE 到前端）。
     """
     schemas = TOOL_SCHEMAS_BY_SURFACE.get(surface, [])
     convo = [dict(m) for m in messages]
     trace: list[dict] = []
 
+    # 跨工具统一编号：所有返回论文的工具（含 search_papers/author_papers）都会被编号，
+    # 保证回答中的 [n] 引用能映射到唯一论文，且一轮内多次工具调用不产生 n 冲突。
+    next_paper_n = 1
+
     for _round in range(max_rounds):
         try:
-            resp = await client.chat.completions.create(
-                model=model,
-                messages=convo,
-                tools=schemas or None,
-            )
+            # 注意：client 是 sync OpenAI 客户端（deps.get_ai_client 返回值），
+            # 直接 await 其 create() 会抛 TypeError 并被下面的 except 吞掉，
+            # 导致 Agent 永远「降级为纯对话」。必须经 to_thread 下放线程池。
+            try:
+                resp = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model,
+                    messages=convo,
+                    tools=schemas or None,
+                )
+            except Exception as e:
+                # 瞬时故障重试一次（如限流/连接中断），避免误降级为纯对话
+                logger.warning(f"agent round {_round}: model call failed, retrying once: {e}")
+                resp = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model,
+                    messages=convo,
+                    tools=schemas or None,
+                )
         except Exception as e:
-            logger.warning(f"agent round {_round}: model call failed: {e}")
+            logger.warning(f"agent round {_round}: model call failed after retry: {e}")
             return messages, trace
 
         msg = resp.choices[0].message if resp.choices else None
@@ -238,6 +307,7 @@ async def run_agent_chat(
             content = getattr(msg, "content", None) if msg else None
             if content:
                 convo.append({"role": "assistant", "content": content})
+            logger.info(f"agent surface={surface}: model chose not to call tools, answered directly")
             return convo, trace
 
         # 记录助手请求工具的消息
@@ -257,19 +327,36 @@ async def run_agent_chat(
                 args = json.loads(tc.function.arguments or "{}")
             except Exception:
                 args = {}
+            if on_progress:
+                try:
+                    on_progress({"tool": name, "args": args})
+                except Exception:
+                    pass
             handler = TOOL_HANDLERS.get(name)
             if handler is None:
                 result = {"error": f"unknown tool {name}"}
             else:
+                tool_db = None
                 try:
-                    async with AsyncSessionLocal() as tool_db:
-                        result = await handler(tool_db, args)
+                    async with AsyncSessionLocal() as session:
+                        tool_db = session
+                        result = await handler(session, args)
                 except Exception as e:
                     logger.warning(f"agent tool {name} failed: {e}")
-                    await tool_db.rollback()
+                    if tool_db is not None:
+                        await tool_db.rollback()
                     result = {"error": f"tool execution failed: {type(e).__name__}"}
 
-            trace.append({"tool": name, "args": args})
+            # 给工具结果里的论文统一编号 + 补 url（模型在 tool 内容里看到的就是这些编号）
+            if isinstance(result, dict) and isinstance(result.get("papers"), list):
+                for p in result["papers"]:
+                    if isinstance(p, dict):
+                        p["n"] = next_paper_n
+                        next_paper_n += 1
+                        if p.get("id") and not p.get("url"):
+                            p["url"] = f"/paper/{p['id']}"
+
+            trace.append({"tool": name, "args": args, "result": result})
             convo.append({
                 "role": "tool",
                 "tool_call_id": tc.id,

@@ -152,13 +152,15 @@ class PaperScheduler:
         """AI 处理 + 特征入库 + 四项打分入库（三个爬虫流程共用的单一实现）。
 
         返回 [recency, venue, trend, final] 分数，调用方可用于日志或统计。
+        特征/评分均按 paper_id upsert：论文重复入库或摘要回填重算时不会
+        撞 unique 约束导致整批失败。
         """
         summary, keywords, embedding, topic = await self.ai_processor.process_paper(
             paper.abstract,
             paper.title
         )
-        await PaperCRUD.create_paper_features(
-            db, paper.id, summary, keywords or [], embedding, topic
+        await PaperCRUD.ensure_paper_features(
+            db, paper.id, summary=summary, keywords=keywords or [], embedding=embedding, topic=topic
         )
         recency_score = self.scoring_system.compute_recency_score(paper.published_at)
         venue_score = self.scoring_system.compute_venue_score(paper.venue, paper.source)
@@ -169,7 +171,8 @@ class PaperScheduler:
             recency_score, venue_score, trend_score
         )
         await PaperCRUD.create_paper_score(
-            db, paper.id, recency_score, venue_score, trend_score, final_score
+            db, paper.id, recency_score, venue_score, trend_score, final_score,
+            update_if_exists=True,
         )
         return [recency_score, venue_score, trend_score, final_score]
 
@@ -228,7 +231,7 @@ class PaperScheduler:
                 papers = await PaperCRUD.get_papers_missing_embeddings(db, limit=batch_size)
                 stats["checked"] = len(papers)
                 for paper in papers:
-                    embedding = self.ai_processor.compute_embedding(
+                    embedding = await self.ai_processor.compute_embedding_async(
                         f"{paper.title}\n{(paper.abstract or '')[:2000]}"
                     )
                     if not embedding:
@@ -264,16 +267,18 @@ class PaperScheduler:
     async def backfill_abstracts(self, batch_size: int = 100) -> Dict[str, int]:
         """补抓空摘要论文（P0-2）：经济研究/中国工业经济经 ajcass 详情接口回填，
         成功补齐后触发相似度全量重算。"""
-        from app.fetchers import _fetch_ajcass_article_content
-        import re as _re
-
-        venue_journal_ids = {
-            "经济研究": 201803050001,
-            "中国工业经济": 201606280001,
-        }
         stats = {"found": 0, "updated": 0, "failed": 0}
 
         try:
+            # 爬虫依赖是可选安装：轻量服务未装 bs4 时不能让 cron 任务直接崩
+            from app.fetchers import _fetch_ajcass_article_content
+            import re as _re
+
+            venue_journal_ids = {
+                "经济研究": 201803050001,
+                "中国工业经济": 201606280001,
+            }
+
             async with AsyncSessionLocal() as db:
                 papers = await PaperCRUD.get_papers_missing_abstracts(
                     db, venues=list(venue_journal_ids.keys()), limit=batch_size
@@ -328,8 +333,19 @@ class PaperScheduler:
             stats["error"] = str(e)
         return stats
 
+    def _find_running_task(self, task_type: str) -> Optional[str]:
+        """查活跃任务表里是否已有同类型未完成任务（手动触发防重入）。"""
+        for tid, info in self.active_crawl_tasks.items():
+            if info.get("task_type") == task_type and info.get("status") == "running":
+                return tid
+        return None
+
     async def trigger_manual_backfill(self) -> str:
         logger.info("Manual abstract backfill triggered")
+        busy = self._find_running_task("backfill_abstracts")
+        if busy:
+            raise ValueError(f"backfill_abstracts task {busy} is already running")
+
         task_id = str(uuid.uuid4())
         self.active_crawl_tasks[task_id] = {
             "task_type": "backfill_abstracts",
@@ -338,11 +354,19 @@ class PaperScheduler:
         }
 
         async def run_backfill():
-            stats = await self.backfill_abstracts()
-            info = self.active_crawl_tasks.get(task_id, {})
-            info["status"] = "failed" if stats.get("error") else "completed"
-            info["end_time"] = datetime.now()
-            info["stats"] = stats
+            try:
+                stats = await self.backfill_abstracts()
+                info = self.active_crawl_tasks.get(task_id, {})
+                info["status"] = "failed" if stats.get("error") else "completed"
+                info["end_time"] = datetime.now()
+                info["stats"] = stats
+            except Exception as e:
+                # 兜底：任何未预期异常都必须落到任务状态，否则前端轮询永远 "running"
+                logger.error(f"Manual abstract backfill crashed: {e}", exc_info=True)
+                info = self.active_crawl_tasks.get(task_id, {})
+                info["status"] = "failed"
+                info["end_time"] = datetime.now()
+                info["stats"] = {"error": str(e)}
 
         task = asyncio.create_task(run_backfill())
         self._background_tasks.add(task)
@@ -424,8 +448,11 @@ class PaperScheduler:
                         except Exception as e:
                             papers_failed += 1
                             logger.error(f"Error processing paper from {journal_name}: {e}")
+                            # 唯一约束冲突等错误会让会话进入 pending-rollback 态，
+                            # 不回滚会毒化本期刊后续所有论文的处理
+                            await db.rollback()
                             continue
-                    
+
                     await CrawlLogCRUD.update_crawl_log(
                         db,
                         crawl_log.id,
@@ -465,16 +492,35 @@ class PaperScheduler:
     
     async def trigger_manual_crawl(self, journal_names: Optional[List[str]] = None) -> str:
         logger.info(f"Manual crawl triggered for journals: {journal_names or 'all economics journals'}")
-        
+
+        busy = self._find_running_task("economics_journals")
+        if busy:
+            raise ValueError(f"economics journals crawl task {busy} is already running")
+
+        # 登记 returned task_id，调用方（/crawl/start 的 crawl_log_id）才查得到状态
         task_id = str(uuid.uuid4())
-        
+        self.active_crawl_tasks[task_id] = {
+            "task_type": "economics_journals",
+            "start_time": datetime.now(),
+            "status": "running",
+        }
+
         async def run_crawl():
-            await self.fetch_and_process_economics_journals(journal_names)
-        
+            try:
+                await self.fetch_and_process_economics_journals(journal_names)
+            except Exception as e:
+                self.active_crawl_tasks.setdefault(task_id, {})["error"] = str(e)
+                logger.error(f"Manual crawl {task_id} crashed: {e}", exc_info=True)
+            finally:
+                info = self.active_crawl_tasks.get(task_id)
+                if info is not None and info.get("status") == "running":
+                    info["status"] = "completed" if not info.get("error") else "failed"
+                    info["end_time"] = datetime.now()
+
         task = asyncio.create_task(run_crawl())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-        
+
         return task_id
     
     async def fetch_and_process_cnki_navi_journals(
@@ -572,6 +618,8 @@ class PaperScheduler:
                             except Exception as e:
                                 papers_failed += 1
                                 logger.error(f"Error processing paper: {e}")
+                                # 会话毒化防护：单篇失败回滚后继续（见 fetch_and_process_economics_journals 注释）
+                                await db.rollback()
                                 continue
                         
                         await db.commit()
@@ -616,28 +664,25 @@ class PaperScheduler:
             任务ID
         """
         logger.info(f"Manual CNKI Navi crawl triggered - max_journals: {max_journals}")
-        
+
+        busy = self._find_running_task("cnki_navi")
+        if busy:
+            raise ValueError(f"cnki_navi task {busy} is already running")
+
         task_id = str(uuid.uuid4())
-        
+
         async def run_crawl():
-            await self.fetch_and_process_cnki_navi_journals(max_journals=max_journals)
-        
+            try:
+                await self.fetch_and_process_cnki_navi_journals(max_journals=max_journals)
+            except Exception as e:
+                logger.error(f"Manual cnki navi crawl crashed: {e}", exc_info=True)
+
         task = asyncio.create_task(run_crawl())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-        
+
         return task_id
-    
-    def get_crawl_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        return self.active_crawl_tasks.get(task_id)
-    
-    def get_all_active_crawls(self) -> Dict[str, Dict[str, Any]]:
-        return {
-            task_id: task_info 
-            for task_id, task_info in self.active_crawl_tasks.items() 
-            if task_info.get("status") == "running"
-        }
-    
+
     async def fetch_and_process_cnki_top50(
         self,
         journal_names: Optional[List[str]] = None,
@@ -686,6 +731,7 @@ class PaperScheduler:
             
             # 处理每个期刊的结果
             for journal_name, papers_data in results.items():
+                db = None  # 会话在 try 内创建；提前失败时 rollback 需判空
                 try:
                     papers_fetched = 0
                     papers_failed = 0
@@ -733,6 +779,12 @@ class PaperScheduler:
                 except Exception as e:
                     logger.error(f"Error processing CNKI journal {journal_name}: {e}")
                     total_failed += len(papers_data)
+                    # db 可能尚未建立（异常发生在会话创建前），仅在已绑定时回滚
+                    if db is not None:
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            pass
                     continue
             
             self.active_crawl_tasks[task_id]["status"] = "completed"
@@ -765,16 +817,23 @@ class PaperScheduler:
             任务ID
         """
         logger.info(f"Manual CNKI crawl triggered for journals: {journal_names or 'TOP50'}")
-        
+
+        busy = self._find_running_task("cnki_top50")
+        if busy:
+            raise ValueError(f"cnki_top50 task {busy} is already running")
+
         task_id = str(uuid.uuid4())
-        
+
         async def run_crawl():
-            await self.fetch_and_process_cnki_top50(
-                journal_names=journal_names,
-                max_results_per_journal=max_results_per_journal,
-                max_journals=max_journals
-            )
-        
+            try:
+                await self.fetch_and_process_cnki_top50(
+                    journal_names=journal_names,
+                    max_results_per_journal=max_results_per_journal,
+                    max_journals=max_journals
+                )
+            except Exception as e:
+                logger.error(f"Manual cnki top50 crawl crashed: {e}", exc_info=True)
+
         task = asyncio.create_task(run_crawl())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)

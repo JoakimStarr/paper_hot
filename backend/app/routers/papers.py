@@ -1,9 +1,10 @@
 """论文列表/详情/搜索/作者/论文级 AI 与对话接口。"""
 import asyncio
+import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
@@ -21,7 +22,7 @@ from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc, _paper_to_card,
     _compute_cache_key, _get_ai_client, _resolve_model_provider,
-    _get_default_model, _stream_chat_response,
+    _get_default_model, _stream_agent_chat_response,
 )
 from app.schemas import (
     PaperResponse, PaperCardListResponse, PaperDetailResponse, SimilarPaper,
@@ -101,6 +102,11 @@ async def get_papers(
         hidden=hidden,
     )
 
+    # ETag 必须覆盖所有影响响应体的输入：筛选/排序参数 + 个性化（置顶/屏蔽，uid 维度）。
+    # 缺个性化成分会导致置顶或屏蔽变更后浏览器最长 300s 内错误命中 304。
+    def _digest(ids) -> str:
+        return hashlib.md5(",".join(sorted(set(ids))).encode("utf-8")).hexdigest()[:10]
+
     etag = _compute_cache_key(
         "papers", total, page, page_size,
         topic=topic, source=source, min_score=min_score, days_back=days_back,
@@ -108,6 +114,8 @@ async def get_papers(
         cnki_subject=cnki_subject, journal_name=journal_name,
         search=search, search_field=search_field,
         sort_by=sort_by, sort_order=sort_order,
+        pinned=_digest(pinned_ids),
+        hidden=_digest(hidden.keys()),
     )
 
     if request and request.headers.get("if-none-match") == etag:
@@ -124,7 +132,8 @@ async def get_papers(
     return JSONResponse(
         content=json.loads(response_data.model_dump_json()),
         headers={
-            "Cache-Control": "private, max-age=300",
+            # 仅协商缓存（ETag/304）：资源随置顶/屏蔽即时变化，不授予独立 max-age
+            "Cache-Control": "private, no-cache",
             "ETag": etag,
         }
     )
@@ -327,11 +336,12 @@ async def explain_trend(
         return {"topic": topic, "explanation": fallback, "series": series, "ai_used": False}
 
 
-CACHE_TTL_HOURS = 6
-
-
 class AnalyzePaperRequest(BaseModel):
     model: Optional[str] = None  # 'provider/model'；为空则用默认模型
+
+# 单篇分析 pending 的最大可信时长：服务长驻时 LLM 调用若悬挂（网络黑洞/超时丢失），
+# pending 记录会永久阻塞该论文的再次分析（启动清理只覆盖重启场景）。超过后允许重新提交。
+PENDING_ANALYSIS_TTL_SECONDS = 30 * 60
 
 
 @router.post("/papers/{paper_id}/analyze")
@@ -346,8 +356,15 @@ async def analyze_paper(
         raise HTTPException(status_code=404, detail="Paper not found")
 
     pending = await PaperAnalysisCRUD.get_latest_pending(db, paper_id)
-    if pending:
-        return {"analysis": None, "status": "pending", "message": "分析正在进行中"}
+    if pending is not None:
+        # 陈旧 pending 视为悬挂失败，允许重新提交（与启动清理互补）
+        created = getattr(pending, "created_at", None)
+        if created is not None:
+            # SQLite 存回的 created_at 可能是 naive：统一补齐到 aware-UTC 再比较
+            created_aware = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - created_aware).total_seconds() <= PENDING_ANALYSIS_TTL_SECONDS:
+                return {"analysis": None, "status": "pending", "message": "分析正在进行中"}
+        logger.warning(f"Stale pending analysis #{pending.id} for {paper_id}: re-submitting")
 
     # 先生成/解析模型与客户端：鉴权/配置问题在此以 503 明确提示，避免落入后台任务再返回笼统 500。
     try:
@@ -366,6 +383,7 @@ async def analyze_paper(
     analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
     await db.commit()
 
+    from app.main import spawn_background_task
     spawn_background_task(_run_single_analyze_background(analysis_id, paper_id, model))
     return {"analysis": None, "status": "pending", "message": "分析已提交，进行中", "model": model}
 
@@ -711,6 +729,16 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
 
+    # Agent 工具检索开关：关闭时移除工具规则，追问退化为普通对话（不检索论文库）
+    tool_rules = """\
+## 工具使用规则（重要）
+你可以在论文库中检索更多相关文献。当用户询问涉及库内论文的问题时——例如"还有哪些相关论文"、"这个方向的研究脉络/方法/结论是什么"、"谁在研究这个"、"相关文献数量/趋势"——**必须**先调用工具检索：
+- `search_papers`：按关键词/期刊/年份检索论文（返回标题/期刊/关键词/评分）
+- `retrieve_context`：语义召回最相关的论文（返回标题/摘要/编号，适合"研究到哪了/结论是什么"）
+- `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文
+
+检索之后，引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空或与问题无关，如实说明。""" if settings.agent_enabled else ""
+
     system_prompt = f"""你是一位学术论文分析助手，正在与用户围绕一篇论文进行多轮对话。以下是当前讨论的论文信息：
 
 ## 论文信息
@@ -726,8 +754,10 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 ## 对话规则
 1. 基于以上论文信息回答用户问题，用中文，回答做到结构清晰、有针对性。
 2. 可结合论文信息展开分析，但不要臆造论文中不存在的数据或内容。
-3. 若问题超出论文范围，先诚实说明，再基于你的专业知识给出合理建议。
-4. 这是多轮对话，请注意结合上下文保持回答连贯，不要自相矛盾。"""
+3. 若问题超出本文范围，先诚实说明，再基于你的专业知识给出合理建议。
+4. 这是多轮对话，请注意结合上下文保持回答连贯，不要自相矛盾。
+
+{tool_rules}"""
 
     messages = [{"role": "system", "content": system_prompt}] + body.messages
 
@@ -737,7 +767,13 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    return _stream_chat_response(client, provider, messages, model=bare_model)
+    # 未指定模型时取默认模型：agent 工具循环需要真实模型名（空字符串会让工具调用失败）
+    if not bare_model:
+        bare_model = _get_default_model(provider)
+
+    # 论文追问接入 Agent：在单篇论文内容之上，可用工具跨库检索相关文献/语义召回/趋势。
+    # 流式过程中实时推送工具调用进度（"正在调用检索论文…"），结束再输出工具轨迹与正文。
+    return _stream_agent_chat_response(client, provider, messages, model=bare_model, surface="paper_chat")
 
 
 @router.get("/papers/{paper_id}/chats")

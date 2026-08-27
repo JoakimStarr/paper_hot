@@ -156,8 +156,8 @@ async def generate_review(
 
 
 async def _run_review_background(review_id: int, topic: str, model: Optional[str] = None):
-    from datetime import datetime as _dt
-    start = _dt.utcnow()
+    from datetime import datetime as _dt, timezone as _tz
+    start = _dt.now(_tz.utc)
     async with AsyncSessionLocal() as db:
         report = await db.get(ReviewReport, review_id)
         if not report:
@@ -171,15 +171,15 @@ async def _run_review_background(review_id: int, topic: str, model: Optional[str
                 return
 
             papers_text = "\n".join([
-                f"- 《{p['title']}》(期刊: {p['journal_name'] or '未知'}，{str(p['published_at'])[:10] if p['published_at'] else '?'}) "
+                f"[{i+1}] 《{p['title']}》(期刊: {p['journal_name'] or '未知'}，{str(p['published_at'])[:10] if p['published_at'] else '?'}) "
                 f"关键词: {', '.join(p['keywords_cn'][:5]) or '无'} | 摘要: {(p['abstract'] or '')[:150]}"
-                for p in papers[:20]
+                for i, p in enumerate(papers[:20])
             ])
 
             system_prompt = f"""你是一位学术文献综述专家。请基于以下从论文库检索到的、与选题相关的论文，生成一份结构化的文献综述。
 选题：{topic}
 
-检索到的相关论文（{len(papers)}篇，按相关度排序）：
+检索到的相关论文（{len(papers)}篇，按相关度排序，方括号为编号）：
 {papers_text}
 
 请用 markdown 输出，包含以下部分：
@@ -193,7 +193,7 @@ async def _run_review_background(review_id: int, topic: str, model: Optional[str
 基于上述脉络，指出尚待填补的空隙，这正是新研究的切入机会。
 
 要求：
-1. 引用文献时用【编号】标注（对应检索列表序号，从1开始），结论必须有文献支撑
+1. 引用文献时用 [编号] 标注（对应检索列表序号，从 1 开始），结论必须有文献支撑
 2. 每个部分 2-5 段，结构清晰、观点明确
 3. 最后给一段「可进一步研究」的建议，指出 2-3 个可行切入点"""
 
@@ -219,7 +219,7 @@ async def _run_review_background(review_id: int, topic: str, model: Optional[str
             report.status = "success"
             await db.commit()
             logger.info(f"Review {review_id} done for topic '{topic}' in "
-                        f"{( _dt.utcnow() - start).total_seconds():.1f}s")
+                        f"{(_dt.now(_tz.utc) - start).total_seconds():.1f}s")
         except Exception as e:
             logger.error(f"Review {review_id} failed: {e}")
             report.status = "failed"

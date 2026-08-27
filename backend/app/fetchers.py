@@ -24,6 +24,30 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def _safe_issue_date(year: int, issue_num: Any) -> datetime:
+    """期号 -> 发表日期的安全构造。
+
+    接口返回的 issue 可能是非数字字符串或越界（>12），
+    非法时回退为当年年末，避免 datetime() 直接抛异常丢掉整条数据。
+    """
+    try:
+        month = int(str(issue_num).strip())
+    except (TypeError, ValueError):
+        month = None
+    if month is None or not 1 <= month <= 12:
+        logger.debug(f"Invalid issue number {issue_num!r} for year {year}, fallback to {year}-12-31")
+        return datetime(year, 12, 31)
+    return datetime(year, month, 1)
+
+
+def _safe_issue_number(issue_num: Any) -> Optional[int]:
+    """把期号安全转换为 int；转换失败返回 None（供格式化兜底）。"""
+    try:
+        return int(str(issue_num).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 # ajcass API（经济研究/中国工业经济等）的列表接口不返回摘要，
 # 详情需调用 SiteWebApi/GetContentInfo（P0-2 补齐空摘要的根因修复）。
 AJCASS_API_BASE = "https://api.ajcass.com/api"
@@ -107,7 +131,13 @@ class ArxivFetcher:
 
             # arxiv>=2 的 API：迭代入口在 Client.results(search)，Search 对象自身无 results 方法
             client = arxiv.Client()
-            for result in await asyncio.to_thread(lambda: list(client.results(search))):
+            # 底层 requests 无 timeout，最坏情况可能无限挂起：
+            # 外层加 180 秒硬超时，超时走下方 except 记为失败，保证让出事件循环
+            results = await asyncio.wait_for(
+                asyncio.to_thread(lambda: list(client.results(search))),
+                timeout=180
+            )
+            for result in results:
                 if result.published.replace(tzinfo=None) < cutoff_date.replace(tzinfo=None):
                     continue
                     
@@ -124,7 +154,10 @@ class ArxivFetcher:
             
             logger.info(f"Fetched {len(papers)} papers from arXiv")
             return papers
-            
+
+        except asyncio.TimeoutError:
+            logger.error("Fetching from arXiv timed out after 180s (no response)")
+            return []
         except Exception as e:
             logger.error(f"Error fetching from arXiv: {e}")
             return []
@@ -380,8 +413,13 @@ class JingjiYanjiuFetcher(EconomicsJournalFetcher):
                         # 构建论文URL
                         article_url = f"https://erj.ajcass.com/#/article/{paper_id}" if paper_id else ""
                         
-                        # 构建期号信息
-                        issue_info = f"{year}年{issue_num:02d}期"
+                        # 构建期号信息（issue 可能是非数字字符串，先做 int 保护）
+                        issue_num_int = _safe_issue_number(issue_num)
+                        issue_info = (
+                            f"{year}年{issue_num_int:02d}期"
+                            if issue_num_int is not None
+                            else f"{year}年{issue_num}期"
+                        )
 
                         # 列表 API 不返回摘要：调用 GetContentInfo 单独补齐（P0-2）
                         content = await _fetch_ajcass_article_content(
@@ -395,7 +433,7 @@ class JingjiYanjiuFetcher(EconomicsJournalFetcher):
                             "title": title,
                             "abstract": content.get("abstract", ""),
                             "authors": authors,
-                            "published_date": datetime(year, issue_num, 1),
+                            "published_date": _safe_issue_date(year, issue_num),
                             "doi": content.get("doi", ""),
                             "keywords": content.get("keywords", []),
                             "issue": issue_info
@@ -902,7 +940,8 @@ class ShijieJingjiFetcher(EconomicsJournalFetcher):
                         # 提取作者
                         author_div = article.find('div', class_='j-author')
                         authors_text = author_div.text.strip() if author_div else ""
-                        authors = [a.strip() for a in authors_text.split(',')]
+                        # 中英文逗号/分号统一作为分隔符（与 navi 爬虫保持一致）
+                        authors = [a.strip() for a in re.split(r'[,，;；]', authors_text) if a.strip()]
                         
                         # 提取摘要
                         abstract_div = article.find('div', class_='j-abstract')
@@ -1028,8 +1067,13 @@ class ZhongguoGongyeJingjiFetcher(EconomicsJournalFetcher):
                         # 构建论文URL
                         article_url = f"https://ciejournal.ajcass.com/#/article/{paper_id}" if paper_id else self.base_url
 
-                        # 构建期号信息
-                        issue_info = f"{year}年{issue_num:02d}期"
+                        # 构建期号信息（issue 可能是非数字字符串，先做 int 保护）
+                        issue_num_int = _safe_issue_number(issue_num)
+                        issue_info = (
+                            f"{year}年{issue_num_int:02d}期"
+                            if issue_num_int is not None
+                            else f"{year}年{issue_num}期"
+                        )
 
                         # 列表 API 不返回摘要：调用 GetContentInfo 单独补齐（P0-2）
                         content = await _fetch_ajcass_article_content(
@@ -1043,7 +1087,7 @@ class ZhongguoGongyeJingjiFetcher(EconomicsJournalFetcher):
                             "title": title,
                             "abstract": content.get("abstract", ""),
                             "authors": authors,
-                            "published_date": datetime(year, issue_num, 1),
+                            "published_date": _safe_issue_date(year, issue_num),
                             "doi": content.get("doi", ""),
                             "keywords": content.get("keywords", []),
                             "issue": issue_info

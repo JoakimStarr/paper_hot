@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
 import Filters from '@/components/Filters';
@@ -11,27 +11,17 @@ import SkeletonCard from '@/components/SkeletonCard';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
 });
-import { Loader2, Search, X, Sparkles, FileDown, Clock } from 'lucide-react';
+import { Loader2, X, Sparkles, FileDown, Clock } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
 import { usePreferences } from '@/lib/usePreferences';
-import { papersApi, producerApi } from '@/lib/api';
-import { getUserId } from '@/lib/user';
+import { useToast } from '@/components/Toast';
+import { papersApi, producerApi, dashboardApi, TodayBrief } from '@/lib/api';
 import type { PaperCard as PaperCardType } from '@/types/paper';
 import { downloadTextFile } from '@/lib/utils';
 
-// 与 lib/api.ts 的 API_BASE_URL 同源拼接（该文件禁止修改，故此处本地定义一份）
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
-
-interface TodayBrief {
-  today_count: number;
-  week_count: number;
-  watch_subfield_count: number | null;
-  generated_at: string;
-}
-
-/** 首页「今日速览条」：今日/近7天/关注子领域入库统计；点击仅刷新数据。 */
+/** 首页「今日速览条」：今日/近一个月新发表/关注子领域统计；点击仅刷新数据。 */
 function TodayBriefBar() {
   const [brief, setBrief] = useState<TodayBrief | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,13 +29,7 @@ function TodayBriefBar() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      try {
-        headers['x-user-id'] = getUserId();
-      } catch { /* SSR 环境忽略 */ }
-      const res = await fetch(`${API_BASE_URL}/dashboard/today-brief`, { headers });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setBrief(await res.json());
+      setBrief(await dashboardApi.getTodayBrief());
     } catch {
       /* 静默失败：速览条不阻塞首页论文流 */
     } finally {
@@ -67,13 +51,13 @@ function TodayBriefBar() {
     >
       <Clock className="w-4 h-4 text-primary-600 dark:text-primary-400 shrink-0" />
       <span className="text-sm text-gray-500 dark:text-gray-400">
-        今日入库{' '}
+        今日新发表{' '}
         <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.today_count}</strong> 篇
       </span>
       <span className="text-gray-300 dark:text-gray-600">·</span>
       <span className="text-sm text-gray-500 dark:text-gray-400">
-        近7天{' '}
-        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.week_count}</strong> 篇
+        近一个月{' '}
+        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.month_count}</strong> 篇
       </span>
       {brief.watch_subfield_count !== null && brief.watch_subfield_count !== undefined && (
         <>
@@ -105,8 +89,8 @@ export default function HomePage() {
 
 function HomePageInner() {
   const { t } = useLanguage();
+  const { toast } = useToast();
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const [minScore, setMinScore] = useState<number | null>(null);
   const [selectedSubfield, setSelectedSubfield] = useState<string[]>([]);
@@ -116,6 +100,7 @@ function HomePageInner() {
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchField, setSearchField] = useState('');
 
   // 「不感兴趣」屏蔽版本号：新增/删除屏蔽项时列表需重取（后端已在列表层过滤）
   const { version: prefVersion } = usePreferences();
@@ -157,9 +142,11 @@ function HomePageInner() {
     economics_subfield: selectedSubfield.length > 0 ? selectedSubfield.join(',') : undefined,
     cnki_subject: selectedCnkiSubject.length > 0 ? selectedCnkiSubject.join(',') : undefined,
     journal_name: selectedJournal.length > 0 ? selectedJournal.join(',') : undefined,
+    search: searchQuery.trim() || undefined,
+    search_field: searchField || undefined,
     sort_by: sortBy,
     sort_order: sortOrder,
-  }), [minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, sortBy, sortOrder]);
+  }), [minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, sortBy, sortOrder, searchQuery, searchField]);
 
   // 数据流收敛在 lib/usePapersPage.ts（与搜索页共用），首页额外启用 3 页预取
   const {
@@ -167,21 +154,15 @@ function HomePageInner() {
     page, pageSize, handlePageChange, handlePageSizeChange, readIds,
   } = usePapersPage({
     buildParams,
-    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, prefVersion],
+    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, searchQuery, searchField, prefVersion],
     cacheBust: prefVersion,
     prefetch: 3,
   });
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const q = searchQuery.trim();
-    if (q) {
-      // 搜索页读取的参数名是 search（q 会导致搜索框跳转后显示空闲状态）
-      router.push(`/search?search=${encodeURIComponent(q)}`);
-    }
-  };
-
   const selectedPapers = papers.filter((p) => selectedIds.has(p.id));
+
+  // 命中数提示：仅在真实影响服务端命中的筛选/搜索激活时显示（不含纯客户端「仅看收藏」）
+  const hasActiveFilter = minScore !== null || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0 || searchQuery.trim() !== '';
 
   const handleBatchReview = async () => {
     if (selectedIds.size === 0 || batchBusy) return;
@@ -202,10 +183,10 @@ function HomePageInner() {
               setBatchSummary(res.content ?? '');
               setBatchBusy(null);
             } else if (res.status === 'failed') {
-              alert(`批量分析失败：${res.error_message || '未知错误'}`);
+              toast(`批量分析失败：${res.error_message || '未知错误'}`, 'error');
               setBatchBusy(null);
             } else if (batchPollCount.current > 60) {
-              alert('批量分析等待超时，请重试');
+              toast('批量分析等待超时，请重试', 'error');
               setBatchBusy(null);
             } else {
               pollNext();
@@ -217,7 +198,7 @@ function HomePageInner() {
       };
       pollNext();
     } catch (e) {
-      alert(`批量分析失败：${e instanceof Error ? e.message : '未知错误'}`);
+      toast(`批量分析失败：${e instanceof Error ? e.message : '未知错误'}`, 'error');
       setBatchBusy(null);
     }
   };
@@ -233,7 +214,7 @@ function HomePageInner() {
         res.citations.join('\n\n'),
       );
     } catch (e) {
-      alert(`导出失败：${e instanceof Error ? e.message : '未知错误'}`);
+      toast(`导出失败：${e instanceof Error ? e.message : '未知错误'}`, 'error');
     } finally {
       setBatchBusy(null);
     }
@@ -249,23 +230,13 @@ function HomePageInner() {
 
   return (
     <Layout>
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
           {t('home.title')}
         </h1>
         <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
           {t('home.subtitle')}
         </p>
-        <form onSubmit={handleSearch} className="relative max-w-xl">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索论文标题、作者、关键词..."
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-shadow text-sm"
-          />
-        </form>
       </div>
 
       {/* 今日速览条（点击刷新） */}
@@ -286,53 +257,24 @@ function HomePageInner() {
         onSortByChange={(v) => setSortBy(v)}
         onSortOrderToggle={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
         onBookmarksChange={(v) => setShowBookmarksOnly(v)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchField={searchField}
+        onSearchFieldChange={setSearchField}
+        selectionMode={selectionMode}
+        onToggleSelection={() => {
+          setSelectionMode((s) => !s);
+          setSelectedIds(new Set());
+        }}
       />
 
-      {/* 批量操作工具条（P1-8 / P2-11） */}
-      <div className="my-3 flex flex-wrap items-center gap-2 text-sm">
-        <button
-          onClick={() => {
-            setSelectionMode((s) => !s);
-            setSelectedIds(new Set());
-          }}
-          className={`px-3 py-1.5 rounded-lg border transition-colors ${
-            selectionMode
-              ? 'bg-primary-600 text-white border-primary-600'
-              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-primary-400'
-          }`}
-        >
-          {selectionMode ? '退出多选' : '批量操作'}
-        </button>
-        {selectionMode && (
-          <>
-            <span className="text-xs text-gray-500">已选 {selectedIds.size} 篇（最多 10 篇）</span>
-            <button
-              onClick={handleBatchReview}
-              disabled={selectedIds.size === 0 || !!batchBusy}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-600 text-white disabled:opacity-50 hover:bg-purple-700 transition-colors"
-            >
-              {batchBusy === 'review' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              AI 领域综述摘要
-            </button>
-            <button
-              onClick={() => exportCitations('bibtex')}
-              disabled={selectedIds.size === 0 || !!batchBusy}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 hover:border-primary-400 transition-colors"
-            >
-              {batchBusy === 'cite' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-              导出 BibTeX
-            </button>
-            <button
-              onClick={() => exportCitations('gbt7714')}
-              disabled={selectedIds.size === 0 || !!batchBusy}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-50 hover:border-primary-400 transition-colors"
-            >
-              <FileDown className="w-4 h-4" />
-              导出 GB/T 7714
-            </button>
-          </>
-        )}
-      </div>
+      {/* 批量操作的「进入多选」开关下沉到筛选栏（低调虚线按钮），避免常驻工具条抢视线 */}
+
+      {hasActiveFilter && (
+        <div className="mb-3 text-sm text-gray-500 dark:text-gray-400">
+          匹配 <strong className="font-semibold text-gray-700 dark:text-gray-200">{total.toLocaleString()}</strong> 篇
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-1 gap-6">
@@ -372,6 +314,46 @@ function HomePageInner() {
             />
           )}
         </>
+      )}
+
+      {/* 情景式批量操作浮动条：仅进入多选模式后出现，避免默认浏览视图被抢视线 */}
+      {selectionMode && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 sm:gap-3 rounded-full bg-gray-900 dark:bg-gray-800 text-white px-3 sm:px-4 py-2 shadow-xl border border-white/10 max-w-[calc(100vw-2rem)] overflow-x-auto">
+          <span className="text-xs whitespace-nowrap shrink-0">已选 {selectedIds.size} 篇（最多 10）</span>
+          <button
+            onClick={handleBatchReview}
+            disabled={selectedIds.size === 0 || !!batchBusy}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-purple-600 text-white text-xs sm:text-sm disabled:opacity-40 hover:bg-purple-700 transition-colors whitespace-nowrap shrink-0"
+          >
+            {batchBusy === 'review' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            AI 领域综述摘要
+          </button>
+          <button
+            onClick={() => exportCitations('bibtex')}
+            disabled={selectedIds.size === 0 || !!batchBusy}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/10 text-white text-xs sm:text-sm disabled:opacity-40 hover:bg-white/20 transition-colors whitespace-nowrap shrink-0"
+          >
+            {batchBusy === 'cite' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+            导出 BibTeX
+          </button>
+          <button
+            onClick={() => exportCitations('gbt7714')}
+            disabled={selectedIds.size === 0 || !!batchBusy}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/10 text-white text-xs sm:text-sm disabled:opacity-40 hover:bg-white/20 transition-colors whitespace-nowrap shrink-0"
+          >
+            <FileDown className="w-4 h-4" />
+            导出 GB/T 7714
+          </button>
+          <button
+            onClick={() => {
+              setSelectionMode(false);
+              setSelectedIds(new Set());
+            }}
+            className="px-3 py-1.5 rounded-full text-white/80 text-xs sm:text-sm hover:text-white hover:bg-white/10 transition-colors whitespace-nowrap shrink-0"
+          >
+            取消
+          </button>
+        </div>
       )}
 
       {/* 批量综述结果弹窗 */}

@@ -11,7 +11,7 @@ import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
 import { usePreferences } from '@/lib/usePreferences';
 import { useToast } from '@/components/Toast';
-import { useAiAnalysisModal } from '@/components/AiAnalysisModalContext';
+import { openAssistant } from '@/lib/assistantBus';
 
 interface PaperCardProps {
   paper: PaperCardType;
@@ -73,13 +73,15 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
     }
   };
 
-  // —— AI 分析：复用全局单例悬浮窗（P3），不再在卡片内维护弹窗状态，避免多卡片并发请求 ——
-  const { openAiAnalysis } = useAiAnalysisModal();
-
+  // —— AI 分析：打开全局 AI 悬浮助手并直接发起分析，内容在小浮窗中显示（P3）——
   const handleOpenAi = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openAiAnalysis(paper.id, paper.title);
+    openAssistant({
+      paperId: paper.id,
+      contextText: paper.title,
+      autoPrompt: '请帮我分析这篇论文',
+    });
   };
 
   // —— 「不感兴趣」快捷屏蔽：该论文的领域/期刊/关键词/作者入屏蔽表 ——
@@ -282,9 +284,6 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
             {subject.trim()}
           </span>
         ))}
-        {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).length > 2 && (
-          <span className="text-xs text-gray-400 dark:text-gray-500">+{paper.cnki_subject.split(';').filter(Boolean).length - 2}</span>
-        )}
         {paper.keywords_cn?.slice(0, 2).map((keyword, index) => (
           <button
             key={index}
@@ -308,7 +307,8 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
           <span className="bg-gray-100 dark:bg-gray-700 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs">
             {paper.source}
           </span>
-          {paper.venue && (
+          {/* venue 与 journal_name 相同（CNKI 论文两字段都是刊名）时只显示 journal_name，避免重复 */}
+          {paper.venue && paper.venue !== paper.journal_name && (
             <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-xs hidden sm:inline">
               {paper.venue}
             </span>

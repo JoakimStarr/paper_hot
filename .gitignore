@@ -70,5 +70,8 @@ urls.txt
 debug_page1.html
 frontend/tsconfig.tsbuildinfo
 
+# 运行时缓存目录（会话态/urls/检索结果页 URL/调试 HTML）
+.cache/
+
 # 运行时爬虫产物
 search_url.txt

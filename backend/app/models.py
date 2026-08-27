@@ -162,7 +162,18 @@ class CrawlLog(Base):
     papers_failed = Column(Integer, default=0)
     status = Column(String(20), nullable=False, default="running", index=True)
     error_message = Column(Text, nullable=True)
+    # 任务类型（journal/keyword/cnki_top50/cnki_navi/arxiv 等）：前端「重跑」据此分发
+    task_type = Column(String(20), nullable=False, default="journal", index=True)
+    # 任务运行日志尾部（前端点开任务查看）；rerun_params 为重跑参数（JSON 字符串）
+    log_detail = Column(Text, nullable=True)
+    rerun_params = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # 任务类型：journal（期刊/arxiv 调度爬取）| keyword（关键词检索爬取）| cnki_top50 | cnki_navi
+    task_type = Column(String(20), default="journal", index=True)
+    # 爬取日志尾部（任务展开查看，由父进程在子进程结束后写入，上限 ~60 行）
+    log_detail = Column(Text, nullable=True)
+    # 重跑参数（JSON 字符串，keyword 任务存 search_field/years/max_pages/detail_workers/show_browser）
+    rerun_params = Column(Text, nullable=True)
 
 
 class TrendChat(Base):
@@ -357,3 +368,102 @@ class BatchReport(Base):
     status = Column(String(20), default="running", index=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SystemSetting(Base):
+    """用户自定义配置持久化（设置页保存项，覆盖 .env/环境变量基线）。
+
+    优先级：system_settings(DB) > 环境变量 > backend/.env。
+    端口类键额外镜像写回 backend/.env：start.sh 在应用启动前读取端口。
+    """
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AIFeedback(Base):
+    """AI 回答的轻量反馈（👍/👎，P2）：为回答质量评估与提示词迭代积累信号。
+
+    surface：trend_chat / paper_chat / validator / producer / gap；
+    ref_id：report_id / paper_id 等上下文主键（可选）；rating：1 赞 / -1 踩。
+    """
+    __tablename__ = "ai_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    surface = Column(String(30), nullable=False, default="chat")
+    ref_id = Column(String(100), nullable=True, index=True)
+    content_hash = Column(String(64), nullable=True)     # 消息内容哈希，用于同一答案去重
+    rating = Column(Integer, nullable=False)             # 1 或 -1
+    model = Column(String(80), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ActionLog(Base):
+    """动作日志（日志系统）：中间件全量记录每个 API 请求，用于排查/审计。
+
+    request_id 为单次请求的唯一标识，贯穿该请求的所有日志与错误记录。
+    """
+    __tablename__ = "action_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_id = Column(String(40), index=True)
+    user_id = Column(String(100), index=True)
+    method = Column(String(10))
+    path = Column(String(300))
+    status_code = Column(Integer)
+    duration_ms = Column(Integer)
+    query = Column(String(500), nullable=True)   # 请求查询串（截断；不存 body，防泄漏密钥）
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class ErrorLog(Base):
+    """错误报告（日志系统）：后端未捕获异常 / 校验失败 / 前端上报统一入库。
+
+    source：backend（后端异常）| frontend（前端上报）| scheduler（后台任务）。
+    """
+    __tablename__ = "error_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(20), default="backend", index=True)
+    request_id = Column(String(40), index=True)
+    user_id = Column(String(100), index=True)
+    method = Column(String(10), nullable=True)
+    path = Column(String(300), nullable=True)
+    status_code = Column(Integer, nullable=True)
+    error_type = Column(String(100))
+    error_message = Column(Text)
+    traceback = Column(Text, nullable=True)
+    request_info = Column(UnicodeJSON, nullable=True)   # 查询串/上下文详情（不含 body）
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AssistantSession(Base):
+    """全局 AI 悬浮助手会话（P2）：按页面上下文创建，保存历史记录。
+
+    page/paper_id/context_text 记录会话起点上下文；消息存 assistant_messages 表。
+    """
+    __tablename__ = "assistant_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(100), index=True)
+    title = Column(String(200), nullable=True)         # 由首条用户消息自动生成
+    page = Column(String(30), default="generic")
+    paper_id = Column(String(36), nullable=True)
+    context_text = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+
+class AssistantMessage(Base):
+    """全局 AI 悬浮助手消息（P2）：属于某个 assistant_session。"""
+    __tablename__ = "assistant_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, index=True)
+    role = Column(String(20))                          # user | assistant
+    content = Column(Text)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)

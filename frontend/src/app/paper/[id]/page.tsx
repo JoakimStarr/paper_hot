@@ -4,9 +4,9 @@ import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { papersApi, producerApi, getLastModel, rememberModel, streamPaperChat } from '@/lib/api';
+import { papersApi, producerApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Send, Bot, Brain, ChevronDown, FileText, Target, Copy, Check } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check } from 'lucide-react';
 import Link from 'next/link';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -35,19 +35,12 @@ export default function PaperDetailPage() {
   const [citationBusy, setCitationBusy] = useState(false);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
 
-  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatStreaming, setChatStreaming] = useState(false);
-  const [streamContent, setStreamContent] = useState('');
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
   const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // —— 模型选择（OpenAI 兼容）——
   const [availableModels, setAvailableModels] = useState<Array<{ id: string; label: string; available: boolean }>>([]);
   const [analysisModel, setAnalysisModel] = useState('');
-  const [chatModel, setChatModel] = useState('');
   const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
-  const [showChatModelSelect, setShowChatModelSelect] = useState(false);
 
   const providerLabel = (provider?: string) => {
     if (provider === 'zhipu') return '智谱';
@@ -72,9 +65,7 @@ export default function PaperDetailPage() {
           }));
         setAvailableModels(list);
         const lastAnalysis = getLastModel('paper_analysis');
-        const lastChat = getLastModel('paper_chat');
         if (lastAnalysis && list.some(m => m.id === lastAnalysis)) setAnalysisModel(lastAnalysis);
-        if (lastChat && list.some(m => m.id === lastChat)) setChatModel(lastChat);
       })
       .catch(() => setAvailableModels([]));
   }, []);
@@ -86,13 +77,34 @@ export default function PaperDetailPage() {
   }, []);
 
   useEffect(() => {
-    if (params.id) {
-      fetchPaper();
-      // P1-10：上报阅读历史（幂等，失败不影响页面）
-      import('@/lib/api').then(({ personalApi }) =>
-        personalApi.recordReading(params.id as string).catch(() => {})
-      );
-    }
+    if (!params.id) return;
+    // 竞态保护：id 切换/卸载时丢弃过期响应（对齐 usePapersPage 的 cancelled 模式）
+    let cancelled = false;
+
+    const fetchPaper = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await papersApi.getPaperById(params.id as string);
+        if (!cancelled) setPaper(response);
+      } catch (error: any) {
+        console.error('Error fetching paper:', error);
+        const errMsg = error instanceof ApiError ? (error.detail || error.message) : error.message || '加载论文详情失败';
+        if (!cancelled) setError(errMsg);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchPaper();
+    // P1-10：上报阅读历史（幂等，失败不影响页面）
+    import('@/lib/api').then(({ personalApi }) =>
+      personalApi.recordReading(params.id as string).catch(() => {})
+    );
+
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   useEffect(() => {
@@ -118,18 +130,9 @@ export default function PaperDetailPage() {
       return false;
     };
 
-    const loadChats = async () => {
-      try {
-        const chats = await papersApi.getChats(paper.id);
-        if (chats.length > 0) {
-          setChatMessages(chats.map(c => ({ role: c.role, content: c.content })));
-        }
-      } catch {}
-    };
-
     let timer: ReturnType<typeof setInterval>;
     const start = async () => {
-      const [isPending, _chats] = await Promise.all([loadAnalysis(), loadChats()]);
+      const isPending = await loadAnalysis();
       if (isPending) {
         timer = setInterval(async () => {
           const stillPending = await loadAnalysis();
@@ -142,13 +145,6 @@ export default function PaperDetailPage() {
     start();
     return () => clearInterval(timer);
   }, [paper]);
-
-  useEffect(() => {
-    // 仅在流式回复进行中自动滚动，避免打开页面就跳到底部
-    if (chatStreaming) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [streamContent, chatStreaming]);
 
   // P1-8c：把 AI 分析文本解析为结构化卡片（背景/方法/发现/意义），解析不出则回退整文渲染
   useEffect(() => {
@@ -218,28 +214,11 @@ export default function PaperDetailPage() {
     setCitationBusy(false);
   };
 
-  const fetchPaper = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await papersApi.getPaperById(params.id as string);
-      setPaper(response);
-    } catch (error: any) {
-      console.error('Error fetching paper:', error);
-      const errMsg = error.response?.data?.detail || error.message || '加载论文详情失败';
-      setError(errMsg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const analyzePaper = async () => {
     if (!params.id) return;
     setAiAnalyzing(true);
     setAiError(null);
     setAiAnalysis(null);
-    setChatMessages([]);
-    setStreamContent('');
     try {
       const result = await papersApi.analyzePaper(params.id as string, analysisModel || undefined);
       if (result.status === "pending") {
@@ -275,43 +254,9 @@ export default function PaperDetailPage() {
       setAiAnalysis(result.analysis);
       setAiAnalyzing(false);
     } catch (e: any) {
-      const msg = e.response?.data?.detail || e.message || 'AI analysis failed';
+      const msg = e instanceof ApiError ? (e.detail || e.message) : e.message || 'AI analysis failed';
       setAiError(msg);
       setAiAnalyzing(false);
-    }
-  };
-
-  const handleChatSubmit = async () => {
-    if (!chatInput.trim() || !paper) return;
-
-    const userMsg = { role: 'user', content: chatInput.trim() };
-    const allMessages = [...chatMessages, userMsg];
-    setChatMessages(allMessages);
-    setChatInput('');
-    setChatStreaming(true);
-    setStreamContent('');
-
-    try {
-      await streamPaperChat(paper.id, allMessages, chatModel || undefined, {
-        onContent: (text) => setStreamContent(text),
-        onDone: (fullContent) => {
-          if (fullContent) {
-            setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
-            papersApi.saveChats(paper.id, [
-              userMsg,
-              { role: 'assistant', content: fullContent }
-            ]).catch(() => {});
-          }
-          setStreamContent('');
-        },
-        onError: (message) => {
-          setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${message}` }]);
-        },
-      });
-    } catch (e: any) {
-      setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${e.message}` }]);
-    } finally {
-      setChatStreaming(false);
     }
   };
 
@@ -443,7 +388,8 @@ export default function PaperDetailPage() {
           <span className="bg-gray-100 dark:bg-gray-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded">
             {paper.source}
           </span>
-          {paper.venue && (
+          {/* venue 与 journal_name 相同（CNKI 论文两字段都是刊名）时只显示 journal_name，避免重复 */}
+          {paper.venue && paper.venue !== paper.journal_name && (
             <span className="bg-primary-50 dark:bg-primary-900/30 text-primary-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded hidden sm:inline">
               {paper.venue}
             </span>
@@ -716,112 +662,6 @@ export default function PaperDetailPage() {
               </div>
             )}
           </div>
-        )}
-
-        {aiAnalysis && !aiAnalyzing && (
-          <>
-            <div className="border-t mt-6 pt-6">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                  <Bot className="w-4 h-4 text-primary-600" />
-                  {t('pd.followUp')}
-                </h3>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowChatModelSelect(!showChatModelSelect)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                    title={t('pd.selectChatModel')}
-                  >
-                    <Brain className="w-3.5 h-3.5" />
-                    {availableModels.find(m => m.id === chatModel)?.label || t('pd.defaultModel')}
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                  {showChatModelSelect && (
-                    <div className="absolute right-0 top-8 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
-                      <button
-                        onClick={() => { setChatModel(''); rememberModel('paper_chat', null); setShowChatModelSelect(false); }}
-                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${chatModel === '' ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
-                      >
-                        {t('pd.defaultModel')}
-                      </button>
-                      {availableModels.map(model => (
-                        <button
-                          key={model.id}
-                          disabled={!model.available}
-                          onClick={() => { setChatModel(model.id); rememberModel('paper_chat', model.id); setShowChatModelSelect(false); }}
-                          className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${chatModel === model.id ? 'text-primary-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
-                        >
-                          {model.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-4 mb-4 max-h-[400px] overflow-y-auto">
-                {chatMessages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                        msg.role === 'user'
-                          ? 'bg-primary-600 text-white'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800'
-                      }`}
-                    >
-                      {msg.role === 'user' ? msg.content : <MarkdownRenderer content={msg.content} />}
-                    </div>
-                  </div>
-                ))}
-
-                {chatStreaming && streamContent && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800">
-                      <MarkdownRenderer content={streamContent} />
-                      <span className="inline-block w-1.5 h-4 bg-primary-600 ml-0.5 animate-pulse align-middle" />
-                    </div>
-                  </div>
-                )}
-
-                {chatStreaming && !streamContent && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
-                      <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-                    </div>
-                  </div>
-                )}
-
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !chatStreaming) {
-                      e.preventDefault();
-                      handleChatSubmit();
-                    }
-                  }}
-                  placeholder={t('pd.chatPlaceholder')}
-                  disabled={chatStreaming}
-                  className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-gray-50 dark:bg-gray-700/50"
-                />
-                <button
-                  onClick={handleChatSubmit}
-                  disabled={chatStreaming || !chatInput.trim()}
-                  className="bg-primary-600 text-white rounded-lg px-4 py-2 hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </>
         )}
       </div>
     </Layout>

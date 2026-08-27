@@ -118,15 +118,7 @@ def _mask_api_key(key: Optional[str]) -> str:
 
 @router.get("/settings")
 async def get_settings_endpoint(token: bool = Depends(verify_token)):
-    from app.config import Settings
-    # 手动编辑 .env 后无需重启：每次读取前从 .env 重新同步运行时配置
-    # （update_setting 写入的键同样在 .env 中，重读不会丢失；环境变量优先级高于 .env，行为不变）
-    try:
-        fresh = Settings()
-        for _k, _v in fresh.model_dump().items():
-            setattr(settings, _k, _v)
-    except Exception as e:  # 同步失败时退回内存配置，保证接口可用
-        logger.warning(f"refresh settings from .env failed: {e}")
+    # 运行时配置 = DB 覆盖(.env 基线)，启动时已应用；内存对象即权威，无需重读文件
     api_keys = {
         "zhipu": {
             "configured": bool(settings.zhipu_api_key),
@@ -182,9 +174,10 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
 @router.put("/settings")
 async def update_settings_endpoint(
     body: UpdateSettingsRequest,
+    db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token)
 ):
-    from app.config import Settings
+    from app.settings_store import save_override, dumps_json
     keys_changed = False
     models_changed = False
 
@@ -195,13 +188,13 @@ async def update_settings_endpoint(
             "siliconflow": "siliconflow_api_key",
         }
         for provider, value in body.api_keys.items():
-            env_key = key_mapping.get(provider)
-            if env_key and value is not None:
-                Settings.update_setting(env_key, value)
+            setting_key = key_mapping.get(provider)
+            if setting_key and value is not None:
+                await save_override(db, setting_key, str(value))
                 keys_changed = True
 
     if body.model_priority:
-        # 自定义 Provider 的模型顺序写回其配置；内置 Provider 的顺序由 update_models 持久化
+        # 自定义 Provider 的模型顺序写回其配置；内置 Provider 的顺序由 ai_trend_service.update_models 改内存后在此持久化
         custom_names = {p.get("name") for p in settings.get_custom_providers()}
         custom_order = {}
         for m in body.model_priority:
@@ -213,27 +206,34 @@ async def update_settings_endpoint(
             for p in providers:
                 if p.get("name") in custom_order and custom_order[p["name"]]:
                     p["models"] = custom_order[p["name"]]
-            Settings.update_setting("custom_providers", json.dumps(providers, ensure_ascii=False))
+            await save_override(db, "custom_providers", dumps_json(providers))
             keys_changed = True  # 触发 reload 以重新加载自定义 Provider 的模型列表
+        builtin_order = {}
+        for m in body.model_priority:
+            provider, _, bare = m.partition("/")
+            if provider in ("zhipu", "siliconflow", "openai") and bare:
+                builtin_order.setdefault(provider, []).append(bare)
+        for provider, models in builtin_order.items():
+            await save_override(db, f"{provider}_models", dumps_json(models))
         ai_trend_service.update_models(body.model_priority)
         models_changed = True
 
     if body.ports:
         for port_key, port_value in body.ports.items():
             if port_key in ("backend_port", "frontend_port"):
-                Settings.update_setting(port_key, str(port_value))
+                await save_override(db, port_key, str(port_value))
 
     if body.app_name is not None:
-        Settings.update_setting("app_name", body.app_name)
+        await save_override(db, "app_name", body.app_name)
 
     if body.cnki_url_prefix is not None:
-        Settings.update_setting("cnki_url_prefix", body.cnki_url_prefix.strip())
+        await save_override(db, "cnki_url_prefix", body.cnki_url_prefix.strip())
 
     if body.default_model is not None:
-        Settings.update_setting("default_model", body.default_model)
+        await save_override(db, "default_model", body.default_model)
 
     if body.embedding_model is not None:
-        Settings.update_setting("embedding_model", body.embedding_model)
+        await save_override(db, "embedding_model", body.embedding_model)
         keys_changed = True  # 触发 reload 以加载 embedding 对应的 provider 客户端
 
     if body.custom_providers is not None:
@@ -254,7 +254,7 @@ async def update_settings_endpoint(
             models = [m for m in (p.get("models") or []) if isinstance(m, str) and m.strip()]
             seen.add(name)
             valid_providers.append({"name": name, "base_url": base_url, "api_key": api_key, "models": models})
-        Settings.update_setting("custom_providers", json.dumps(valid_providers, ensure_ascii=False))
+        await save_override(db, "custom_providers", dumps_json(valid_providers))
         keys_changed = True
 
     if keys_changed:

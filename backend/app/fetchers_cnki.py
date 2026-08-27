@@ -5,11 +5,11 @@ CNKI (中国知网) 爬虫模块 - 使用 DrissionPage
 
 import asyncio
 import random
+import re
 import time
 import logging
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple
-from dataclasses import dataclass
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 from abc import ABC, abstractmethod
 from functools import wraps
 
@@ -182,22 +182,6 @@ CNKI_TOP50_JOURNALS = {
 }
 
 
-@dataclass
-class PaperInfo:
-    """论文信息数据类"""
-    title: str
-    authors: List[str]
-    abstract: str
-    keywords: List[str]
-    journal: str
-    year: int
-    issue: str
-    doi: Optional[str] = None
-    url: Optional[str] = None
-    citations: int = 0
-    downloads: int = 0
-
-
 class DrissionPageBase:
     """DrissionPage 基础封装类"""
     
@@ -248,21 +232,33 @@ class DrissionPageBase:
             logger.error(f"Failed to initialize DrissionPage browser: {e}")
             raise
     
+    # 爬虫自身注入的提示横幅 id：handle_captcha 注入的横幅文案含"验证码"字样，
+    # 若不剥离会触发下方指示词检测，导致解完码后仍判定有验证码而空转超时（F1）
+    CRAWLER_BANNER_ID = "crawler-banner-overlay"
+    _CRAWLER_BANNER_RE = re.compile(
+        r'<div\b[^>]*\bid=["\']' + CRAWLER_BANNER_ID + r'["\'][^>]*>.*?</div>',
+        flags=re.S,
+    )
+
+    def _page_html_for_captcha_check(self) -> str:
+        """获取页面 HTML 并剥离爬虫注入的提示横幅，供验证码检测使用"""
+        html = self.tab.html or ""
+        return self._CRAWLER_BANNER_RE.sub("", html)
+
     def check_captcha(self) -> bool:
         """检测当前页面是否有验证码"""
         try:
-            # 常见的验证码标识
+            # 常见的验证码标识（注意：不能包含裸"验证"，否则页面正常文案易误判）
             captcha_indicators = [
                 "验证码",
                 "captcha",
-                "验证",
                 "verification",
                 "安全验证",
                 "请点击",
                 "拖动滑块",
             ]
             
-            page_text = self.tab.html.lower()
+            page_text = self._page_html_for_captcha_check().lower()
             
             for indicator in captcha_indicators:
                 if indicator in page_text:
@@ -308,9 +304,11 @@ class DrissionPageBase:
         logger.warning("=" * 60)
         
         # 在浏览器中显示提示（如果浏览器可见）
+        # 横幅带唯一 id，检测时会先剥离该节点内容再匹配，避免横幅文案自触发
         try:
-            js_code = """
+            js_code = f"""
             var div = document.createElement('div');
+            div.id = '{self.CRAWLER_BANNER_ID}';
             div.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#ff6b6b;color:white;padding:20px;border-radius:10px;z-index:99999;font-size:16px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
             div.innerHTML = '【爬虫提示】请手动完成验证码验证，完成后等待自动继续...';
             document.body.appendChild(div);
@@ -323,12 +321,27 @@ class DrissionPageBase:
         start_time = time.time()
         check_interval = 3
         
+        round_count = 0
+        last_page_html = ""
         while time.time() - start_time < timeout:
             time.sleep(check_interval)
+            
+            page_html = self._page_html_for_captcha_check()
             
             if not self.check_captcha():
                 logger.info("验证码已通过，继续爬取")
                 return True
+            
+            round_count += 1
+            # 第4轮起：仍检出验证码且页面 HTML 与上一轮完全相同，
+            # 说明页面无任何变化（大概率误检或人工已放弃），提前失败避免白等满 timeout
+            if round_count >= 4 and page_html == last_page_html:
+                logger.error(
+                    "验证码持续存在且页面连续多轮无变化，提前终止等待 "
+                    f"(round={round_count}, waited={int(time.time() - start_time)}s)"
+                )
+                return False
+            last_page_html = page_html
             
             remaining = int(timeout - (time.time() - start_time))
             if remaining % 30 == 0:  # 每30秒提醒一次
@@ -643,15 +656,28 @@ class CNKIDrissionFetcher(EconomicsJournalFetcher):
     ) -> List[Dict[str, Any]]:
         """
         从知网爬取指定期刊的论文
-        
+
         Args:
             start_date: 开始日期，用于过滤
             end_date: 结束日期，用于过滤
             max_results: 最大返回结果数
-            
+
         Returns:
             论文列表，每个论文为字典格式
         """
+        # DrissionPage 的浏览器操作/时间等待均为同步阻塞调用，
+        # 必须放到工作线程执行，避免卡死事件循环（F3）
+        return await asyncio.to_thread(
+            self._fetch_papers_sync, start_date, end_date, max_results
+        )
+
+    def _fetch_papers_sync(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_results: int = 50
+    ) -> List[Dict[str, Any]]:
+        """fetch_papers 的同步实现（在 to_thread 中执行）"""
         logger.info(f"Fetching papers from CNKI - Journal: {self.journal_name}, max_results: {max_results}")
         
         # 默认2025年至今

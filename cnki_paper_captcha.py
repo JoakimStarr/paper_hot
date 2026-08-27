@@ -72,6 +72,8 @@ PAGE_STABLE_TIMEOUT = 30
 # 详情页抓取失败重试次数与退避间隔（秒）
 DETAIL_MAX_RETRIES = 2
 DETAIL_RETRY_BACKOFF = [3.0, 8.0]
+# 首页检索触发后，若被风控以 403 拦截（页面落到 chrome-error），最多重试次数
+SEARCH_MAX_RETRIES = 3
 # 验证码自动解决最大尝试次数（点选验证码每次刷新都是一次风控交互，不宜过高）
 CLICK_CAPTCHA_MAX_RETRIES = 10  # 测试期临时调高到 10，定位识别问题后应收敛
 SLIDER_CAPTCHA_MAX_RETRIES = 3
@@ -130,12 +132,37 @@ def _report_captcha(tag: str = ""):
         _pacing['cooldown_until'] = now + CIRCUIT_BREAKER_COOLDOWN
         print(f"  [熔断{tag}] 全部爬取暂停 {CIRCUIT_BREAKER_COOLDOWN}s 冷却")
 
+# —— 运行时缓存目录：会话态 / urls / 检索结果页 URL / 调试 HTML 统一落到脚本同级的 .cache/ 下 ——
+CACHE_DIR = Path(__file__).resolve().parent / '.cache'
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# CNKI 检索字段全集（取值即知网站点字段名，前端下拉与 --search-field 均基于此，见 demo.py）
+CNKI_SEARCH_FIELDS = [
+    "主题", "篇关摘", "关键词", "篇名", "全文", "作者", "第一作者", "通讯作者",
+    "作者单位", "基金", "摘要", "小标题", "参考文献", "分类号", "文献来源", "DOI",
+]
+
+# 检索字段 → 侧边栏筛选分组(div#divGroup 中 dl@dt@groupitem) 的映射：
+# 命中分组时，在该分组内按关键词匹配最恰当的一项并点选，进一步收窄结果。
+# 无映射的字段（篇关摘/篇名/关键词/全文/摘要/小标题/参考文献/DOI）不做分组筛选。
+# 注意：检索字段「文献来源」对应侧边栏分组「文献来源」(WXLY)，不是「期刊」(QK)。
+SEARCH_FIELD_GROUP_MAP = {
+    "主题": "主题",
+    "作者": "作者",
+    "第一作者": "作者",
+    "通讯作者": "作者",
+    "作者单位": "机构",
+    "基金": "基金",
+    "文献来源": "文献来源",
+    "分类号": "学科",
+}
+
 # 会话态文件：期刊收集各浏览器独立一份，详情浏览器复用 cnki_state.json
-CNKI_STATE_FILE = Path(__file__).resolve().parent / 'cnki_state.json'
+CNKI_STATE_FILE = CACHE_DIR / 'cnki_state.json'
 
 
 def _collect_state_file(index: int) -> Path:
-    return Path(__file__).resolve().parent / f'cnki_state_collect_{index}.json'
+    return CACHE_DIR / f'cnki_state_collect_{index}.json'
 
 
 
@@ -267,11 +294,11 @@ class CaptchaSolver:
         """检查验证码解决器是否可用（按库可用性判断，不触发初始化）"""
         return DDDDOCR_AVAILABLE or PADDLEOCR_AVAILABLE
 
-    async def _ocr_call(self, fn, *args):
+    async def _ocr_call(self, fn, *args, **kwargs):
         """把同步 OCR 推理丢到后台线程，并用全局锁串行化。"""
         def _run():
             with _OCR_THREAD_LOCK:
-                return fn(*args)
+                return fn(*args, **kwargs)
         return await asyncio.to_thread(_run)
 
     async def _recognize_char_fusion(self, char_img_bytes: bytes) -> list:
@@ -555,47 +582,85 @@ class CaptchaSolver:
     async def detect_captcha_type(self, page: Page) -> str:
         """
         检测验证码类型
-        返回: 'slider' (滑块), 'click' (点选)
-        
+        返回: 'slider' (滑块/拼图), 'click' (点选)
+
         知网验证码特点：
-        - 期刊页面：通常是滑块验证码
-        - 论文详情页：通常是文字点选验证码
+        - 期刊页面 / 检索验证：blockPuzzle 拼图滑块（verify-img-panel + verify-move-block + verify-sub-block）
+        - 论文详情页：文字点选验证码
+        拼图滑块和点选验证码共用 verify-img-panel / verify-msg 元素，必须先按
+        URL captchaType 参数和提示文字区分，否则会把滑块误判为点选。
         """
+        tag = f"[线程{self.thread_id}]"
         try:
-            # 优先使用 Playwright 查询动态加载的元素（更准确）
-            # 检查点选验证码特征
+            # 1) 首选 URL captchaType 参数（最可靠）
+            try:
+                m = re.search(r'captchaType=([^&]+)', page.url)
+                ctype = m.group(1) if m else ''
+                if ctype:
+                    if 'uzzle' in ctype or 'lider' in ctype:
+                        print(f"    {tag} URL captchaType={ctype} → 滑块验证码")
+                        return 'slider'
+                    if 'lick' in ctype or 'Word' in ctype or 'word' in ctype:
+                        print(f"    {tag} URL captchaType={ctype} → 点选验证码")
+                        return 'click'
+            except Exception:
+                pass
+
+            # 2) 提示文字判断（拼图滑块提示「向右滑动完成验证」）
+            try:
+                msg_elem = await page.query_selector('span.verify-msg')
+                if msg_elem:
+                    text = (await msg_elem.inner_text()) or ''
+                    if '向右滑动' in text or '拖动' in text or '滑动' in text:
+                        print(f"    {tag} 提示「{text}」→ 滑块验证码")
+                        return 'slider'
+                    if '点击' in text or '依次' in text:
+                        print(f"    {tag} 提示「{text}」→ 点选验证码")
+                        return 'click'
+            except Exception:
+                pass
+
+            # 3) 结构判断：存在滑块把手/拼图块 → 滑块
+            try:
+                if await page.query_selector('div.verify-move-block, div.verify-sub-block, .yidun_slider, .nc-container'):
+                    print(f"    {tag} 检测到滑块把手元素")
+                    return 'slider'
+            except Exception:
+                pass
+
+            # 4) 点选特征（verify-img-panel + verify-msg）——放在滑块判断之后，避免误判
             verify_img_panel = await page.query_selector('div.verify-img-panel')
             verify_msg = await page.query_selector('span.verify-msg')
             if verify_img_panel and verify_msg:
-                print(f"    [线程{self.thread_id}] 检测到点选验证码元素 (verify-img-panel + verify-msg)")
+                print(f"    {tag} 检测到点选验证码元素 (verify-img-panel + verify-msg)")
                 return 'click'
 
-            # 检查滑块验证码特征（用知网验证码专有的精确类，避免误命中结果页普通元素）
+            # 5) 滑块验证码特征（用知网验证码专有的精确类，避免误命中结果页普通元素）
             slider_elem = await page.query_selector('.verify-slider, .slider-img, .nc-container, .yidun_slider, .jy-captcha')
             if slider_elem:
-                print(f"    [线程{self.thread_id}] 检测到滑块验证码元素")
+                print(f"    {tag} 检测到滑块验证码元素")
                 return 'slider'
 
-            # 备用：通过页面文本判断
+            # 6) 备用：通过页面文本判断
             html = await page.content()
             soup = BeautifulSoup(html, 'lxml')
             page_text = soup.get_text()
 
             # 检查点选验证码文本特征
             if '请依次点击' in page_text or '请点击' in page_text:
-                print(f"    [线程{self.thread_id}] 通过文本检测到点选验证码")
+                print(f"    {tag} 通过文本检测到点选验证码")
                 return 'click'
 
             # 检查滑块验证码文本特征
             if '滑块' in page_text or '拖动' in page_text:
-                print(f"    [线程{self.thread_id}] 通过文本检测到滑块验证码")
+                print(f"    {tag} 通过文本检测到滑块验证码")
                 return 'slider'
 
             # 默认返回点选（论文详情页最常见）
-            print(f"    [线程{self.thread_id}] 无法确定验证码类型，默认尝试点选验证码")
+            print(f"    {tag} 无法确定验证码类型，默认尝试点选验证码")
             return 'click'
         except Exception as e:
-            print(f"    [线程{self.thread_id}] 检测验证码类型失败: {e}")
+            print(f"    {tag} 检测验证码类型失败: {e}")
             return 'click'  # 默认返回点选类型（论文详情页更常见）
 
     async def solve_slider_captcha(self, page: Page, max_retries: int = SLIDER_CAPTCHA_MAX_RETRIES) -> bool:
@@ -634,15 +699,17 @@ class CaptchaSolver:
 
                 # 尝试通过选择器获取
                 try:
-                    # 常见的滑块验证码选择器
+                    # 常见的滑块验证码选择器（含知网检索验证 blockPuzzle 的 yidun 结构）
                     slider_selectors = [
-                        '.verify-slider',
+                        'div.verify-sub-block',   # yidun 拼图块（与背景同源，截图即目标）
+                        'div.verify-slider',
                         '.slider-img',
                         '[class*="slider"]',
                         'img[src*="slider"]',
                     ]
                     bg_selectors = [
-                        '.verify-bg',
+                        'div.verify-img-panel',   # yidun 背景图
+                        'div.verify-bg',
                         '.bg-img',
                         '[class*="background"]',
                         'img[src*="bg"]',
@@ -698,7 +765,14 @@ class CaptchaSolver:
                     continue
 
                 distance = result['target'][0]
-                print(f"    [线程{self.thread_id}] 计算滑动距离: {distance}px")
+                # 截图按设备像素比缩放：ddddocr 返回的是截图像素坐标，拖动需换算回 CSS 像素
+                try:
+                    dpr = await page.evaluate('window.devicePixelRatio') or 1
+                    if dpr > 1:
+                        distance = distance / dpr
+                except Exception:
+                    pass
+                print(f"    [线程{self.thread_id}] 计算滑动距离: {distance:.0f}px")
 
                 # 模拟人类拖动
                 await self._human_drag(page, distance)
@@ -728,6 +802,7 @@ class CaptchaSolver:
         try:
             # 获取滑块元素
             slider_selectors = [
+                'div.verify-move-block',  # yidun 拖动把手（知网检索验证 blockPuzzle）
                 '.verify-slider',
                 '.slider',
                 '[class*="slider"]',
@@ -2254,9 +2329,14 @@ class KeywordSearchCrawler(JournalCrawler):
     VERIFY_MARK = "/verify"
     # CNKI 检索页 XPath 选择器
     SEARCH_SELECTOR = '//textarea[@id="txt_SearchText"]'
+    # 检索字段下拉：现行首页/检索页（参考 demo.py）
+    FIELD_SORT_DEFAULT_SELECTOR = '//div[contains(@class, "sort-default")]'
+    FIELD_LIST_SELECTOR = '//div[@id="DBFieldList"]'
+    FIELD_LI_SELECTOR = '//div[@id="DBFieldList"]//li'
+    # 旧版检索字段下拉（兜底）
     FIELD_SELECTOR = '//dd[@id="searchField"]'
-    SUBJECT_SELECTOR = '//dd[@field="ZYZT"]//li'
-    DOCTYPE_SELECTOR = '//ul[contains(@class, "doctype-menus")]'
+    # 侧边栏筛选容器（搜索结果页左侧分组：主题/学科/年度/研究层次/期刊/文献来源/来源类别/作者/机构/基金/OA出版）
+    GROUP_CONTAINER_SELECTOR = '//div[@id="divGroup"]'
     RESULT_TABLE_SELECTOR = '//table[contains(@class, "result-table-list")]'
     NEXT_PAGE_SELECTOR = '//a[@id="PageNext"]'
     TITLE_LINK_SELECTOR = './/a[contains(@class, "fz14")]'
@@ -2283,11 +2363,11 @@ class KeywordSearchCrawler(JournalCrawler):
         self.state_file = Path(state_file) if state_file else None
         # 只收集 URL 模式（不抓详情入库），并保存到 urls_file
         self.urls_only = urls_only
-        self.urls_file = Path(urls_file) if urls_file else Path(__file__).parent / 'urls.txt'
+        self.urls_file = Path(urls_file) if urls_file else CACHE_DIR / 'urls.txt'
         self.search_url = search_url
         # 保存/复用检索结果页 URL（供 --search-url 直接跳转，跳过首页重复检索）
-        self.search_url_file = Path(search_url_file) if search_url_file else Path(__file__).parent / 'search_url.txt'
-        self.debug_html = Path(debug_html) if debug_html else Path(__file__).parent / 'debug_page1.html'
+        self.search_url_file = Path(search_url_file) if search_url_file else CACHE_DIR / 'search_url.txt'
+        self.debug_html = Path(debug_html) if debug_html else CACHE_DIR / 'debug_page1.html'
 
         # 详情页并发抓取数（翻页收集仍串行）
         self.detail_workers = max(1, int(detail_workers))
@@ -2361,13 +2441,50 @@ class KeywordSearchCrawler(JournalCrawler):
                 prompted = True
             await asyncio.sleep(1.5)
 
-    async def _pick_subject(self):
-        """在主要主题(ZYZT)列表中选出与关键词最匹配的一项并点击；无匹配返回 False。"""
-        lis = self.page.locator(self.SUBJECT_SELECTOR)
-        if await lis.count() == 0:
-            print(f"  [关键词#{self.thread_id}] 未找到主要主题列表，跳过主题筛选")
+    async def _pick_field_filter(self) -> bool:
+        """按检索字段在侧边栏筛选(div#divGroup)中做分组匹配并点选。
+
+        检索字段 → 分组：主题→「主题」，作者/第一作者/通讯作者→「作者」，
+        作者单位→「机构」，基金→「基金」，文献来源→「文献来源」，分类号→「学科」。
+        在对应分组里选出与关键词最匹配的一项并点击；无匹配或无需筛选返回 False。
+        """
+        tag = f"[关键词#{self.thread_id}]"
+        target = SEARCH_FIELD_GROUP_MAP.get((self.search_field or '').strip())
+        if not target:
+            print(f"{tag} 检索字段「{self.search_field}」无对应侧边栏分组，跳过分组筛选")
             return False
-        # 一次性批量取所有主题项文本，避免逐项 inner_text 的多次往返
+
+        # 等待侧边栏容器出现后再定位分组（结果页异步渲染，直接定位可能扑空）
+        try:
+            await self.page.locator(self.GROUP_CONTAINER_SELECTOR).first.wait_for(state='visible', timeout=15000)
+        except Exception:
+            print(f"{tag} 侧边栏筛选容器(#divGroup)未出现")
+            return False
+
+        # 按 groupitem 定位分组 dl（如 主题/作者/机构/基金/文献来源/学科）
+        dl = self.page.locator(
+            f'{self.GROUP_CONTAINER_SELECTOR}//dl[dt[@groupitem="{target}"]]'
+        )
+        if await dl.count() == 0:
+            print(f"{tag} 未找到侧边栏分组「{target}」")
+            return False
+
+        # 分组列表若为空（分组默认折叠、懒加载），点击 dt 标题展开并等待列表加载
+        lis = dl.locator('xpath=.//dd//li')
+        if await lis.count() == 0:
+            try:
+                await dl.locator('xpath=.//dt').first.click()
+            except Exception:
+                pass
+            try:
+                await lis.first.wait_for(state='visible', timeout=15000)
+            except Exception:
+                pass
+            if await lis.count() == 0:
+                print(f"{tag} 分组「{target}」列表未加载")
+                return False
+
+        # 一次性批量取所有候选项文本，避免逐项 inner_text 的多次往返
         texts = await lis.evaluate_all(
             """(lis) => lis.map((li) => (li.textContent || '').trim())"""
         )
@@ -2383,7 +2500,7 @@ class KeywordSearchCrawler(JournalCrawler):
             if score > best_score:
                 best_i, best_score = i, score
         if best_i is None or best_score <= 0:
-            print(f"  [关键词#{self.thread_id}] 没有与关键词匹配的主题项")
+            print(f"{tag} 分组「{target}」中没有与关键词匹配的项")
             return False
         try:
             best_li = lis.nth(best_i)
@@ -2391,47 +2508,89 @@ class KeywordSearchCrawler(JournalCrawler):
             if await clickable.count() == 0:
                 clickable = best_li
             await clickable.click()
-            print(f"  [关键词#{self.thread_id}] 已选择主题: {texts[best_i][:30]}")
+            print(f"{tag} 已在「{target}」分组选中: {texts[best_i][:30]}")
             return True
         except Exception as e:
-            print(f"  [关键词#{self.thread_id}] 点击主题项失败: {e}")
+            print(f"{tag} 点击分组「{target}」项失败: {e}")
             return False
 
-    async def _select_doctype(self) -> bool:
-        """在文献类型菜单中选中"学术期刊"。"""
-        menu = self.page.locator(self.DOCTYPE_SELECTOR)
-        if await menu.count() == 0:
-            print(f"  [关键词#{self.thread_id}] 未找到文献类型菜单")
-            return False
-        # 一次性批量取所有菜单项文本，避免逐项 inner_text 的多次往返
-        texts = await menu.locator('xpath=.//li').evaluate_all(
-            """(lis) => lis.map((li) => (li.textContent || '').trim())"""
-        )
-        for text in texts:
-            if "学术期刊" in text:
-                li = menu.locator('xpath=.//li', has_text=text).first
-                await li.click()
-                print(f"  [关键词#{self.thread_id}] 已选择文献类型: {text}")
+    async def _search_navigation_failed(self, timeout: int = 20) -> bool:
+        """判断首页检索触发后的导航是否被风控拦截。
+
+        触发搜索后可能出现三种落点：
+        - /verify 验证码页、defaultresult 结果页：正常，返回 False
+        - chrome-error（403 被拦）：失败，返回 True，调用方需重试
+        超时未明确失败按成功处理（翻页收集阶段会对缺失结果表格兜底）。
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            url = self.page.url
+            if 'chrome-error' in url or 'chromewebdata' in url:
                 return True
-        print(f"  [关键词#{self.thread_id}] 未找到'学术期刊'类型")
+            if 'defaultresult' in url or 'verify' in url:
+                return False
+            try:
+                if await self.page.locator(self.RESULT_TABLE_SELECTOR).first.count() > 0:
+                    return False
+            except Exception:
+                pass
+            await asyncio.sleep(1)
         return False
 
     async def _set_search_field(self) -> bool:
-        """尝试设置检索字段（主题/篇名/关键词/作者等），失败静默回到默认。"""
-        dd = self.page.locator(self.FIELD_SELECTOR)
-        if await dd.count() == 0:
-            return False
+        """设置检索字段（主题/篇关摘/关键词/篇名/作者...）。
+
+        参考 demo.py：悬停展开「检索字段」下拉框（div.sort-default）→ 在
+        #DBFieldList 中点击目标字段；旧版 dd#searchField 下拉保留作兜底。
+        失败静默回到默认字段（通常为「主题」）。
+        """
+        target = (self.search_field or '').strip() or '主题'
+        if target == '主题':
+            return True  # 默认主题无需切换
+
+        # 方案一：现行首页/检索页的检索字段下拉（sort-default + #DBFieldList）
         try:
+            cur = ''
+            try:
+                cur = (await self.page.locator(self.FIELD_SORT_DEFAULT_SELECTOR + '/span').first.inner_text()).strip()
+            except Exception:
+                pass
+            if cur == target:
+                return True
+            await self.page.locator(self.FIELD_SORT_DEFAULT_SELECTOR).first.hover()
+            await self.page.locator(self.FIELD_LIST_SELECTOR).first.wait_for(state='visible', timeout=8000)
+            texts = await self.page.locator(self.FIELD_LI_SELECTOR).evaluate_all(
+                """(lis) => lis.map((li) => (li.textContent || '').trim())"""
+            )
+            for i, text in enumerate(texts):
+                if text == target:
+                    item = self.page.locator(self.FIELD_LI_SELECTOR).nth(i)
+                    clickable = item.locator('xpath=.//a').first
+                    if await clickable.count() == 0:
+                        clickable = item
+                    await clickable.click()
+                    print(f"  [关键词#{self.thread_id}] 已切换检索字段为: {target}")
+                    return True
+        except Exception as e:
+            print(f"  [关键词#{self.thread_id}] sort-default 下拉切换检索字段失败，尝试旧版选择器: {e}")
+
+        # 方案二：旧版 dd#searchField 下拉（兜底）
+        try:
+            dd = self.page.locator(self.FIELD_SELECTOR)
+            if await dd.count() == 0:
+                return False
             await dd.click()
             texts = await dd.locator('xpath=.//li').evaluate_all(
                 """(lis) => lis.map((li) => (li.textContent || '').trim())"""
             )
             for text in texts:
-                if self.search_field in text:
+                if target in text:
                     await dd.locator('xpath=.//li', has_text=text).first.click()
+                    print(f"  [关键词#{self.thread_id}] 已切换检索字段为: {target}")
                     return True
         except Exception:
             pass
+        print(f"  [关键词#{self.thread_id}] 未找到检索字段: {target}，保持默认")
         return False
 
     async def _collect_papers_from_rows(self) -> list:
@@ -2516,7 +2675,7 @@ class KeywordSearchCrawler(JournalCrawler):
             pass
 
     async def run_search(self):
-        """执行关键词检索：搜索 -> 主题/期刊筛选 -> 翻页收集 -> 详情入库。"""
+        """执行关键词检索：搜索 -> 按检索字段做侧边栏分组筛选 -> 翻页收集 -> 详情入库。"""
         tag = f"[关键词#{self.thread_id}]"
         print("=" * 60)
         print(f"{tag} 关键词检索: {self.keyword} (字段: {self.search_field})")
@@ -2555,30 +2714,70 @@ class KeywordSearchCrawler(JournalCrawler):
                     except Exception:
                         pass
 
-                # 3. 设置检索字段并输入关键词
-                await self._set_search_field()
-                await self.random_scroll()
-                await box.click()
-                await box.fill(self.keyword)
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-                await box.press('Enter')
-                await self._ensure_no_captcha(timeout=180)
+                # 3. 设置检索字段并输入关键词触发搜索。
+                #    知网风控可能以 403 拦截首页表单提交（页面落到 chrome-error）。
+                #    直连导航比表单提交稳定（实测直连返回 302→verify 页，可被验证码逻辑处理），
+                #    失败时用页面 JS 拼好的检索 URL 直连重试。
+                search_ok = False
+                nav_url = None
 
-                # 4. 主题筛选（主要主题 ZYZT，匹配关键词）与文献类型（学术期刊）
+                def _capture_nav_url(req):
+                    nonlocal nav_url
+                    if 'defaultresult' in req.url and req.method == 'GET':
+                        nav_url = req.url
+
+                self.page.on('request', _capture_nav_url)
                 try:
-                    subj = self.page.locator(self.SUBJECT_SELECTOR).first
-                    await subj.wait_for(state='visible', timeout=15000)
-                except Exception:
-                    pass
-                # 点击最匹配的主题项后等待结果刷新（参考 demo 的 zyzt 点击流程）
-                if await self._pick_subject():
+                    for attempt in range(1, SEARCH_MAX_RETRIES + 1):
+                        await self._set_search_field()
+                        await self.random_scroll()
+                        await box.click()
+                        await box.fill(self.keyword)
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                        nav_url = None
+                        await box.press('Enter')
+                        await self._ensure_no_captcha(timeout=180)
+                        if not await self._search_navigation_failed(timeout=20):
+                            search_ok = True
+                            break
+                        print(f"{tag} 搜索请求被风控拦截(403/chrome-error)，第 {attempt}/{SEARCH_MAX_RETRIES} 次重试...")
+                        # 短停顿让风控降级后再直连（连续快速重试会持续 403）
+                        await asyncio.sleep(random.uniform(5, 9))
+                        if nav_url:
+                            # 表单提交被拦：改用直连导航（crossids/korder/kw 已由页面 JS 拼好）
+                            await _pacing_wait()
+                            try:
+                                await self.page.goto(nav_url, wait_until='domcontentloaded', timeout=60000)
+                                await self._ensure_no_captcha(timeout=180)
+                                if not await self._search_navigation_failed(timeout=20):
+                                    search_ok = True
+                                    break
+                            except Exception as e:
+                                print(f"{tag} 直连重试失败: {e}")
+                        # 回到首页准备下一次尝试
+                        await asyncio.sleep(random.uniform(3, 6))
+                        await _pacing_wait()
+                        try:
+                            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+                        except Exception:
+                            pass
+                        box = self.page.locator(self.SEARCH_SELECTOR)
+                        try:
+                            await box.wait_for(state='visible', timeout=60000)
+                        except Exception:
+                            pass
+                finally:
                     try:
-                        await self.page.wait_for_load_state('domcontentloaded')
+                        self.page.remove_listener('request', _capture_nav_url)
                     except Exception:
                         pass
-                    await asyncio.sleep(random.uniform(2.5, 5))
-                # 选择"学术期刊"文献类型并等待结果刷新
-                if await self._select_doctype():
+                if not search_ok:
+                    print(f"{tag} 搜索重试 {SEARCH_MAX_RETRIES} 次仍被拦截，放弃本次关键词检索")
+                    return
+
+                # 4. 按检索字段做侧边栏分组筛选（主题/作者/机构/基金/文献来源/学科）
+                # 点击最匹配的分组项后等待结果刷新（参考 demo 的 zyzt 点击流程）
+                if await self._pick_field_filter():
                     try:
                         await self.page.wait_for_load_state('domcontentloaded')
                     except Exception:
@@ -2745,26 +2944,30 @@ async def main():
     parser.add_argument('--search', type=str, default=None,
                         help='按关键词/主题检索知网并入库（启用检索模式，替代按期刊爬取）')
     parser.add_argument('--search-field', type=str, default='主题',
-                        help='检索字段：主题/篇名/关键词/作者等（默认主题）')
+                        help=f'检索字段（可选：{" / ".join(CNKI_SEARCH_FIELDS)}，默认主题）')
     parser.add_argument('--max-pages', type=int, default=None,
                         help='检索模式最大翻页数（不设则翻到最后一页）')
     parser.add_argument('--years', type=str, default=None,
                         help='年份区间，如 2024-2026（仅检索模式，按结果行年份过滤，可选）')
     parser.add_argument('--no-login-state', action='store_true',
-                        help='禁用登录态复用（默认自动复用 ./cnki_state.json）')
+                        help='禁用登录态复用（默认自动复用 .cache/cnki_state.json）')
     parser.add_argument('--urls-only', action='store_true',
                         help='只收集论文 URL 写入文件，不抓详情入库（仅检索模式）')
     parser.add_argument('--urls-file', type=str, default=None,
-                        help='URL 输出文件路径（默认当前目录 urls.txt，配合 --urls-only）')
+                        help='URL 输出文件路径（默认 .cache/urls.txt，配合 --urls-only）')
     parser.add_argument('--search-url', type=str, default=None,
                         help='直接复用已保存的检索结果页 URL（传完整URL，或传含URL的文本文件路径）')
     parser.add_argument('--save-url-file', type=str, default=None,
-                        help='检索结果页 URL 保存路径（默认当前目录 search_url.txt）')
+                        help='检索结果页 URL 保存路径（默认 .cache/search_url.txt）')
     parser.add_argument('--detail-workers', type=int, default=3,
                         help='详情页并发抓取 tab 数（默认3；期刊模式与检索模式均有效，翻页/收集仍按各自并发模型）')
     args = parser.parse_args()
 
     if args.search:
+        # 校验检索字段，未知值回退到默认「主题」
+        if args.search_field not in CNKI_SEARCH_FIELDS:
+            print(f"[WARN] 未知检索字段: {args.search_field}，可选: {' / '.join(CNKI_SEARCH_FIELDS)}，回退为默认「主题」")
+            args.search_field = '主题'
         min_year = max_year = None
         if args.years:
             parts = args.years.replace('，', ',').split('-')
@@ -2774,7 +2977,7 @@ async def main():
             except Exception:
                 print("年份格式错误，忽略 --years，应为如 2024-2026")
                 min_year = max_year = None
-        state_file = None if args.no_login_state else str(Path(__file__).parent / 'cnki_state.json')
+        state_file = None if args.no_login_state else str(CACHE_DIR / 'cnki_state.json')
         # --search-url 支持直接传 URL，或传一个含 URL 的本地文件路径（自动读取）
         search_url = args.search_url
         if search_url and Path(search_url).is_file():

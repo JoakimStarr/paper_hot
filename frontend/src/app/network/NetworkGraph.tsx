@@ -142,8 +142,12 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = Math.min(600, window.innerHeight - 400);
+    // 尺寸下限保护：容器尚未布局完成（宽度 0）或窗口过矮时，保证图至少有可用的可视区域
+    const getGraphSize = () => ({
+      width: Math.max(320, containerRef.current?.clientWidth || 0),
+      height: Math.max(320, Math.min(600, window.innerHeight - 400)),
+    });
+    const { width, height } = getGraphSize();
 
     const nodes: SimNode[] = data.nodes.map(n => ({
       ...n,
@@ -272,7 +276,18 @@ export default function NetworkGraph({ data, highlightedNodeId, onNodeClick }: N
       select(svgEl).call(zoomBehaviorRef.current.transform, zoomTransformRef.current);
     }
 
+    // 容器尺寸变化（侧栏折叠/窗口缩放）时同步更新 svg 宽高
+    const resizeObserver = new ResizeObserver(() => {
+      if (!svgRef.current) return;
+      const size = getGraphSize();
+      select(svgRef.current)
+        .attr('width', size.width)
+        .attr('height', size.height);
+    });
+    resizeObserver.observe(containerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       if (simulationRef.current) {
         simulationRef.current.stop();
       }

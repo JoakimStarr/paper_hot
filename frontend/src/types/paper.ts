@@ -2,19 +2,6 @@ export interface Author {
   name: string;
 }
 
-export interface PaperFeatures {
-  summary: string | null;
-  keywords: string[];
-  topic: string | null;
-}
-
-export interface PaperScore {
-  recency_score: number;
-  venue_score: number;
-  trend_score: number;
-  final_score: number;
-}
-
 export interface Paper {
   id: string;
   title: string;
@@ -25,8 +12,8 @@ export interface Paper {
   venue: string | null;
   published_at: string | null;
   created_at: string;
-  features: PaperFeatures | null;
-  scores: PaperScore | null;
+  features: { summary: string | null; keywords: string[]; topic: string | null } | null;
+  scores: { recency_score: number; venue_score: number; trend_score: number; final_score: number } | null;
   discipline: string | null;
   journal_name: string | null;
   journal_issue: string | null;
@@ -88,24 +75,9 @@ export interface TrendingTopicsResponse {
   week_end: string;
 }
 
-export interface SimilarPaper {
-  id: string;
-  title: string;
-  similarity_score: number;
-  topic: string | null;
-  keywords_cn: string[];
-}
-
 export interface PaperDetailResponse extends Paper {
-  similar_papers: SimilarPaper[];
+  similar_papers: Array<{ id: string; title: string; similarity_score: number; topic: string | null; keywords_cn: string[] }>;
   should_read_score: number | null;
-}
-
-export interface AIAnalysisResponse {
-  analysis: string;
-  model: string | null;
-  timestamp: string | null;
-  status: string;
 }
 
 export interface StructuredAnalysisItem {
@@ -204,6 +176,19 @@ export interface CNKISearchRequest {
   show_browser?: boolean;  // 显示浏览器窗口（无头模式验证码只能自动解；勾选后可人工处理）
 }
 
+export interface CNKISearchProgress {
+  phase: 'starting' | 'collecting' | 'details' | 'done' | 'stopped' | string;
+  page: number;
+  collected: number;
+  done: number;
+  total: number;
+  ok: number;
+  already_exists: number;
+  filtered: number;
+  verify_failed: number;
+  failed: number;
+}
+
 export interface CNKISearchInfo {
   running: boolean;
   paused?: boolean;
@@ -211,6 +196,8 @@ export interface CNKISearchInfo {
   started_at: string | null;
   finished_at: string | null;
   message: string | null;
+  progress?: CNKISearchProgress | null;
+  last_log?: string[];
 }
 
 export interface NetworkNode {
@@ -221,15 +208,9 @@ export interface NetworkNode {
   group: string;
 }
 
-export interface NetworkLink {
-  source: string;
-  target: string;
-  value: number;
-}
-
 export interface NetworkData {
   nodes: NetworkNode[];
-  links: NetworkLink[];
+  links: Array<{ source: string; target: string; value: number }>;
 }
 
 export interface CrawlLog {
@@ -242,18 +223,16 @@ export interface CrawlLog {
   status: string;
   error_message: string | null;
   created_at: string;
-}
-
-export interface ApiKeyStatus {
-  configured: boolean;
-  masked: string;
+  task_type?: string;
+  log_detail?: string | null;
+  rerun_params?: string | null;
 }
 
 export interface SettingsInfo {
   api_keys: {
-    zhipu: ApiKeyStatus;
-    openai: ApiKeyStatus;
-    siliconflow: ApiKeyStatus;
+    zhipu: { configured: boolean; masked: string };
+    openai: { configured: boolean; masked: string };
+    siliconflow: { configured: boolean; masked: string };
   };
   models: {
     name: string;
@@ -272,7 +251,7 @@ export interface SettingsInfo {
   };
   app_name?: string;
   app_version?: string;
-  custom_providers?: CustomProviderStatus[];
+  custom_providers?: Array<{ name: string; base_url: string; api_key_configured: boolean; api_key_masked: string; models: string[] }>;
   default_model?: string | null;
   embedding_model?: string | null;
   cnki_url_prefix?: string;
@@ -283,14 +262,6 @@ export interface ModelLinkTestResult {
   model: string;
   latency_ms?: number;
   message: string;
-}
-
-export interface CustomProviderStatus {
-  name: string;
-  base_url: string;
-  api_key_configured: boolean;
-  api_key_masked: string;
-  models: string[];
 }
 
 export interface SchedulerJob {
@@ -324,13 +295,6 @@ export interface ResearchGapsResponse {
   total: number;
 }
 
-export interface ClusterPoint {
-  id: string;
-  title: string;
-  x: number;
-  y: number;
-}
-
 export interface TopicCluster {
   id: number;
   rank: number;
@@ -341,7 +305,7 @@ export interface TopicCluster {
   cy: number;
   year_range: string;
   representative_papers: Array<{ id: string; title: string; score: number }>;
-  points: ClusterPoint[];
+  points: Array<{ id: string; title: string; x: number; y: number }>;
 }
 
 export interface TopicClustersResponse {
@@ -350,18 +314,16 @@ export interface TopicClustersResponse {
   clusters: TopicCluster[];
 }
 
-export interface KeywordTrendSeries {
-  name: string;
-  yearly: Array<{ year: string; count: number }>;
-  total: number;
-  last12: number;
-  prev12: number;
-  trend: 'emerging' | 'declining' | 'stable';
-}
-
 export interface KeywordTrendsResponse {
   years: string[];
-  series: KeywordTrendSeries[];
+  series: Array<{
+    name: string;
+    yearly: Array<{ year: string; count: number }>;
+    total: number;
+    last12: number;
+    prev12: number;
+    trend: 'emerging' | 'declining' | 'stable';
+  }>;
 }
 
 export interface GapAnalysisResponse {
@@ -388,23 +350,10 @@ export interface RetrievedPaper {
   published_at: string | null;
   keywords: string[];
   similarity: number;
-}
-
-/** 验证器 SSE 流首条论文元消息（召回数据 + 模式 + 拥挤度统计）。 */
-export interface ValidatorMeta {
-  papers: RetrievedPaper[];
-  mode: string;
-  stats: {
-    top30_avg_similarity?: number;
-    max_similarity?: number;
-    recent_3m_count?: number;
-    keyword_overlap?: Array<{ keyword: string; count: number }>;
-  };
+  n?: number; // 与 AI 回答中的 [n] 引用编号对齐
 }
 
 // ============ 选题库（决策层：选题工作台项目） ============
-
-export type TopicProjectStatus = 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
 
 export interface TopicProject {
   id: number;
@@ -414,7 +363,7 @@ export interface TopicProject {
   novelty: number | null;
   crowding: string | null;
   feasibility: number | null;
-  status: TopicProjectStatus;
+  status: 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
   created_at: string | null;
   updated_at: string | null;
 }

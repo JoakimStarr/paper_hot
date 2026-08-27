@@ -30,6 +30,8 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 联想请求序号：响应乱序返回时只采纳最新一次请求的结果
+  const reqSeqRef = useRef(0);
   const router = useRouter();
 
   useEffect(() => {
@@ -48,7 +50,11 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      // 卸载时清掉待触发的联想请求，避免组件销毁后 setState
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, []);
 
   const fetchSuggestions = useCallback(async (q: string) => {
@@ -57,12 +63,15 @@ export default function SearchBar({ initialQuery = '', initialField = 'keyword',
       setShowSuggestions(false);
       return;
     }
+    const seq = ++reqSeqRef.current;
     try {
       const result = await papersApi.getSearchSuggestions(q.trim());
+      if (seq !== reqSeqRef.current) return; // 已有更新的输入，丢弃过期响应
       setSuggestions(result.suggestions);
       setShowSuggestions(result.suggestions.length > 0);
       setHighlightIndex(-1);
     } catch {
+      if (seq !== reqSeqRef.current) return;
       setSuggestions([]);
     }
   }, []);

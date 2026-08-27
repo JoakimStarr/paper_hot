@@ -3,10 +3,6 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 
-class AuthorSchema(BaseModel):
-    name: str
-
-
 class PaperBase(BaseModel):
     title: str
     abstract: str
@@ -75,14 +71,6 @@ class PaperResponse(BaseModel):
     
     class Config:
         from_attributes = True
-
-
-class PaperListResponse(BaseModel):
-    papers: List[PaperResponse]
-    total: int
-    page: int
-    page_size: int
-    has_next: bool
 
 
 class PaperCardResponse(BaseModel):
@@ -154,18 +142,13 @@ class CrawlLogBase(BaseModel):
     papers_fetched: int = 0
     papers_failed: int = 0
     status: str = "running"
+    task_type: str = "journal"
+    log_detail: Optional[str] = None
+    rerun_params: Optional[str] = None
 
 
 class CrawlLogCreate(CrawlLogBase):
     pass
-
-
-class CrawlLogUpdate(BaseModel):
-    crawl_end_time: Optional[datetime] = None
-    papers_fetched: Optional[int] = None
-    papers_failed: Optional[int] = None
-    status: Optional[str] = None
-    error_message: Optional[str] = None
 
 
 class CrawlLogResponse(BaseModel):
@@ -178,6 +161,9 @@ class CrawlLogResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     created_at: datetime
+    task_type: str = "journal"
+    log_detail: Optional[str] = None
+    rerun_params: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -189,14 +175,6 @@ class CrawlLogListResponse(BaseModel):
     page: int
     page_size: int
     has_next: bool
-
-
-class StructuredAnalysis(BaseModel):
-    hot_topics: List[dict] = []
-    development_trends: List[dict] = []
-    keyword_insights: List[dict] = []
-    journal_insights: List[dict] = []
-    recommendations: List[dict] = []
 
 
 class AIAnalysisReportResponse(BaseModel):
@@ -231,6 +209,3 @@ class AIAnalysisReportListResponse(BaseModel):
     total: int
 
 
-class AIAnalysisResponseV2(BaseModel):
-    report: AIAnalysisReportResponse
-    cached: bool = False

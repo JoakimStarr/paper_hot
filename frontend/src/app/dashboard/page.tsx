@@ -8,12 +8,13 @@ import PaperCard from '@/components/PaperCard';
 import SkeletonCard from '@/components/SkeletonCard';
 import { useToast } from '@/components/Toast';
 import { dashboardApi, DashboardData, personalApi } from '@/lib/api';
+import { reportPageContext } from '@/lib/assistantBus';
 import { usePreferences } from '@/lib/usePreferences';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { PaperCard as PaperCardType } from '@/types/paper';
 import {
   BookOpen, Newspaper, Layers, Sparkles, TrendingUp, TrendingDown,
-  Minus, Bookmark, FileSearch, Target, Loader2, EyeOff, Plus, X, History, SlidersHorizontal,
+  Minus, Bookmark, FileSearch, Target, Loader2, EyeOff, Plus, X, History, SlidersHorizontal, BookMarked,
 } from 'lucide-react';
 
 const trendIcon = (trend: string) =>
@@ -130,7 +131,10 @@ function DashboardInner() {
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => {
+                setActiveTab(tab.key);
+                reportPageContext({ tab: tab.key });
+              }}
               className={`flex items-center gap-1.5 sm:gap-2 px-1 py-2 sm:py-3 text-xs sm:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.key
                   ? 'text-primary-600 dark:text-primary-400 border-primary-600'
@@ -320,7 +324,7 @@ function MyStack({ data }: { data: DashboardData }) {
             <ul className="space-y-1.5">
               {data.mine.topic_projects.map((tp) => (
                 <li key={tp.id}>
-                  <Link href="/topics?tab=projects" className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                  <Link href="/topics?tab=library" className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
                     {tp.title}
                   </Link>
                 </li>
@@ -328,6 +332,45 @@ function MyStack({ data }: { data: DashboardData }) {
             </ul>
           )}
         </div>
+      </div>
+
+      {/* 最近文献综述 */}
+      <div className="border-t border-gray-100 dark:border-gray-700 pt-4 mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <BookMarked className="w-4 h-4 text-purple-500" /> 最近文献综述
+          </h3>
+          <Link
+            href="/topics?tab=producer"
+            className="flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
+          >
+            {t('dash.viewAll')}
+            <BookMarked className="w-3 h-3" />
+          </Link>
+        </div>
+        {data.mine.reviews.length === 0 ? (
+          <p className="text-xs text-gray-400">
+            还没有生成过综述，去
+            <Link href="/topics?tab=producer" className="text-primary-600 mx-0.5 hover:underline">产出工作台</Link>
+            输入选题生成一份吧
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.mine.reviews.slice(0, 5).map((r) => (
+              <li key={r.id}>
+                <Link
+                  href={`/topics?tab=producer&review=${r.id}`}
+                  className="block text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600"
+                >
+                  <span className="line-clamp-1">{r.topic}</span>
+                  <span className="text-gray-400">
+                    {r.paper_count} 篇参考文献{r.created_at ? ` · ${new Date(r.created_at).toLocaleDateString()}` : ''}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* 最近阅读入口 */}

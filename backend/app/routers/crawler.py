@@ -1,9 +1,12 @@
 """爬虫、调度器、相似度重算与数据维护接口。"""
 import asyncio
+import json
 import logging
 import os
+import re
 import signal
 import sys
+from collections import deque
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -81,6 +84,9 @@ async def start_cnki_top50_crawl(body: CNKICrawlRequest = Body(default=CNKICrawl
     """
     try:
         from app.main import scheduler
+        busy = scheduler._find_running_task("cnki_top50")
+        if busy:
+            raise HTTPException(status_code=400, detail=f"知网TOP50爬取任务已在进行中（{busy[:8]}…），请等待完成或先停止")
         task_id = await scheduler.trigger_manual_cnki_crawl(
             journal_names=body.journal_names,
             max_results_per_journal=body.max_results_per_journal,
@@ -99,6 +105,9 @@ async def start_cnki_navi_crawl(token: bool = Depends(verify_token)):
     """手动触发知网期刊导航爬取（DrissionPage 浏览器爬虫，建议在本机运行）。"""
     try:
         from app.main import scheduler
+        busy = scheduler._find_running_task("cnki_navi")
+        if busy:
+            raise HTTPException(status_code=400, detail=f"知网导航爬取任务已在进行中（{busy[:8]}…），请等待完成")
         task_id = await scheduler.trigger_manual_cnki_navi_crawl()
         return {"status": "started", "task_id": task_id, "message": "知网导航爬取已启动"}
     except HTTPException:
@@ -111,11 +120,18 @@ async def start_cnki_navi_crawl(token: bool = Depends(verify_token)):
 class CNKISearchRequest(BaseModel):
     """知网关键词检索爬取入参（对应 cnki_paper_captcha.py --search 检索模式）。"""
     keyword: str
-    search_field: str = "主题"      # 主题/篇名/关键词/作者
+    search_field: str = "主题"      # 主题/篇名/关键词/作者等
     years: Optional[str] = None     # 年份区间，如 2024-2026
     max_pages: Optional[int] = None  # 最大翻页数，默认翻到最后一页
     detail_workers: int = 3          # 详情页并发抓取数
     show_browser: bool = False       # 是否显示浏览器窗口（无头模式遇验证码只能自动解，显示窗口可人工处理）
+
+
+# 与 cnki_paper_captcha.py 的 CNKI_SEARCH_FIELDS 保持一致
+CNKI_SEARCH_FIELDS = [
+    "主题", "篇关摘", "关键词", "篇名", "全文", "作者", "第一作者", "通讯作者",
+    "作者单位", "基金", "摘要", "小标题", "参考文献", "分类号", "文献来源", "DOI",
+]
 
 
 # 关键词爬取任务状态（内存态；进程重启后归零。结果见 crawl_logs 与脚本 stdout 尾部）
@@ -126,9 +142,64 @@ _cnki_search_state = {
     "started_at": None,
     "finished_at": None,
     "message": None,
+    "stopped_by_user": False,
+    "progress": None,
+    "last_log": [],
 }
 # 子进程句柄单独存（不进 state，避免 /status 序列化失败）
 _cnki_search_proc: Optional[asyncio.subprocess.Process] = None
+
+
+# 最近日志行数上限：状态里只保留尾部一小段，避免长期爬取把内存撑大
+_MAX_STATUS_LOG_LINES = 30
+
+
+def _empty_cnki_progress() -> dict:
+    return {
+        "phase": "starting",
+        "page": 0,
+        "collected": 0,
+        "done": 0,
+        "total": 0,
+        "ok": 0,
+        "already_exists": 0,
+        "filtered": 0,
+        "verify_failed": 0,
+        "failed": 0,
+    }
+
+
+def _parse_cnki_progress(line: str, prog: dict) -> dict:
+    """从爬虫 stdout 的进度行解析字段，合并进 prog（幂等，只覆盖更具体的值）。"""
+    m = re.search(r"\[(\d+)/(\d+)\]", line)
+    if m:
+        prog["done"] = int(m.group(1))
+        prog["total"] = int(m.group(2))
+        prog["phase"] = "details"
+    m = re.search(r"第 (\d+) 页获取 \d+ 条，累计 (\d+) 条", line)
+    if m:
+        prog["page"] = int(m.group(1))
+        prog["collected"] = int(m.group(2))
+        prog["phase"] = "collecting"
+    m = re.search(r"共收集 (\d+) 篇待处理论文", line)
+    if m:
+        prog["collected"] = int(m.group(1))
+        prog["phase"] = "collecting"
+    m = re.search(r"详情并发数: \d+，待抓 (\d+) 篇（已在库跳过 (\d+)）", line)
+    if m:
+        prog["total"] = int(m.group(1))
+        prog["already_exists"] = int(m.group(2))
+        prog["phase"] = "details"
+    m = re.search(r"完成：成功 (\d+)/(\d+) 篇 \| 已在库 (\d+) \| 被过滤 (\d+) \| 验证码未过 (\d+) \| 失败 (\d+)", line)
+    if m:
+        prog["ok"] = int(m.group(1))
+        prog["done"] = int(m.group(2))
+        prog["already_exists"] = int(m.group(3))
+        prog["filtered"] = int(m.group(4))
+        prog["verify_failed"] = int(m.group(5))
+        prog["failed"] = int(m.group(6))
+        prog["phase"] = "done"
+    return prog
 
 
 async def _run_cnki_search_background(keyword: str, search_field: str, years: Optional[str],
@@ -147,6 +218,9 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
     _cnki_search_state["keyword"] = keyword
     _cnki_search_state["started_at"] = datetime.now(timezone.utc).isoformat()
     _cnki_search_state["finished_at"] = None
+    _cnki_search_state["stopped_by_user"] = False
+    _cnki_search_state["progress"] = _empty_cnki_progress()
+    _cnki_search_state["last_log"] = []
     _cnki_search_state["message"] = "浏览器窗口模式，遇验证码请在弹出窗口中人工处理" if show_browser else "启动中…"
 
     script = BASE_DIR.parent / "cnki_paper_captcha.py"
@@ -161,6 +235,33 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
     if max_pages:
         cmd += ["--max-pages", str(max(int(max_pages), 1))]
 
+    # 建 keyword 类型爬取任务记录：任务面板展示 + 一键重跑需要 rerun_params
+    crawl_log_id: Optional[int] = None
+    try:
+        from app.schemas import CrawlLogCreate
+        async with AsyncSessionLocal() as db:
+            crawl_log = await CrawlLogCRUD.create_crawl_log(db, CrawlLogCreate(
+                journal_name=keyword,
+                crawl_start_time=datetime.now(),
+                task_type="keyword",
+                rerun_params=json.dumps({
+                    "search_field": search_field,
+                    "years": years,
+                    "max_pages": max_pages,
+                    "detail_workers": detail_workers,
+                    "show_browser": show_browser,
+                }, ensure_ascii=False),
+            ))
+            await db.commit()
+            crawl_log_id = crawl_log.id
+    except Exception as e:
+        logger.warning(f"Failed to create keyword crawl_log: {e}")
+
+    # 进度/日志在 try 外初始化，保证 finally 回写任务记录时始终可用
+    prog = _empty_cnki_progress()
+    recent: deque[str] = deque(maxlen=_MAX_STATUS_LOG_LINES)
+    proc = None
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -170,10 +271,26 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
             start_new_session=True,  # 独立进程组：暂停/继续用 os.killpg 连浏览器一起停
         )
         _cnki_search_proc = proc
-        output, _ = await proc.communicate()
-        tail = (output.decode("utf-8", errors="replace") or "").strip()
-        tail = tail[-600:] if tail else ""
-        if proc.returncode == 0:
+
+        # 逐行消费 stdout，实时解析进度；只保留最近 N 行日志，避免全量缓冲撑内存。
+        # 状态字段都是小对象，每行刷新一次的成本可忽略。
+        tail = ""
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            if len(line) > 500:  # 截断超长行（异常堆栈/调试输出），状态保持轻量
+                line = line[:500] + "…"
+            recent.append(line)
+            tail = line
+            _parse_cnki_progress(line, prog)
+            _cnki_search_state["progress"] = dict(prog)
+            _cnki_search_state["last_log"] = list(recent)
+        await proc.wait()
+
+        if _cnki_search_state.get("stopped_by_user"):
+            _cnki_search_state["message"] = "已停止"
+        elif proc.returncode == 0:
             _cnki_search_state["message"] = f"已完成。{tail}" if tail else "已完成。"
         else:
             _cnki_search_state["message"] = f"脚本退出码 {proc.returncode}。尾部输出：{tail}" if tail else f"脚本退出码 {proc.returncode}。"
@@ -185,6 +302,25 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
         _cnki_search_state["paused"] = False
         _cnki_search_state["finished_at"] = datetime.now(timezone.utc).isoformat()
         _cnki_search_state["running"] = False
+        if _cnki_search_state.get("stopped_by_user"):
+            _cnki_search_state["message"] = "已停止"
+            _cnki_search_state["progress"]["phase"] = "stopped"
+        # 回写 keyword 任务记录：成功/失败数 + 日志尾部（供任务面板展开查看）
+        if crawl_log_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await CrawlLogCRUD.update_crawl_log(
+                        db, crawl_log_id,
+                        crawl_end_time=datetime.now(),
+                        papers_fetched=prog.get("ok") if prog else 0,
+                        papers_failed=prog.get("failed") if prog else 0,
+                        status=("stopped" if _cnki_search_state.get("stopped_by_user")
+                                else ("completed" if proc and proc.returncode == 0 else "failed")),
+                        log_detail="\n".join(recent) if recent else None,
+                    )
+                    await db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update keyword crawl_log: {e}")
 
 
 @router.post("/crawl/cnki/search/start")
@@ -195,10 +331,13 @@ async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verif
         raise HTTPException(status_code=400, detail="keyword is required")
     if _cnki_search_state["running"]:
         return {"status": "already_running", "keyword": _cnki_search_state["keyword"]}
+    search_field = (body.search_field or "主题").strip() or "主题"
+    if search_field not in CNKI_SEARCH_FIELDS:
+        raise HTTPException(status_code=400, detail=f"不支持的检索字段: {search_field}，可选: {' / '.join(CNKI_SEARCH_FIELDS)}")
     from app.main import spawn_background_task
     spawn_background_task(_run_cnki_search_background(
         keyword=keyword,
-        search_field=(body.search_field or "主题").strip() or "主题",
+        search_field=search_field,
         years=body.years,
         max_pages=body.max_pages,
         detail_workers=body.detail_workers,
@@ -246,6 +385,77 @@ async def resume_cnki_search(token: bool = Depends(verify_token)):
     _cnki_search_state["paused"] = False
     _cnki_search_state["message"] = "已恢复"
     return {"status": "running"}
+
+
+@router.post("/crawl/cnki/search/stop")
+async def stop_cnki_search(token: bool = Depends(verify_token)):
+    """停止关键词爬取：SIGTERM 整个进程组（暂停中先 SIGCONT 再终止），超时 SIGKILL 兜底。"""
+    proc = _cnki_search_proc
+    if not proc or proc.returncode is not None:
+        raise HTTPException(status_code=400, detail="当前没有运行中的爬取任务")
+    # 标记为用户主动停止，后台任务收尾时给出明确文案
+    _cnki_search_state["stopped_by_user"] = True
+    try:
+        # 暂停中的进程无法处理信号：先 SIGCONT 让进程组恢复，再 SIGTERM 终止
+        os.killpg(proc.pid, signal.SIGCONT)
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"停止失败：{e}")
+    # 等待子进程退出，超时则 SIGKILL 兜底
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+    _cnki_search_state["paused"] = False
+    _cnki_search_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+    _cnki_search_state["running"] = False
+    _cnki_search_state["message"] = "已停止"
+    if _cnki_search_state.get("progress"):
+        _cnki_search_state["progress"]["phase"] = "stopped"
+    return {"status": "stopped"}
+
+
+class CrawlRerunRequest(BaseModel):
+    log_id: int
+
+
+@router.post("/crawl/rerun")
+async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+    """一键重跑爬取任务：按 task_type 分派（keyword→关键词检索；journal→期刊调度爬取）。"""
+    log = await CrawlLogCRUD.get_crawl_log_by_id(db, body.log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="爬取任务不存在")
+    ttype = log.task_type or "journal"
+    if ttype == "keyword":
+        if _cnki_search_state["running"]:
+            raise HTTPException(status_code=400, detail="已有关键词爬取任务在运行")
+        params: dict = {}
+        try:
+            params = json.loads(log.rerun_params or "{}")
+        except Exception:
+            params = {}
+        from app.main import spawn_background_task
+        spawn_background_task(_run_cnki_search_background(
+            keyword=log.journal_name,
+            search_field=params.get("search_field") or "主题",
+            years=params.get("years"),
+            max_pages=params.get("max_pages"),
+            detail_workers=int(params.get("detail_workers") or 3),
+            show_browser=bool(params.get("show_browser", False)),
+        ))
+        return {"status": "started", "task_type": "keyword", "name": log.journal_name}
+    # journal 类型：调度器按期刊重跑
+    from app.main import scheduler
+    try:
+        task_id = await scheduler.trigger_manual_crawl([log.journal_name])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "started", "task_type": "journal", "name": log.journal_name, "task_id": task_id}
 
 
 @router.get("/crawl/status", response_model=CrawlLogListResponse)
@@ -467,7 +677,13 @@ async def recompute_all_scores(db: AsyncSession = Depends(get_db), token: bool =
 async def backfill_abstracts(token: bool = Depends(verify_token)):
     """手动触发空摘要补抓任务（经济研究/中国工业经济，P0-2）。"""
     from app.main import scheduler
-    task_id = await scheduler.trigger_manual_backfill()
+    busy = scheduler._find_running_task("backfill_abstracts")
+    if busy:
+        raise HTTPException(status_code=400, detail=f"摘要补抓任务已在进行中（{busy[:8]}…），请等待完成")
+    try:
+        task_id = await scheduler.trigger_manual_backfill()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"status": "started", "task_id": task_id}
 
 

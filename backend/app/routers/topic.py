@@ -15,7 +15,7 @@ import math
 import time
 from typing import List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select as sa_select, func as sa_func
@@ -35,19 +35,30 @@ router = APIRouter()
 # 单用户占位标识：接入账号体系后替换为真实用户维度
 LOCAL_USER = "local"
 
-# 本进程启动时间（UTC naive，与 ResearchGapReport.created_at 同口径）。
-# 后台任务跑在进程内存里，后端重启会让 running 状态的报告永远无法完成，
-# 用它判断并回收僵尸 running 报告。
-from datetime import datetime as _datetime
-_PROCESS_START = _datetime.utcnow()
+
+def _uid_from(request: Request) -> str:
+    """从请求头取用户维度（x-user-id）；与 personal/producer 路由同约定。
+
+    写入（创建选题/空白解读）与读取统一走这里，避免历史代码硬编码 "local"
+    造成「前端随机 uid 存的数据在别处查询不到」的隔离割裂。
+    """
+    return (request.headers.get("x-user-id") if request else None) or LOCAL_USER
 
 
-async def _reap_zombie_running_report(db: AsyncSession) -> None:
+# 本进程启动时间（UTC naive，与 ResearchGapReport.created_at 的 func.now() 同口径，
+# SQLite server_default 为 UTC）。后台任务跑在进程内存里，后端重启会让 running
+# 状态的报告永远无法完成，用它判断并回收僵尸 running 报告。
+from datetime import datetime, timedelta, timezone
+
+_PROCESS_START = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def _reap_zombie_running_report(db: AsyncSession, uid: str = LOCAL_USER) -> None:
     """回收僵尸 running 报告：created_at 早于本进程启动时间的 running 必属
     「后端重启导致后台任务丢失」，标记 failed 让前端停止无限等待。"""
     result = await db.execute(
         sa_select(ResearchGapReport)
-        .where(ResearchGapReport.status == "running", ResearchGapReport.user_id == LOCAL_USER)
+        .where(ResearchGapReport.status == "running", ResearchGapReport.user_id == uid)
     )
     changed = False
     for report in result.scalars():
@@ -89,17 +100,19 @@ async def _fetch_gaps_from_db(db: AsyncSession, limit: int = 10) -> list:
 @router.post("/network/gaps/analyze", response_model=GapAnalysisResponse)
 async def start_gap_analysis(
     body: GapAnalyzeRequest,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
     """触发 LLM 空白解读后台任务（不阻塞，前端轮询 /network/gaps/analysis）。"""
+    uid = _uid_from(request)
     # 先回收僵尸 running（后端重启遗留），否则会被下面"正在跑"分支永远拦住
-    await _reap_zombie_running_report(db)
+    await _reap_zombie_running_report(db, uid)
 
     # 已有正在跑的任务直接返回，避免重复计费
     running = await db.execute(
         sa_select(ResearchGapReport)
-        .where(ResearchGapReport.status == "running", ResearchGapReport.user_id == LOCAL_USER)
+        .where(ResearchGapReport.status == "running", ResearchGapReport.user_id == uid)
         .order_by(ResearchGapReport.id.desc())
         .limit(1)
     )
@@ -118,7 +131,7 @@ async def start_gap_analysis(
         raise HTTPException(status_code=400, detail="No research gap data available. Fetch papers first.")
 
     report = ResearchGapReport(
-        user_id=LOCAL_USER,
+        user_id=uid,
         model=body.model,
         status="running",
         gaps_snapshot=gaps,
@@ -150,26 +163,39 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
             if not gaps:
                 gaps = await _fetch_gaps_from_db(db, limit=limit)
 
-            # 补充每个词的近 6 个月趋势（TopicTrend 表），让 LLM 的假设有数据支撑
+            # 补充每个词的近期热度（TopicTrend 表，年份桶粒度），让 LLM 的假设有数据支撑。
+            # 注意：week_start 存的是「年份桶」（当年1月1日，因半数 CNKI 论文仅有年份精度），
+            # 按自然周/月窗口过滤会在绝大多数月份恒返回空，这里取最近 3 个年份桶聚合。
             from app.models import TopicTrend
-            from datetime import datetime, timedelta
-            since = datetime.utcnow() - timedelta(days=180)
             topic_names = set()
             for g in gaps:
                 topic_names.update([g.get("source", ""), g.get("target", "")])
-            trend_rows = await db.execute(
-                sa_select(TopicTrend.topic, sa_func.sum(TopicTrend.paper_count))
-                .where(TopicTrend.topic.in_(topic_names), TopicTrend.week_start >= since)
-                .group_by(TopicTrend.topic)
-            )
-            trend_map = {topic: int(cnt or 0) for topic, cnt in trend_rows.all()}
+            recent_buckets = (
+                await db.execute(
+                    sa_select(TopicTrend.week_start)
+                    .distinct()
+                    .order_by(TopicTrend.week_start.desc())
+                    .limit(3)
+                )
+            ).scalars().all()
+            trend_map = {}
+            if topic_names and recent_buckets:
+                trend_rows = await db.execute(
+                    sa_select(TopicTrend.topic, sa_func.sum(TopicTrend.paper_count))
+                    .where(
+                        TopicTrend.topic.in_(topic_names),
+                        TopicTrend.week_start.in_(recent_buckets),
+                    )
+                    .group_by(TopicTrend.topic)
+                )
+                trend_map = {topic: int(cnt or 0) for topic, cnt in trend_rows.all()}
 
             data_lines = []
             for g in gaps:
                 src, tgt = g.get("source", ""), g.get("target", "")
                 data_lines.append(
-                    f"- 「{src}」(词频{g.get('source_count', 0)}，近6月{trend_map.get(src, 0)}篇) × "
-                    f"「{tgt}」(词频{g.get('target_count', 0)}，近6月{trend_map.get(tgt, 0)}篇)："
+                    f"- 「{src}」(词频{g.get('source_count', 0)}，近3个统计年度{trend_map.get(src, 0)}篇) × "
+                    f"「{tgt}」(词频{g.get('target_count', 0)}，近3个统计年度{trend_map.get(tgt, 0)}篇)："
                     f"共现{g.get('cooccurrence', 0)}次，空白分{g.get('gap_score', 0):.3f}"
                 )
             data_text = "\n".join(data_lines)
@@ -203,8 +229,10 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
                 from app.routers.deps import _get_default_model
                 bare_model = _get_default_model(provider)
 
-            # 后台任务用非流式调用（简单可靠），SSE 只用于选题验证器
-            response = client.chat.completions.create(
+            # 后台任务用非流式调用（简单可靠），SSE 只用于选题验证器。
+            # sync 客户端调用经 to_thread 下放线程池，避免阻塞事件循环数分钟
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=bare_model,
                 messages=messages,
                 max_tokens=4096,
@@ -227,14 +255,15 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
 
 
 @router.get("/network/gaps/analysis", response_model=GapAnalysisResponse)
-async def get_gap_analysis(db: AsyncSession = Depends(get_db)):
+async def get_gap_analysis(request: Request = None, db: AsyncSession = Depends(get_db)):
     """查询最新一次空白解读（供前端轮询：running 时继续等，success 时渲染）。"""
+    uid = _uid_from(request)
     # 轮询入口顺带回收僵尸 running，前端刷新后即可拿到 failed 而非无限转圈
-    await _reap_zombie_running_report(db)
+    await _reap_zombie_running_report(db, uid)
 
     result = await db.execute(
         sa_select(ResearchGapReport)
-        .where(ResearchGapReport.user_id == LOCAL_USER)
+        .where(ResearchGapReport.user_id == uid)
         .order_by(ResearchGapReport.id.desc())
         .limit(1)
     )
@@ -311,7 +340,7 @@ async def _run_backfill_background(batch_size: int = 100):
                     return
 
                 texts = [f"{r[1]}\n{(r[2] or '')[:2000]}" for r in rows]
-                vectors = ai_trend_service.embed_texts(texts)
+                vectors = await ai_trend_service.embed_texts_async(texts)
                 if vectors is None:
                     logger.warning("Embedding backfill skipped: embedding API unavailable")
                     return
@@ -380,7 +409,7 @@ async def _retrieve_similar_papers(db: AsyncSession, topic: str, k: int = 30):
     # ---- 路线 1：embedding 召回 ----
     if rows:
         try:
-            query_vec = ai_trend_service.embed_texts([topic])
+            query_vec = await ai_trend_service.embed_texts_async([topic])
             if query_vec and query_vec[0]:
                 candidates = [(r[0], json.loads(r[1])) for r in rows if r[1]]
                 top = _cosine_top_k(query_vec[0], candidates, k=k)
@@ -459,8 +488,9 @@ def _crowding_stats(papers: list) -> dict:
         return {"top30_avg_similarity": 0.0, "recent_3m_count": 0, "keyword_overlap": {}}
 
     sims = [p["similarity"] for p in papers]
-    from datetime import datetime, timedelta
-    three_months_ago = datetime.utcnow() - timedelta(days=90)
+    from datetime import timedelta
+    # 比较对象已被 strip 成 naive，此处保持 naive-UTC 同口径（utcnow 的无弃用等价写法）
+    three_months_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90)
     recent = 0
     kw_counts: dict = {}
     for p in papers:
@@ -499,8 +529,8 @@ async def _competition_map(db: AsyncSession, paper_ids: list) -> dict:
     author_counts: dict = {}
     journal_counts: dict = {}
     recent_1y = 0
-    from datetime import datetime, timedelta, timezone
 
+    from datetime import datetime, timedelta, timezone
     one_year_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=365)
     for authors_raw, venue, journal_name, published_at in result.all():
         authors = authors_raw if isinstance(authors_raw, list) else []
@@ -587,11 +617,12 @@ def _project_out(p: TopicProject) -> dict:
 @router.get("/topic-projects")
 async def list_topic_projects(
     status: Optional[str] = None,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
     """选题库列表：按状态过滤（可选），时间倒序。"""
-    stmt = sa_select(TopicProject).where(TopicProject.user_id == LOCAL_USER)
+    stmt = sa_select(TopicProject).where(TopicProject.user_id == _uid_from(request))
     if status:
         stmt = stmt.where(TopicProject.status == status)
     stmt = stmt.order_by(TopicProject.updated_at.desc())
@@ -602,6 +633,7 @@ async def list_topic_projects(
 @router.post("/topic-projects", status_code=201)
 async def create_topic_project(
     body: TopicProjectCreate,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
@@ -609,7 +641,7 @@ async def create_topic_project(
     if not (body.title or "").strip():
         raise HTTPException(status_code=400, detail="Title is required")
     p = TopicProject(
-        user_id=LOCAL_USER,
+        user_id=_uid_from(request),
         title=body.title.strip(),
         source_gap=body.source_gap,
         source_paper_id=body.source_paper_id,
@@ -629,12 +661,13 @@ async def create_topic_project(
 async def update_topic_project(
     project_id: int,
     body: TopicProjectUpdate,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
     """更新选题状态/评分（决策流转：to_validate->validated->subscribed->abandoned）。"""
     p = await db.get(TopicProject, project_id)
-    if not p:
+    if not p or p.user_id != _uid_from(request):
         raise HTTPException(status_code=404, detail="Topic project not found")
     allowed_status = {"to_validate", "validated", "subscribed", "abandoned"}
     if body.status is not None:
@@ -653,12 +686,13 @@ async def update_topic_project(
 @router.delete("/topic-projects/{project_id}", status_code=204)
 async def delete_topic_project(
     project_id: int,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
     """删除一个选题（从选题库移除）。"""
     p = await db.get(TopicProject, project_id)
-    if not p:
+    if not p or p.user_id != _uid_from(request):
         raise HTTPException(status_code=404, detail="Topic project not found")
     await db.delete(p)
     await db.commit()
@@ -686,9 +720,9 @@ async def validate_topic(
     stats["competition"] = competition
 
     papers_text = "\n".join([
-        f"- [{p['similarity']:.3f}] {p['title']} ({p['source']}, {p['published_at'][:10] if p['published_at'] else '?'})"
+        f"[{i+1}] ({p['similarity']:.3f}) {p['title']} ({p['source']}, {p['published_at'][:10] if p['published_at'] else '?'})"
         f" 关键词: {', '.join(p['keywords'][:5]) or '无'}"
-        for p in papers[:30]
+        for i, p in enumerate(papers[:30])
     ]) or "（未召回近似论文：该题目的表述在库内近乎无匹配）"
 
     stats_text = (
@@ -724,7 +758,9 @@ async def validate_topic(
 ## 建议切入角度
 如果要做，如何与已召回的这些论文差异化？给出 2-3 个具体切入点。
 
-要求：诚实、量化、不客套。如果证据显示这个选题已经非常拥挤，直接说。如果检索证据不足以下结论，明确说明置信度低。"""
+要求：诚实、量化、不客套。如果证据显示这个选题已经非常拥挤，直接说。如果检索证据不足以下结论，明确说明置信度低。
+
+引用要求：涉及具体论文的判断/依据时，用方括号编号标注对应论文，如 [1]、[2][5]。编号即上面论文列表的序号。若某结论不依赖具体论文，则无需标注。"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -742,6 +778,7 @@ async def validate_topic(
         return {
             "papers": [
                 {
+                    "n": i + 1,  # 与 prompt 里的 [n] 编号对齐，前端据此把引用渲染成论文链接
                     "id": p["id"],
                     "title": p["title"],
                     "source": p["source"],
@@ -749,7 +786,7 @@ async def validate_topic(
                     "keywords": p["keywords"],
                     "similarity": p["similarity"],
                 }
-                for p in papers[:30]
+                for i, p in enumerate(papers[:30])
             ],
             "mode": mode,
             "stats": stats,

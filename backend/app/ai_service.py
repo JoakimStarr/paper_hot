@@ -39,6 +39,14 @@ _NON_CHAT_MODEL_HINTS = (
     "whisper", "tts", "speech", "image", "dall-e", "transcribe",
 )
 
+# 各内置 provider 的内置兜底候选：仅当用户配了 key 但完全没配模型列表时使用。
+# 否则 fallback 循环遍历空列表，AI 调用表现为「静默什么都没做」。
+DEFAULT_FALLBACK_MODELS: Dict[str, List[str]] = {
+    "zhipu": ["glm-4-flash"],
+    "siliconflow": ["Qwen/Qwen2.5-7B-Instruct"],
+    "openai": ["gpt-4o-mini"],
+}
+
 
 def _is_non_chat_model(model_id: str) -> bool:
     low = model_id.lower()
@@ -79,18 +87,19 @@ class AITrendService:
     def __init__(self):
         self.clients: Dict[str, Any] = {}       # provider -> OpenAI 兼容客户端
         self.models: Dict[str, List[str]] = {}  # provider -> 模型优先级列表
-        self._init_clients()
+        self.clients = self._init_clients()     # _init_clients 返回新 dict，须接收返回值
         self._load_model_order()
 
     # ---------- 初始化 ----------
 
-    def _init_clients(self):
-        self.clients = {}
+    def _init_clients(self) -> Dict[str, Any]:
+        """构建所有 provider 客户端（返回新 dict，由调用方原子替换，避免 reload 竞态）。"""
+        clients: Dict[str, Any] = {}
         try:
             from openai import OpenAI  # noqa: F401
         except ImportError:
             logger.error("openai package not installed. Please run: pip install openai")
-            return
+            return clients
 
         for name, conf in BUILTIN_PROVIDERS.items():
             api_key = getattr(settings, conf["key_setting"], None)
@@ -102,7 +111,7 @@ class AITrendService:
             if override:
                 base_url = override
             try:
-                self.clients[name] = _build_openai_client(api_key, base_url)
+                clients[name] = _build_openai_client(api_key, base_url)
                 logger.info(f"AI provider '{name}' initialized (base_url={base_url})")
             except Exception as e:
                 logger.error(f"Failed to initialize AI provider '{name}': {e}")
@@ -117,18 +126,32 @@ class AITrendService:
             if not (base_url and api_key):
                 continue
             try:
-                self.clients[name] = _build_openai_client(api_key, base_url)
+                clients[name] = _build_openai_client(api_key, base_url)
                 logger.info(f"Custom AI provider '{name}' initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize custom provider '{name}': {e}")
+        return clients
 
     def _load_model_order(self):
         """加载各 provider 的模型优先级：严格等于用户显式配置的模型，
-        并过滤掉 embedding 等非 LLM 模型（LLM 选择器不显示它们）。"""
+        并过滤掉 embedding 等非 LLM 模型（LLM 选择器不显示它们）。
+
+        用户配了 key 但完全没配模型列表时，注入内置默认候选——否则
+        is_available()==True 而 fallback 循环遍历空列表，表现为「点了分析
+        静默失败」。用户一旦配置了列表则以用户的为准。"""
         self.models = {}
         for name in BUILTIN_PROVIDERS:
             raw = getattr(settings, f"{name}_models", None)
-            self.models[name] = [m for m in settings.get_json_list(raw) if not _is_non_chat_model(m)]
+            models = [m for m in settings.get_json_list(raw) if not _is_non_chat_model(m)]
+            if not models and getattr(settings, BUILTIN_PROVIDERS[name]["key_setting"], None):
+                fallback = [m for m in DEFAULT_FALLBACK_MODELS.get(name, []) if not _is_non_chat_model(m)]
+                if fallback:
+                    logger.warning(
+                        f"AI provider '{name}' has an API key but no model list configured; "
+                        f"falling back to built-in candidates {fallback} (configure via system page)"
+                    )
+                    models = fallback
+            self.models[name] = models
         for provider in settings.get_custom_providers():
             name = provider.get("name", "")
             if name:
@@ -140,8 +163,17 @@ class AITrendService:
         return bool(self.clients)
 
     def reload(self):
-        self._init_clients()
+        # 原子替换：先构建完整新状态再一次性赋值，避免刷新窗口内出现
+        # 「新 client × 空/旧模型表」的组合；旧客户端显式关闭释放连接池
+        old_clients = self.clients
+        new_clients = self._init_clients()
         self._load_model_order()
+        self.clients = new_clients
+        for client in old_clients.values():
+            try:
+                client.close()
+            except Exception:
+                pass
 
     # ---------- provider / model 查询 ----------
 
@@ -185,9 +217,10 @@ class AITrendService:
         return result
 
     def update_models(self, model_list: List[str]):
-        """按前端提交的 'provider/model' 完整顺序更新并持久化模型优先级。
+        """按前端提交的 'provider/model' 完整顺序更新内存中的模型优先级。
 
         仅处理内置 provider；自定义 provider 的模型列表由 /settings 接口保存。
+        持久化由 /settings 路由层经 settings_store 写入 system_settings 表。
         """
         by_provider: Dict[str, List[str]] = {}
         for full_name in model_list:
@@ -198,10 +231,7 @@ class AITrendService:
         for provider, models in by_provider.items():
             if provider in BUILTIN_PROVIDERS and models and self.models.get(provider) != models:
                 self.models[provider] = models
-                settings.__class__.update_setting(
-                    f"{provider}_models", json.dumps(models, ensure_ascii=False)
-                )
-                logger.info(f"Model priority for '{provider}' updated and persisted: {models}")
+                logger.info(f"Model priority for '{provider}' updated: {models}")
 
     def _resolve_model(self, model: str) -> Tuple[Optional[str], str]:
         """将 'provider/model' 解析为 (provider, bare_model)；无前缀时返回 (None, model)。"""
@@ -222,13 +252,23 @@ class AITrendService:
         "openai": "text-embedding-3-small",
     }
 
-    def embed_texts(self, texts: List[str], model: Optional[str] = None) -> Optional[List[Optional[List[float]]]]:
+    def embed_texts(
+        self,
+        texts: List[str],
+        model: Optional[str] = None,
+        max_chars: int = 2000,
+    ) -> Optional[List[Optional[List[float]]]]:
         """批量文本向量化（同步调用，供后台任务与验证器使用）。
 
         - 模型优先级：显式 model 参数 > settings.embedding_model > provider 默认映射
         - 模型格式 'provider/model'，支持自定义 provider（如 '阿里云百炼/qwen3.7-text-embedding'）
-        - 自定义 provider 也可通过 DEFAULT_EMBEDDING_MODELS 指定默认 embedding 模型
+        - 自定义 provider 也可通过 DEFAULT_EMBEDDING_MODELS 指定默认 embedding 模型（仅取名字
+          命中 embedding 提示的模型；拿对话模型当 embedding 必然报错且无从排查）
         - 任何失败返回 None（调用方负责降级，如 TF-IDF），不抛异常
+        - 截断阈值 max_chars 默认 2000：bge 类模型上限约 512 token（≈1000~1500 中文字符），
+          4000 字符的超限请求会让整批失败
+        - 分批容错：单批失败不丢弃已成功批次的结果（该批位置记 None）；按 item.index 重排并
+          校验数量，防服务端乱序返回造成文本-向量错配
         """
         if not texts:
             return []
@@ -244,10 +284,12 @@ class AITrendService:
                 candidates = dict(self.DEFAULT_EMBEDDING_MODELS)
                 for cp in settings.get_custom_providers():
                     cp_name = cp.get("name", "")
-                    cp_models = cp.get("models") or []
-                    if cp_name and cp_name not in candidates:
-                        # 自定义 provider 模型列表首个作为默认 embedding 候选；仍需能命中原生 embedding
-                        candidates.setdefault(cp_name, cp_models[0] if cp_models else None)
+                    cp_models = [
+                        m for m in (cp.get("models") or [])
+                        if isinstance(m, str) and "embed" in m.lower()
+                    ]
+                    if cp_name and cp_name not in candidates and cp_models:
+                        candidates.setdefault(cp_name, cp_models[0])
                 for name in self.provider_order():
                     preset = candidates.get(name)
                     if name in self.clients and preset:
@@ -260,19 +302,33 @@ class AITrendService:
             client = self.clients[provider]
             # 部分 embedding 服务（如阿里云百炼 MaaS 网关）限制单次批量 ≤20，按 20 分批保守兼容
             batch = 20
-            vectors: List[Optional[List[float]]] = []
-            truncated = [t[:4000] for t in texts]
+            truncated = [t[:max_chars] for t in texts]
+            vectors: List[Optional[List[float]]] = [None] * len(texts)
+            all_ok = True
             for i in range(0, len(truncated), batch):
-                response = client.embeddings.create(
-                    model=bare_model,
-                    input=truncated[i:i + batch],
-                )
-                vectors.extend(item.embedding for item in response.data)
-            logger.info(f"embed_texts: {len(vectors)} texts embedded via {provider}/{bare_model}")
-            return vectors
+                chunk = truncated[i:i + batch]
+                try:
+                    response = client.embeddings.create(model=bare_model, input=chunk)
+                    data = list(response.data)
+                    if len(data) != len(chunk):
+                        raise ValueError(f"embedding count mismatch: {len(data)} != {len(chunk)}")
+                    # 按声明 index 排序（若缺失则信任返回顺序），避免乱序错配
+                    if all(getattr(item, "index", None) is not None for item in data):
+                        data.sort(key=lambda item: item.index)
+                    for offset, item in enumerate(data):
+                        vectors[i + offset] = item.embedding
+                except Exception as batch_err:
+                    all_ok = False
+                    logger.warning(f"embed_texts batch [{i}:{i + len(chunk)}] failed via {provider}/{bare_model}: {batch_err}")
+            logger.info(f"embed_texts: embedded {sum(1 for v in vectors if v is not None)}/{len(texts)} texts via {provider}/{bare_model}")
+            return vectors if all_ok else None
         except Exception as e:
             logger.warning(f"embed_texts failed: {e}")
             return None
+
+    async def embed_texts_async(self, texts: List[str], model: Optional[str] = None) -> Optional[List[Optional[List[float]]]]:
+        """embed_texts 的异步包装：sync httpx 调用下放线程池，不阻塞事件循环。"""
+        return await asyncio.to_thread(self.embed_texts, texts, model)
 
     # ---------- 分析入口 ----------
 

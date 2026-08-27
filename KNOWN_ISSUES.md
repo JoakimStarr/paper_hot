@@ -1,96 +1,92 @@
-# 遗留问题清单（2026-08-26 复核后）
+# 遗留问题清单（2026-08-27 全量审查修复后）
 
-> 对照 PRODUCT_PLAN.md 逐项实施后的真实状态。已完成项已标注 ✅，
-> 仅保留「仍未彻底关闭」的项及其处置结论。验证基线：后端 pytest 45 passed、前端 tsc --noEmit 通过。
-
----
-
-## 一、数据层（P0）
-
-### 1. 经济学季刊摘要/卷期 —— 决定"刻意不做"（影响极小）
-- 根因：`fetchers.py` `JingjixueJikanFetcher` 卷期 viid 硬编码且易失效，返回空列表；
-  摘要需经 CNKI AbstractUrl 单独抓取（依赖浏览器会话/Cookie）。
-- 处置结论：库内该刊仅 **2 篇**且均有摘要，修复需引入"浏览器端抓取 + 登录态"链路，
-  对个人工具成本/维护收益严重失衡。**刻意不修，记为已知边界**。后续若扩充该刊，
-  应统一走 `scheduler.backfill_abstracts` 的浏览器抓取路径，而非单独重写本爬虫。
-
-### 2. ✅ 存量 embedding 自动补齐
-- 已实现 `crud.get_papers_missing_embeddings` + `scheduler.backfill_embeddings_incremental`，
-  服务启动时自动增量补齐（只处理 `embedding IS NULL`，不重建既有向量），batch_size ≤20。
-
-### 3. ✅ topic_trends 陈旧 / 趋势近窗为空
-- `scheduler.update_trends` 已挂入 `start.sh dev` 启动流程，启动即刷新趋势，
-  `GET /trending-topics?weeks_back=8` 不再返回空。
+> 2026-08-27 基于五路并行代码审查（数据层/路由/AI·调度/爬虫/前端）完成一轮全量修复。
+> 验证基线：后端 pytest 45 passed、`from app.main import app` 冒烟通过、前端 `tsc --noEmit` 通过。
 
 ---
 
-## 二、功能层（已完成项）
+## 一、本轮修复的高危缺陷（历史记录）
 
-### 4. ✅ Dashboard「领域快讯」AI 一句话结论
-- `routers/dashboard.py _briefing` 已接通 `_briefing_ai_note`（1h TTL 缓存，AI 不可用降级 None）。
+### 1. ✅ 摘要回填 CompileError（P0-2 整体失效）
+`crud.update_paper_abstract` 曾写入不存在的 `updated_at` 列导致 SA2.0 编译报错、整批回滚。已删除幽灵列；
+同时 `_process_and_score_paper` 改为特征/评分按 paper_id **upsert**（`create_paper_score(update_if_exists=True)`），
+重复入库/回填重算不再撞唯一约束。
 
-### 5. ✅ 阅读历史"已读"视觉标记
-- PaperCard 已加载 read_ids，已读论文标题置灰。
+### 2. ✅ Agent 工具循环从未真正执行
+`agent.run_agent_chat` 对 sync OpenAI 客户端直接 `await` 必然 TypeError 被吞。已改为 `asyncio.to_thread(...)`
+下放线程池；工具会话 rollback 移入绑定保护内。
 
-### 6. ✅ 真 docx 导出
-- `lib/utils.ts downloadAsWord` 已用 docx 库生成真 .docx。
+### 3. ✅ 爬虫单篇失败毒化整个批次
+三个爬取循环的 `except ... continue` 现在都会先 `await db.rollback()`，一颗重复 DOI 不再丢掉整期期刊。
 
-### 7. ✅ 批量分析异步化
-- `POST /papers/batch-analyze` → 后台任务 + `BatchReport` 轮询，前端不再长时间转圈。
+### 4. ✅ CNKI 验证码检测自锁死循环
+注入页面的提示横幅文本自身触发检出词匹配。横幅加 `id=crawler-banner-overlay` 并在采样前剥离；
+指示词删除裸「验证」；连续多轮页面无变化时提前退出不再满 300s 白等。
 
-### 8. ✅ producer 综述用户隔离
-- ReviewReport 写入按 `x-user-id` 头隔离（默认 local）。
+### 5. ✅ user_id 隔离割裂
+topic.py 的 TopicProject / ResearchGapReport 写读两端曾硬编码 `"local"`。统一 `_uid_from(request)`
+（x-user-id 头），patch/delete 校验归属；历史 "local" 行对 uid=="local" 会话天然可见。
 
-### 9. ✅ keyword-map / producer 检索性能
-- 关键词过滤与召回下推到 SQL（json_each / 库内过滤），不再 Python 侧全表扫描。
+### 6. ✅ 设置持久化改数据库
+新增 `system_settings` 表 + `app/settings_store.py`：
+- **优先级：system_settings(DB) > 环境变量 > backend/.env 基线**
+- 启动早期同步加载覆盖（SQLite 直读，必须在 FastAPI app 构建前生效）
+- 设置页保存写 DB 并即时生效；端口键额外镜像写 `.env`（start.sh 启动前要读）
+- `config.Settings.update_setting`（裸写 .env）已删除，`.env.example` 全量重写
 
----
+### 7. ✅ 其他高危
+- arXiv 抓取包 `asyncio.wait_for(timeout=180)`，不再可能无限挂起调度 worker
+- 浏览器爬虫重流程（CNKI TOP50 / NAVI）整体 `asyncio.to_thread` 化，等验证码期间后端仍有响应
+- backfill_abstracts 的惰性 import 移入 try、run_backfill 加兜底，任务状态不会永久 running
+- 手动触发爬虫三入口全部防重入（同类型 running 直接 400），返回的 task_id 现在真的可追踪
+- 单篇分析：启动清理回收 `paper_analyses.pending` 僵尸（>30min）；运行中悬挂 pending 超 30min 允许重新提交
+- 仅配 key 未配模型列表时回退内置候选模型（此前表现为「点了分析静默消失」）
 
-## 三、工程债
+## 二、一致性/性能修复摘要
 
-### 10. ⚠️ i18n 部分完成
-- ✅ layout `<html lang>` 已改为随已保存语言首帧生效（内联合法脚本读 localStorage）。
-- 知识库已建立完整 zh/en 词表（home/trends/topics/system/network/paper/filters 主流程均已走 `useLanguage().t`）。
-- 未尽项：dashboard / ProducerLab / 网络图研究版图 / TrendChart 等**本次新增页面的部分按钮文案**仍是硬编码中文，
-  英文模式下中英混合。属纯文案打磨，改动面大、价值低，列为待办（个人单用户工具，非闭环阻断项）。
+- TopicTrend 年桶粒度：dashboard 领域快讯与 topic 空白解读改为「最近 N 个年份桶」聚合，
+  「除 1~2 月外恒空」的问题消除；`get_keyword_monthly_counts` 更名 `get_keyword_yearly_counts`
+  （旧名保留 deprecated 别名），同比严格相邻年份比对
+- ETag 缓存键纳入 pinned/hidden 个性化成分；Cache-Control 改 `private, no-cache`（仅协商缓存）
+- embed_texts：按 item.index 重排+数量校验防错位；分批容错不丢成功批次；截断默认收紧 4000→2000 字符；
+  自定义 provider 只选名字含 "embed" 的模型作 embedding 候选
+- 计算密集/网络调用全面让出事件循环：compute_embedding_async、embed_texts_async、空白解读 to_thread
+- 扩展依赖保持按需加载（本次复核确认）：jieba/sklearn/numpy 只在爬虫/召回路径函数内 import；
+  openai 客户端构建在函数内；前端 mermaid/docx 动态 import、D3 按 subpath 且仅网络图路由加载
+- 时区统一 UTC 口径，弃用 `datetime.utcnow()` 全部替换；personal 计数下推 SQL COUNT
+- AI 服务 reload() 原子替换 + 旧客户端显式 close；死代码批量清除（schemas×5、scheduler 方法×2、
+  scoring 第二公式与僵尸常量、config 死配置 fetch_interval_hours 等）
 
-### 11. ✅ 系统管理页拆分
-- system/page.tsx 已拆分为多子组件。
+## 三、刻意保留 / 已知边界
 
-### 12. ⚠️ 验证码自动识别 —— 已集成守卫式方案，待真机验证
-- `fetchers_cnki.py` `DrissionPageBase.handle_captcha` 已并入 ddddocr 滑块自动解决：
-  - `import ddddocr` 失败（服务端未装）时自动降级为人工处理，不影响主流程；
-  - 新增 `backend/requirements-crawler.txt`（原 requirements.txt 注释指向但文件缺失），
-    爬虫 + 验证码依赖在此统一声明。
-- 未尽项：CNKI 滑块选择器/滑动像素换算基于通用经验值，**需在真实 CNKI 页面跑通后微调**
-  （当前 try/except 兜底，失败即转人工，不会中断爬取）。
+### 1. 经济学季刊摘要/卷期 —— 维持「刻意不做」（KNOWN_ISSUES v1 #1 结论不变）
 
-### 13. ✅ D3 缩放位置丢失 / @types/mermaid@9 与运行时 v11 错位
-- zoom transform 用 ref 保存，主题切换后恢复；已移除过时 @types/mermaid。
+### 2. CNKI 验证码滑块选择器需真机校准
+守卫式方案 + ddddocr 已就位，失败自动转人工；navi 版 `_check_captcha` 已恢复元素级探测（保守 False 兜底）。
 
----
+### 3. 根目录登录态文件（cnki_state*.json）
+含有效知网会话 Cookie，已被 .gitignore 覆盖且从未入库；是 cnki_paper_captcha.py 断点续爬的工作文件，
+保留本机使用。**严禁拷贝到仓库外或提交。**
 
-## 四、测试缺口
+### 4. fetchers_cnki.CNKIDrissionFetcher 复合检索 URL 方案存疑
+复合查询串塞 `kw=` 参数的方式与真实知网检索页不符，疑从未端到端跑通（NAVI/关键词脚本栈可用）。
+待真机验证后再决定去留，暂保留入口。
 
-### 14. ✅ 新增端点自动化测试补齐
-- `tests/test_new_endpoint_helpers.py` 覆盖 `_rule_relevance_score` / `_aggregate_research_map` / `_crowding_stats`。
-- 现有 pytest 45 passed。
-
----
-
-## 五、P3 明确未做（计划内后续，非缺陷）
-
+### 5. P3 明确未做（计划内后续，非缺陷）
 - 数据源扩展：CSSCI、Crossref/OpenAlex 接入
 - 多用户 + 团队协作（选题库共享）
 - 新论文订阅推送（每日邮件/接口）
+- CNKI 三套爬虫栈公共逻辑抽 `app/cnki_common.py`（P2 单栈化一并处理）
 
 ---
 
 ## 快速验证备忘
 
 ```bash
-# 后端测试
-cd backend && ../../.venv/Scripts/python.exe -m pytest tests/ -q
+# 后端测试（仓库根目录）
+cd backend && ../venv/bin/python -m pytest tests/ -q
+# 应用可导入冒烟
+cd backend && ../venv/bin/python -c "from app.main import app"
 # 前端类型检查
 cd frontend && npx tsc --noEmit
 # 冒烟（服务启动后）

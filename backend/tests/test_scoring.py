@@ -51,15 +51,14 @@ def test_trend_tanh():
 
 
 def test_final_not_clamped_raw_weighted():
-    """compute_final_score 只加权不裁剪（裁剪发生在 should_read 层）。"""
+    """compute_final_score 只加权不裁剪。"""
     s = make_score_system()
     # 2.0 三项 → 2.0（加权后仍 >1，说明不在本层裁剪）
     assert s.compute_final_score(2.0, 2.0, 2.0) == pytest.approx(2.0, abs=1e-4)
     assert s.compute_final_score(-1.0, -1.0, -1.0) == pytest.approx(-1.0, abs=1e-4)
 
 
-def test_should_read_clamps_to_unit():
-    """should_read 分裁剪到 [0,1]。"""
+def test_trend_score_neutral_fallback():
+    """无增长率时趋势分取中性 0.5（签名兼容历史频率参数）。"""
     s = make_score_system()
-    assert s.compute_should_read_score(final_score=2.0, has_summary=True) <= 1.0
-    assert s.compute_should_read_score(final_score=-1.0, has_summary=False) >= 0.0
+    assert s.compute_trend_score([], {"kw": 5}, {}) == pytest.approx(0.5, abs=1e-6)

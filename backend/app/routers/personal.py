@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select as sa_select, delete as sa_delete, func
+from sqlalchemy import select as sa_select, delete as sa_delete, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,17 +56,18 @@ async def get_me(
     subfields = await db.execute(
         sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid)
     )
+    # 计数下推 SQL（COUNT），避免为求 len 拉全量 id
     read_count = await db.execute(
-        sa_select(ReadingHistory.id).where(ReadingHistory.user_id == uid)
+        sa_select(sa_func.count(ReadingHistory.id)).where(ReadingHistory.user_id == uid)
     )
     fav_count = await db.execute(
-        sa_select(Favorite.id).where(Favorite.user_id == uid)
+        sa_select(sa_func.count(Favorite.id)).where(Favorite.user_id == uid)
     )
     return {
         "user_id": uid,
         "followed_subfields": [r[0] for r in subfields.all()],
-        "read_count": len(read_count.all()),
-        "favorite_count": len(fav_count.all()),
+        "read_count": read_count.scalar() or 0,
+        "favorite_count": fav_count.scalar() or 0,
     }
 
 
@@ -160,7 +161,7 @@ async def toggle_pin(
         return {"pinned": False}
     # 置顶上限（MAX_PINNED_PAPERS）：已达上限时拒绝新增，避免置顶了却不排最前的静默问题
     count = await db.execute(
-        sa_select(func.count()).select_from(PinnedPaper).where(PinnedPaper.user_id == uid)
+        sa_select(sa_func.count()).select_from(PinnedPaper).where(PinnedPaper.user_id == uid)
     )
     if count.scalar_one() >= MAX_PINNED_PAPERS:
         raise HTTPException(status_code=400, detail="MAX_PINNED_PAPERS")

@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy import select, and_, desc, func, or_, text, update, bindparam, insert, delete, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import math
 
@@ -14,7 +14,7 @@ _filter_stats_cache_time: float = 0
 _FILTER_STATS_TTL = 60
 
 from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
-from app.schemas import PaperCreate, CrawlLogCreate, CrawlLogUpdate
+from app.schemas import PaperCreate, CrawlLogCreate
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -223,7 +223,8 @@ class PaperCRUD:
         doi: Optional[str] = None,
     ) -> bool:
         """回填论文摘要（可选顺带更新关键词与 DOI），返回是否更新。"""
-        values: dict = {"abstract": abstract, "updated_at": datetime.now()}
+        # 注意：Paper 表没有 updated_at 列，多写会导致 CompileError 使整个回填批次失败
+        values: dict = {"abstract": abstract}
         if keywords:
             values["keywords_cn"] = keywords
         if doi:
@@ -464,8 +465,23 @@ class PaperCRUD:
         recency_score: float,
         venue_score: float,
         trend_score: float,
-        final_score: float
+        final_score: float,
+        update_if_exists: bool = False,
     ) -> PaperScore:
+        """新建评分行。paper_id 有唯一约束：update_if_exists=True 时存在即更新（回填重算场景），
+        否则保持原 INSERT 语义。"""
+        if update_if_exists:
+            result = await db.execute(
+                select(PaperScore).where(PaperScore.paper_id == paper_id)
+            )
+            score = result.scalar_one_or_none()
+            if score is not None:
+                score.recency_score = recency_score
+                score.venue_score = venue_score
+                score.trend_score = trend_score
+                score.final_score = final_score
+                await db.flush()
+                return score
         score = PaperScore(
             paper_id=paper_id,
             recency_score=recency_score,
@@ -479,7 +495,9 @@ class PaperCRUD:
     
     @staticmethod
     async def get_keyword_frequencies(db: AsyncSession, days_back: int = 7) -> dict:
-        cutoff_date = datetime.now() - timedelta(days=days_back)
+        # SQLite 把 datetime 参数绑定成字符串比较：aware 值会带 "+00:00" 后缀破坏字典序，
+        # 这里用 naive-UTC（与列存储格式同形）；语义仍为 UTC 口径
+        cutoff_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_back)
         
         result = await db.execute(
             select(PaperFeatures.keywords)
@@ -494,36 +512,6 @@ class PaperCRUD:
                 frequencies[keyword] = frequencies.get(keyword, 0) + 1
         
         return frequencies
-    
-    @staticmethod
-    async def create_topic_trend(
-        db: AsyncSession,
-        topic: str,
-        week_start: datetime,
-        paper_count: int,
-        growth_rate: float
-    ) -> TopicTrend:
-        trend = TopicTrend(
-            topic=topic,
-            week_start=week_start,
-            paper_count=paper_count,
-            growth_rate=growth_rate
-        )
-        db.add(trend)
-        await db.flush()
-        return trend
-    
-    @staticmethod
-    async def get_topic_trends(db: AsyncSession, weeks_back: int = 4) -> List[TopicTrend]:
-        cutoff_date = datetime.now() - timedelta(weeks=weeks_back)
-        
-        result = await db.execute(
-            select(TopicTrend)
-            .where(TopicTrend.week_start >= cutoff_date)
-            .order_by(desc(TopicTrend.week_start), desc(TopicTrend.growth_rate))
-        )
-        
-        return result.scalars().all()
     
     @staticmethod
     async def get_papers_by_topic(db: AsyncSession, topic: str, limit: int = 100) -> List[Paper]:
@@ -827,90 +815,98 @@ class PaperCRUD:
             return None
 
     @staticmethod
-    async def get_keyword_monthly_counts(db: AsyncSession, months_back: int = 12) -> dict:
+    async def get_keyword_yearly_counts(db: AsyncSession) -> dict:
         """
-        查询过去 N 个月的论文，按 (关键词, 月) 聚合论文数量
-        返回格式：{keyword: {month_start_date: count, ...}, ...}
-        支持 SQLite 和 PostgreSQL
+        全库关键词按「年」聚合论文数量（年份桶粒度：CNKI 来源约半数论文仅有年份精度，
+        月度桶会出现"每年1月假峰值"，统计必须以年为最小单位才真实）。
+        返回格式：{keyword: {year_int_str: count, ...}, ...}
+        支持 SQLite 和 PostgreSQL；cutoff 2020 为建库时的全量下限（早于该年的数据不可信）。
         """
         from sqlalchemy import text
-        
-        # 使用更宽松的时间范围以包含所有历史数据
+
+        # 建库前（2020 年以前）的存量迁移数据年份精度差，排除在趋势统计外
         cutoff_date = datetime(2020, 1, 1)
-        
+
         # 使用原生SQL查询，因为需要展开JSON数组
         if settings.database_url.startswith("sqlite"):
             # SQLite 使用 json_each 展开 JSON 数组
             query = text("""
-                SELECT 
+                SELECT
                     value as keyword,
-                    strftime('%Y', published_at) as month_start,
+                    strftime('%Y', published_at) as year_start,
                     COUNT(*) as count
                 FROM papers, json_each(keywords_cn)
                 WHERE published_at >= :cutoff_date
                     AND keywords_cn IS NOT NULL
                     AND json_array_length(keywords_cn) > 0
-                GROUP BY value, month_start
-                ORDER BY value, month_start
+                GROUP BY value, year_start
+                ORDER BY value, year_start
             """)
         else:
             # PostgreSQL 使用 jsonb_array_elements_text
             query = text("""
-                SELECT 
+                SELECT
                     keyword,
-                    DATE_TRUNC('year', published_at)::date as month_start,
+                    DATE_TRUNC('year', published_at)::date as year_start,
                     COUNT(*) as count
                 FROM papers,
                 jsonb_array_elements_text(keywords_cn::jsonb) as keyword
                 WHERE published_at >= :cutoff_date
                     AND keywords_cn IS NOT NULL
                 GROUP BY keyword, DATE_TRUNC('year', published_at)
-                ORDER BY keyword, month_start
+                ORDER BY keyword, year_start
             """)
-        
+
         result = await db.execute(query, {"cutoff_date": cutoff_date})
-        
+
         # 整理结果
-        keyword_monthly_counts = {}
+        keyword_yearly_counts = {}
         for row in result:
             keyword = row[0]
-            month_start = row[1]
+            year_start = row[1]
             count = row[2]
-            
-            if keyword not in keyword_monthly_counts:
-                keyword_monthly_counts[keyword] = {}
-            keyword_monthly_counts[keyword][month_start] = count
-        
-        return keyword_monthly_counts
+
+            if keyword not in keyword_yearly_counts:
+                keyword_yearly_counts[keyword] = {}
+            keyword_yearly_counts[keyword][year_start] = count
+
+        return keyword_yearly_counts
+
+    @staticmethod
+    async def get_keyword_monthly_counts(db: AsyncSession, months_back: int = 12) -> dict:
+        """已废弃别名：实际为年度聚合（见 get_keyword_yearly_counts）。months_back 参数无效，仅为兼容旧调用保留。"""
+        return await PaperCRUD.get_keyword_yearly_counts(db)
 
     @staticmethod
     async def update_keyword_trends(db: AsyncSession, months_back: int = 6) -> int:
         """
         更新关键词趋势数据（按「年」粒度：CNKI 来源 52% 论文仅有年份精度，
         月度桶会出现"每年1月假峰值"，趋势必须以年为最小单位才真实）。
-        1. 调用 get_keyword_monthly_counts 获取逐年计数
-        2. 计算同比变化率
+        1. 调用 get_keyword_yearly_counts 获取逐年计数
+        2. 计算同比变化率（仅相邻年份参与：断档年不与隔年比对，避免高估动量）
         3. 存储到 TopicTrend 表（复用该表，week_start 存年份桶）
         返回更新的记录数
         """
-        monthly_counts = await PaperCRUD.get_keyword_monthly_counts(db, months_back)
+        yearly_counts = await PaperCRUD.get_keyword_yearly_counts(db)
 
         trend_rows = []
-        for keyword, month_data in monthly_counts.items():
-            sorted_months = sorted(month_data.keys())
-            for i, month_start in enumerate(sorted_months):
-                current_count = month_data[month_start]
-                if i == 0 or sorted_months[i - 1] not in month_data:
+        for keyword, year_data in yearly_counts.items():
+            sorted_years = sorted(year_data.keys())
+            for i, year_start in enumerate(sorted_years):
+                current_count = year_data[year_start]
+                # 同比要求严格相邻年份：断档时 growth_rate 置 0（首条同）
+                prev_key = str(int(year_start) - 1) if i > 0 else None
+                if i == 0 or prev_key != sorted_years[i - 1]:
                     growth_rate = 0.0
                 else:
-                    previous_count = month_data[sorted_months[i - 1]]
+                    previous_count = year_data[prev_key]
                     if previous_count == 0:
                         growth_rate = 1.0 if current_count > 0 else 0.0
                     else:
                         growth_rate = (current_count - previous_count) / previous_count
                 trend_rows.append({
                     "topic": keyword,
-                    "week_start": month_start if isinstance(month_start, datetime) else datetime.strptime(f"{month_start}-01-01", "%Y-%m-%d"),
+                    "week_start": year_start if isinstance(year_start, datetime) else datetime.strptime(f"{year_start}-01-01", "%Y-%m-%d"),
                     "paper_count": current_count,
                     "growth_rate": growth_rate,
                 })
@@ -919,7 +915,7 @@ class PaperCRUD:
             return 0
 
         # 涉及的关键词整体重写：一次批量 DELETE + 一次批量 INSERT
-        keywords = list(monthly_counts.keys())
+        keywords = list(yearly_counts.keys())
         for i in range(0, len(keywords), 500):
             await db.execute(
                 delete(TopicTrend).where(TopicTrend.topic.in_(keywords[i:i + 500]))
@@ -1161,7 +1157,10 @@ class CrawlLogCRUD:
         papers_fetched: Optional[int] = None,
         papers_failed: Optional[int] = None,
         status: Optional[str] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
+        log_detail: Optional[str] = None,
+        task_type: Optional[str] = None,
+        rerun_params: Optional[str] = None
     ) -> Optional[CrawlLog]:
         result = await db.execute(
             select(CrawlLog).where(CrawlLog.id == log_id)
@@ -1181,10 +1180,23 @@ class CrawlLogCRUD:
             crawl_log.status = status
         if error_message is not None:
             crawl_log.error_message = error_message
+        if log_detail is not None:
+            crawl_log.log_detail = log_detail
+        if task_type is not None:
+            crawl_log.task_type = task_type
+        if rerun_params is not None:
+            crawl_log.rerun_params = rerun_params
         
         await db.flush()
         await db.refresh(crawl_log)
         return crawl_log
+
+    @staticmethod
+    async def get_crawl_log_by_id(db: AsyncSession, log_id: int) -> Optional[CrawlLog]:
+        result = await db.execute(
+            select(CrawlLog).where(CrawlLog.id == log_id)
+        )
+        return result.scalar_one_or_none()
     
     @staticmethod
     async def get_crawl_logs(

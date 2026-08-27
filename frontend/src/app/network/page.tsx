@@ -36,7 +36,7 @@ function getLinkNodeId(node: string | { id?: string }): string {
 export default function NetworkPage() {
   const { t } = useLanguage();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<TabType>('clusters');
+  const [activeTab, setActiveTab] = useState<TabType>('keywords');
   const [data, setData] = useState<NetworkData | null>(null);
   const [loading, setLoading] = useState(true);
   const [infoNode, setInfoNode] = useState<NetworkNode | null>(null);
