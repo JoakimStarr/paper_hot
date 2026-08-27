@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # 留空时按 provider 可用性自动选择默认 embedding 模型。
     embedding_model: Optional[str] = None
 
+    # 重排模型（格式 'provider/model'，默认硅基流动 bge-reranker-v2-m3）。
+    # 选题验证器两阶段检索：本地 embedding 召回候选后，调用重排模型精排取 Top-N。
+    # 未配置 rerank_api_key 时自动跳过重排，降级为 embedding 相似度顺序。
+    rerank_model: Optional[str] = "siliconflow/BAAI/bge-reranker-v2-m3"
+    # 重排 API key / 端点（默认硅基流动）。独立于 LLM provider 配置，
+    # 避免把硅基流动 key 放进硅基流动 provider 后改变全局对话模型选择。
+    rerank_api_key: Optional[str] = None
+    rerank_base_url: Optional[str] = None
+
     arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
 
     scheduler_enabled: bool = True

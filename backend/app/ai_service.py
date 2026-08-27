@@ -330,6 +330,70 @@ class AITrendService:
         """embed_texts 的异步包装：sync httpx 调用下放线程池，不阻塞事件循环。"""
         return await asyncio.to_thread(self.embed_texts, texts, model)
 
+    # ---------- Rerank（选题验证器两阶段检索） ----------
+
+    def rerank(
+        self,
+        query: str,
+        documents: List[str],
+        top_n: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """重排：按 query 对 documents 排序（OpenAI 兼容 POST /rerank 端点）。
+
+        使用独立配置（settings.rerank_api_key / rerank_model / rerank_base_url），
+        不依赖 LLM provider 客户端——避免把硅基流动 key 配进 provider 后改变全局
+        对话模型选择（provider_order 内置 provider 优先，会静默替换当前默认模型）。
+
+        返回 [{"index": int, "relevance_score": float}] 按相关度降序；
+        任何失败返回 None（调用方降级为原 embedding 顺序，不抛异常）。
+        """
+        if not query or not documents:
+            return None
+        rerank_model = model or getattr(settings, "rerank_model", None)
+        api_key = getattr(settings, "rerank_api_key", None)
+        if not rerank_model or not api_key:
+            return None
+        base_url = getattr(settings, "rerank_base_url", None) or "https://api.siliconflow.cn/v1"
+        # 容忍 'provider/model' 前缀（provider 仅作标注，模型名取 / 后部分）
+        bare_model = rerank_model.partition("/")[2] or rerank_model
+        url = base_url.rstrip("/") + "/rerank"
+        payload: Dict[str, Any] = {"model": bare_model, "query": query, "documents": documents}
+        if top_n:
+            payload["top_n"] = int(top_n)
+        try:
+            import httpx
+            resp = httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            results = (resp.json() or {}).get("results") or []
+            out = []
+            for r in results:
+                if r.get("index") is None:
+                    continue
+                out.append({
+                    "index": int(r["index"]),
+                    "relevance_score": float(r.get("relevance_score") or 0.0),
+                })
+            return out or None
+        except Exception as e:
+            logger.warning(f"rerank failed via {bare_model}: {e}")
+            return None
+
+    async def rerank_async(
+        self,
+        query: str,
+        documents: List[str],
+        top_n: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """rerank 的异步包装：sync httpx 调用下放线程池，不阻塞事件循环。"""
+        return await asyncio.to_thread(self.rerank, query, documents, top_n, model)
+
     # ---------- 分析入口 ----------
 
     async def analyze_trends(

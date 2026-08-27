@@ -17,6 +17,7 @@
 | 👤 **作者画像** | 作者论文列表、统计画像（首发年份/主期刊/关键词/子领域）、合著网络 |
 | 📈 **趋势分析** | 热点关键词趋势、**AI 趋势报告**、趋势报告追问对话 |
 | 🕸️ **网络可视化** | D3.js 关键词共现网络、作者合作网络 |
+| 🎯 **选题智脑** | 研究空白识别、**选题验证**（本地 bge-m3 召回 → 硅基流动 bge-reranker 重排）、选题库、综述生成、期刊适配、引用导出 |
 | 🕷️ **爬虫管理** | CNKI DrissionPage 批量抓取、6 期刊站点爬虫（含断点续传）、验证码自动解决 |
 | ⚙️ **系统管理** | 数据统计、爬虫日志、手动触发、在线配置（API Key/模型优先级）、定时任务、数据维护 |
 
@@ -82,6 +83,7 @@ docker compose up -d
 | `requirements.txt` | **服务端依赖**（FastAPI / SQLite / AI / 相似度） | ✅ 必需 |
 | `backend/requirements.txt` | 同上（服务端独立版本，被根文件引用） | ✅ 必需 |
 | `requirements-crawler.txt` | **爬虫扩展依赖**（arxiv / DrissionPage / bs4 / playwright / ddddocr） | ❌ 非必需 |
+| `faiss-cpu`（可选） | 选题验证向量召回加速（FAISS 索引；未安装自动降级为 numpy 暴力余弦） | ❌ 可选 |
 
 ```bash
 # 仅运行 Web 服务 + AI 分析（服务器推荐）
@@ -153,13 +155,26 @@ curl -X POST "http://localhost:8000/api/topic-validator/embeddings/backfill"
 
 See [README_CN.md](README_CN.md) for the detailed guide (speed benchmarks, FP16 import fallback, troubleshooting).
 
+### 两阶段检索：重排（可选，强烈建议）
+
+选题验证使用**两阶段检索**：本地 bge-m3 召回 Top100 → 硅基流动 bge-reranker-v2-m3 重排 → Top30 喂给 LLM（召回速度较全量余弦快约 2 倍，重排把相似度区分度从 0.77 拉开到 0.98）。
+
+```env
+# 在 backend/.env 中配置（key 在 https://siliconflow.cn 免费获取）
+RERANK_API_KEY=sk-...
+RERANK_MODEL=siliconflow/BAAI/bge-reranker-v2-m3
+RERANK_BASE_URL=https://api.siliconflow.cn/v1
+```
+
+未配置 `RERANK_API_KEY` 时自动跳过重排（降级为 embedding 顺序）；`faiss-cpu` 未安装时召回自动降级为 numpy 暴力余弦。两项均为可选增强，不影响基本功能。
+
 ---
 
 ## 🛠️ 技术栈
 
 - **后端**：FastAPI · SQLAlchemy (asyncio) · SQLite/aiosqlite · apscheduler
 - **AI**：OpenAI 兼容接口（智谱 GLM / 硅基流动 Qwen / OpenAI）· SSE 流式
-- **相似度**：jieba 分词 + TF-IDF + 余弦相似度（scikit-learn）
+- **相似度/检索**：jieba 分词 + TF-IDF + 余弦相似度（scikit-learn）· FAISS 召回（可选加速）· bge-reranker 重排（硅基流动 API）
 - **爬虫**：DrissionPage · BeautifulSoup · playwright · ddddocr（验证码）
 - **前端**：Next.js · React · TypeScript · D3.js · Tailwind
 
@@ -179,6 +194,7 @@ See [README_CN.md](README_CN.md) for the detailed guide (speed benchmarks, FP16 
 │   │   ├── schemas.py        # Pydantic 校验
 │   │   ├── fetchers*.py      # 爬虫抓取（依赖爬虫扩展包）
 │   │   ├── ai_service.py     # AI 分析与对话
+│   │   ├── vector_index.py   # FAISS 向量索引（召回加速，可选）
 │   │   └── routers/          # 各业务路由
 │   └── requirements.txt      # 服务端依赖
 ├── frontend/                 # Next.js 前端

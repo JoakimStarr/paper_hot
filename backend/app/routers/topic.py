@@ -393,36 +393,27 @@ def _cosine_top_k(
 async def _retrieve_similar_papers(db: AsyncSession, topic: str, k: int = 30):
     """候选题目 -> 近似论文召回。优先 embedding，失败降级 TF-IDF。
 
-    返回 (papers: list[dict], mode: "embedding" | "tfidf")
-    """
-    result = await db.execute(
-        sa_select(
-            PaperFeatures.paper_id, PaperFeatures.embedding, PaperFeatures.keywords,
-            Paper.title, Paper.abstract, Paper.source, Paper.published_at,
-        )
-        .join(Paper, Paper.id == PaperFeatures.paper_id)
-        .where(PaperFeatures.embedding.isnot(None))
-        .limit(5000)
-    )
-    rows = result.all()
+    两阶段检索（P0）：本地 bge-m3 召回 Top(4k, ≥100) -> 若配置了 rerank key，
+    用硅基流动 bge-reranker-v2-m3 重排 -> 取 Top k；重排不可用时降级为 embedding 顺序。
+    注意不再对候选集做 limit 硬截断——此前 limit(5000) 会让库内 5000 之后的论文
+    永远无法被召回（库现有 5251 篇）。
 
-    # ---- 路线 1：embedding 召回 ----
-    if rows:
-        try:
-            query_vec = await ai_trend_service.embed_texts_async([topic])
-            if query_vec and query_vec[0]:
-                candidates = [(r[0], json.loads(r[1])) for r in rows if r[1]]
-                top = _cosine_top_k(query_vec[0], candidates, k=k)
-                score_map = dict(top)
-                picked = [r for r in rows if r[0] in score_map]
-                picked.sort(key=lambda r: score_map.get(r[0], 0), reverse=True)
-                # 列序对齐 _paper_brief（[paper_id, keywords, title, abstract, source, published_at]）：
-                # SELECT 里 embedding 列插在最前，这里归一化掉，避免 title/abstract/source 错位
-                norm = [(r[0], r[2], r[3], r[4], r[5], r[6]) for r in picked]
-                papers = [_paper_brief(nr, score_map.get(nr[0], 0.0)) for nr in norm]
-                return papers, "embedding"
-        except Exception as e:
-            logger.warning(f"Embedding retrieval failed, falling back to TF-IDF: {e}")
+    返回 (papers: list[dict], mode: "embedding+rerank" | "embedding" | "tfidf")
+    """
+    # ---- 路线 1：embedding 召回（FAISS 优先，降级 numpy 暴力余弦） ----
+    try:
+        query_vec = await ai_trend_service.embed_texts_async([topic])
+        if query_vec and query_vec[0]:
+            recall_k = max(k * 4, 100)  # 召回放宽，交给重排器精排
+            papers = await _embedding_recall(db, query_vec[0], recall_k)
+            if papers:
+                # 两阶段：重排器对召回候选精排（失败降级为 embedding 顺序）
+                reranked, ok = await _rerank_papers(topic, papers, k)
+                if ok:
+                    return reranked, "embedding+rerank"
+                return papers[:k], "embedding"
+    except Exception as e:
+        logger.warning(f"Embedding retrieval failed, falling back to TF-IDF: {e}")
 
     # ---- 路线 2：TF-IDF 降级（复用 similarity.py 的 jieba 分词方案） ----
     from app.similarity import _tokenize
@@ -436,7 +427,6 @@ async def _retrieve_similar_papers(db: AsyncSession, topic: str, k: int = 30):
         )
         .join(Paper, Paper.id == PaperFeatures.paper_id)
         .order_by(Paper.published_at.desc())
-        .limit(5000)
     )
     all_rows = all_result.all()
     if not all_rows:
@@ -453,6 +443,89 @@ async def _retrieve_similar_papers(db: AsyncSession, topic: str, k: int = 30):
         r = all_rows[i]
         papers.append(_paper_brief(r, float(sims[i])))
     return papers, "tfidf"
+
+
+async def _embedding_recall(db: AsyncSession, query_vec: list, recall_k: int):
+    """embedding 召回候选：FAISS 索引优先，不可用时降级为全量 numpy 暴力余弦。
+
+    返回按相似度降序的候选 brief 列表（不超过 recall_k 篇）；两者都不可用返回 None。
+    """
+    # ---- FAISS 优先（进程内缓存索引，避免每请求全量拉库+解析 embedding） ----
+    from app.vector_index import search as faiss_search
+    try:
+        ids, scores = await faiss_search(db, query_vec, recall_k)
+    except Exception as e:
+        logger.warning(f"FAISS recall failed, falling back to brute force: {e}")
+        ids, scores = [], []
+    if ids:
+        result = await db.execute(
+            sa_select(
+                PaperFeatures.paper_id, PaperFeatures.keywords,
+                Paper.title, Paper.abstract, Paper.source, Paper.published_at,
+            )
+            .join(Paper, Paper.id == PaperFeatures.paper_id)
+            .where(PaperFeatures.paper_id.in_(ids))
+        )
+        row_by_id = {r[0]: r for r in result.all()}
+        score_map = dict(zip(ids, scores))
+        papers = []
+        for pid in ids:
+            r = row_by_id.get(pid)
+            if r:
+                papers.append(_paper_brief(r, score_map.get(pid, 0.0)))
+        if papers:
+            return papers
+
+    # ---- 降级：全量拉 embedding，内存暴力余弦 ----
+    rows = (
+        await db.execute(
+            sa_select(
+                PaperFeatures.paper_id, PaperFeatures.embedding, PaperFeatures.keywords,
+                Paper.title, Paper.abstract, Paper.source, Paper.published_at,
+            )
+            .join(Paper, Paper.id == PaperFeatures.paper_id)
+            .where(PaperFeatures.embedding.isnot(None))
+        )
+    ).all()
+    if not rows:
+        return None
+    candidates = [(r[0], json.loads(r[1])) for r in rows if r[1]]
+    if not candidates:
+        return None
+    top = _cosine_top_k(query_vec, candidates, k=recall_k)
+    score_map = dict(top)
+    picked = [r for r in rows if r[0] in score_map]
+    picked.sort(key=lambda r: score_map.get(r[0], 0), reverse=True)
+    # 列序对齐 _paper_brief（[paper_id, keywords, title, abstract, source, published_at]）：
+    # SELECT 里 embedding 列插在最前，这里归一化掉，避免 title/abstract/source 错位
+    norm = [(r[0], r[2], r[3], r[4], r[5], r[6]) for r in picked]
+    return [_paper_brief(nr, score_map.get(nr[0], 0.0)) for nr in norm]
+
+
+async def _rerank_papers(topic: str, papers: list, k: int):
+    """对召回候选做重排精排（硅基流动 bge-reranker-v2-m3）。
+
+    返回 (papers, ok)：ok=True 时 papers 为按重排分数降序的前 k 篇（similarity 为重排分），
+    ok=False 时 papers 为原顺序前 k 篇（调用方走 embedding 顺序降级）。
+    """
+    if not papers:
+        return papers, False
+    docs = [f"{p['title']}\n{p['abstract'] or ''}" for p in papers]
+    try:
+        results = await ai_trend_service.rerank_async(topic, docs, top_n=k)
+    except Exception as e:
+        logger.warning(f"Rerank stage failed: {e}")
+        results = None
+    if not results:
+        return papers[:k], False
+    out = []
+    for r in results:
+        idx = r.get("index")
+        if idx is not None and 0 <= idx < len(papers):
+            p = dict(papers[idx])
+            p["similarity"] = round(float(r.get("relevance_score") or p["similarity"]), 4)
+            out.append(p)
+    return out, True
 
 
 def _paper_brief(row, score: float) -> dict:

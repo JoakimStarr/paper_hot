@@ -36,6 +36,14 @@
 - **AI 趋势报告**：异步后台 AI 分析生成结构化趋势报告（研究热点、发展趋势、关键词洞察、期刊洞察、研究建议），支持轮询状态
 - **趋势报告追问**：对 AI 趋势报告进行追问讨论，深入解读研究热点和选题机会
 
+### 🎯 选题智脑（选题中心）
+- **研究空白识别**：关键词共现分析找"各自高频但共现稀少"的组合，一键触发 LLM 生成空白假设卡片
+- **选题验证（两阶段检索）**：本地 bge-m3 召回 Top100 → 硅基流动 bge-reranker-v2-m3 重排 → Top30 喂 LLM，输出新颖性评分 / 拥挤度 / 机会窗口 / 切入角度，引用可点击跳转
+- **选题立项书**：验证通过后一键生成"研究问题 / 数据来源 / 方法论 / 步骤 / 贡献"立项书
+- **选题库**：验证过的选题沉淀为可跟踪项目（to_validate → validated → subscribed → abandoned）
+- **综述生成**：检索相关论文 → 生成"研究脉络 / 方法演进 / 争议点 / 空白"，支持导出 Markdown/Word
+- **期刊适配 & 引用导出**：推荐投稿目标 + GB/T 7714 / BibTeX 引用
+
 ### 🕸️ 关系网络
 - **关键词共现网络**：D3.js 交互式力导向图，可视化关键词之间的共现关系，支持缩放拖拽
 - **作者合作网络**：D3.js 交互式作者合作关系图，展示学术合作生态
@@ -92,6 +100,7 @@
 | 数据库 | SQLite + aiosqlite + SQLAlchemy ORM（兼容 PostgreSQL） |
 | AI 服务 | zai-sdk（智谱 GLM-4.7 / GLM-4.5-Air / GLM-4.7-Flash）+ OpenAI SDK（硅基流动 Qwen3.5-4B / Qwen3-8B / DeepSeek-R1） |
 | 相似度 | jieba 分词 + scikit-learn TF-IDF + 余弦相似度 |
+| 检索（选题验证） | FAISS 向量召回（可选加速）+ 硅基流动 bge-reranker-v2-m3 重排 |
 | 任务调度 | APScheduler（定时爬取、趋势更新） |
 | 爬虫 | DrissionPage（知网）、BeautifulSoup4 + lxml（自建站点） |
 | 流式传输 | SSE (Server-Sent Events) |
@@ -245,6 +254,25 @@ venv/bin/python -c "import sqlite3; db=sqlite3.connect('backend/data/paperpulse.
 # 重启后端 ./start.sh，然后触发全量重建（后台循环批量直到全部完成；设置了 API_TOKEN 时加 Header X-API-Token）
 curl -X POST "http://localhost:${BACKEND_PORT:-8000}/api/topic-validator/embeddings/backfill"
 ```
+
+### 5. 两阶段检索：重排（可选，强烈建议）
+
+选题验证采用**两阶段检索**：本地 bge-m3 召回 Top100（FAISS 索引加速）→ **重排** → Top30 喂给 LLM。
+
+- **召回（本地）**：bge-m3 向量化后建 FAISS 索引（进程内缓存，5 分钟 TTL 自动重建；未装 `faiss-cpu` 自动降级 numpy 暴力余弦）
+- **重排（硅基流动 API）**：`BAAI/bge-reranker-v2-m3` 对召回候选精排，按量计费（单次选题验证约 2-3 万 token，几分钱）
+
+实测效果：重排把 Top30 平均相似度从 0.77 拉开到 0.98，还能捞回纯向量召回漏掉的高相关论文；检索总耗时约 1.5s（较全量余弦快约 2 倍）。
+
+配置 `backend/.env`（key 在 [siliconflow.cn](https://siliconflow.cn) 免费获取，独立于 LLM provider，不影响对话模型选择）：
+
+```env
+RERANK_API_KEY=sk-...
+RERANK_MODEL=siliconflow/BAAI/bge-reranker-v2-m3
+RERANK_BASE_URL=https://api.siliconflow.cn/v1
+```
+
+未配置 `RERANK_API_KEY` 时自动跳过重排（降级为 embedding 相似度顺序），功能不受影响。
 
 ---
 
@@ -492,6 +520,7 @@ paper_hot/
 │   │   ├── similarity.py        # TF-IDF 相似度计算
 │   │   ├── ai_processor.py      # AI 处理器（摘要、关键词提取、主题分类）
 │   │   ├── ai_service.py        # AI 趋势分析服务（双通道 + 降级）
+│   │   ├── vector_index.py      # FAISS 向量索引（选题验证召回加速，可选）
 │   │   ├── fetchers.py          # 论文抓取基类 + 自建站点爬虫
 │   │   ├── fetchers_cnki.py     # CNKI 知网爬虫（DrissionPage）
 │   │   └── fetchers_cnki_navi.py # CNKI 期刊导航爬虫

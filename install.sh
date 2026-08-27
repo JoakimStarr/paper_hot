@@ -13,6 +13,7 @@
 #   - Python 自动挑选系统可用的 3.9+，不硬性要求 3.11，旧版本降级为警告交予 pip 处理
 #   - venv 已存在且可用则跳过创建（损坏时自动重建）
 #   - 依赖按 requirements 哈希 + 关键包导入检测，未变化则跳过安装
+#   - faiss-cpu 为可选加速依赖（选题验证向量召回），脚本尽力安装，失败自动降级 numpy
 #   - backend/.env 已存在则跳过生成
 #   - Ollama 运行时/守护进程/模型均已就绪则整体跳过，仅刷新 .env
 
@@ -123,6 +124,12 @@ else
     reqs_hash > venv/.requirements-ready
     ok "依赖安装完成"
 fi
+
+# ---------- 可选加速：faiss-cpu（选题验证向量召回） ----------
+# 非必需：未安装时自动降级为 numpy 暴力余弦。安装失败不阻断后续流程。
+venv/bin/python -m pip install -q faiss-cpu 2>/dev/null \
+    && ok "faiss-cpu 已安装（选题验证向量召回加速）" \
+    || warn "faiss-cpu 安装失败（可选依赖，将降级为 numpy 暴力余弦）"
 
 # ---------- 2. .env ----------
 if [ ! -f backend/.env ]; then
@@ -260,6 +267,8 @@ $(printf "${GREEN}✔ 安装完成${NC}")
   1. ./start.sh 启动服务
   2. 若库里已有其他模型的旧向量，执行全量重建（见 README_CN.md「本地向量模型」第4节）:
      curl -X POST "http://localhost:8000/api/topic-validator/embeddings/backfill"
+  3. （可选，强烈建议）选题验证两阶段检索的重排：在 backend/.env 配 RERANK_API_KEY
+     （硅基流动免费获取，配合本地 bge-m3 召回 + bge-reranker 重排，见 README_CN.md「两阶段检索」）
 EOF
 }
 
