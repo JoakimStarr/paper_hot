@@ -8,9 +8,9 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { MessageCircle, X, Maximize2, Minimize2, Send, Loader2, Sparkles, History, Plus, Trash2 } from 'lucide-react';
-import ChatMessageList, { ChatMessageItem } from './ChatMessageList';
-import { streamAssistantChat, assistantApi, AssistantSession } from '@/lib/api';
+import { MessageCircle, X, Maximize2, Minimize2, Send, Loader2, Sparkles, History, Plus, Trash2, Search } from 'lucide-react';
+import ChatMessageList, { ChatMessageItem, ChatToolsEvent, ChatToolProgress } from './ChatMessageList';
+import { streamAssistantChat, assistantApi, papersApi, AssistantSession } from '@/lib/api';
 
 const PAGE_LABELS: Record<string, string> = {
   paper: '论文助手',
@@ -168,6 +168,11 @@ export default function AIAssistant() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [streamToolProgress, setStreamToolProgress] = useState<ChatToolProgress | null>(null);
+  const [toolTrail, setToolTrail] = useState<ChatToolsEvent[]>([]);
+  // "检索数据库"（Agent 工具）开关：默认跟随全局 agent_enabled，可逐会话切换
+  const [agentOn, setAgentOn] = useState(false);
   // 打开后待自动发送的问题（如 AI 分析按钮触发）
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
@@ -182,9 +187,24 @@ export default function AIAssistant() {
     setSessionId(null);
     setMessages([]);
     setStreamContent('');
+    setStreamReasoning('');
+    setStreamToolProgress(null);
+    setToolTrail([]);
     setHistoryOpen(false);
     abortRef.current?.abort();
   }, [ctx.key]);
+
+  // 读取全局 agent 开关（系统设置页持久化），作为本会话默认值；应用加载时取一次即可
+  useEffect(() => {
+    let cancelled = false;
+    papersApi.getSettings()
+      .then((s) => {
+        if (cancelled) return;
+        setAgentOn(!!s.agent_enabled);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // 监听外部「打开悬浮助手」事件（论文卡片 AI 分析按钮等）
   useEffect(() => {
@@ -231,6 +251,9 @@ export default function AIAssistant() {
     setInput('');
     setStreaming(true);
     setStreamContent('');
+    setStreamReasoning('');
+    setStreamToolProgress(null);
+    setToolTrail([]);
     setHistoryOpen(false);
 
     let sid = sessionId;
@@ -255,6 +278,12 @@ export default function AIAssistant() {
     try {
       await streamAssistantChat(activeSessionId, [{ role: 'user', content: userMsg.content }], {
         onContent: (t) => setStreamContent(t),
+        onReasoning: (r) => setStreamReasoning(r),
+        onToolProgress: (p) => setStreamToolProgress(p),
+        onTools: (tools) => {
+          // 工具轨迹里的论文并入当前流（引用 [n] 可点击）；结束后保留为「AI 工作流」
+          setToolTrail(tools as ChatToolsEvent[]);
+        },
         onDone: (full) => {
           if (full) {
             const assistantMsg: ChatMessageItem = { role: 'assistant', content: full, ts: Date.now() };
@@ -266,17 +295,23 @@ export default function AIAssistant() {
             loadSessions();
           }
           setStreamContent('');
+          setStreamReasoning('');
+          setStreamToolProgress(null);
         },
         onError: (message) => {
           setMessages((m) => [...m, { role: 'assistant', content: `[Error] ${message}`, ts: Date.now() }]);
           setStreamContent('');
+          setStreamReasoning('');
+          setStreamToolProgress(null);
         },
-      }, controller.signal);
+      }, controller.signal, agentOn);
     } catch (e) {
       if (e && (e as Error).name !== 'AbortError') {
         setMessages((m) => [...m, { role: 'assistant', content: `[Error] ${(e as Error).message}`, ts: Date.now() }]);
       }
       setStreamContent('');
+      setStreamReasoning('');
+      setStreamToolProgress(null);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
       setStreaming(false);
@@ -289,6 +324,9 @@ export default function AIAssistant() {
       setSessionId(id);
       setMessages(detail.messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, ts: Date.now() })));
       setStreamContent('');
+      setStreamReasoning('');
+      setStreamToolProgress(null);
+      setToolTrail([]);
       setHistoryOpen(false);
     } catch { /* ignore */ }
   };
@@ -308,6 +346,9 @@ export default function AIAssistant() {
     setSessionId(null);
     setMessages([]);
     setStreamContent('');
+    setStreamReasoning('');
+    setStreamToolProgress(null);
+    setToolTrail([]);
     setHistoryOpen(false);
     abortRef.current?.abort();
   };
@@ -351,6 +392,16 @@ export default function AIAssistant() {
             <span className="font-medium text-sm truncate">{pageLabel}</span>
             <span className="text-[10px] text-white/70 truncate">{sessionId ? `会话 #${sessionId}` : '新会话'}</span>
             <div className="ml-auto flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setAgentOn(!agentOn)}
+                className={`flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] transition-colors ${
+                  agentOn ? 'bg-white/25 text-white' : 'text-white/70 hover:bg-white/15'
+                }`}
+                title={agentOn ? '已开启数据库检索（Agent 工具）' : '开启数据库检索（Agent 工具）'}
+              >
+                <Search className="w-3 h-3" />
+                <span>{agentOn ? '检索开' : '检索'}</span>
+              </button>
               <button onClick={() => { setHistoryOpen(!historyOpen); }} className="p-1.5 rounded-md hover:bg-white/15 transition-colors" title="历史会话">
                 <History className="w-4 h-4" />
               </button>
@@ -425,8 +476,8 @@ export default function AIAssistant() {
                 ) : (
                   <ChatMessageList
                     messages={messages}
-                    streaming={streaming ? { content: streamContent } : null}
-                    tools={[]}
+                    streaming={streaming ? { content: streamContent, reasoning: streamReasoning, toolProgress: streamToolProgress } : null}
+                    tools={toolTrail}
                     citations={{}}
                     accent="bg-purple-600"
                     emptyText=""

@@ -106,6 +106,7 @@ class UpdateSettingsRequest(BaseModel):
     app_name: Optional[str] = None
     custom_providers: Optional[List[dict]] = None
     cnki_url_prefix: Optional[str] = None
+    agent_enabled: Optional[bool] = None
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -168,6 +169,7 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
         "default_model": settings.default_model,
         "embedding_model": settings.embedding_model,
         "cnki_url_prefix": settings.cnki_url_prefix,
+        "agent_enabled": settings.agent_enabled,
     }
 
 
@@ -235,6 +237,10 @@ async def update_settings_endpoint(
     if body.embedding_model is not None:
         await save_override(db, "embedding_model", body.embedding_model)
         keys_changed = True  # 触发 reload 以加载 embedding 对应的 provider 客户端
+
+    if body.agent_enabled is not None:
+        await save_override(db, "agent_enabled", str(body.agent_enabled))
+        settings.agent_enabled = body.agent_enabled  # 立即生效，无需重启
 
     if body.custom_providers is not None:
         # 保存自定义 provider：api_key 为空时继承已有同名 provider 的 key（支持编辑时保留原 key）

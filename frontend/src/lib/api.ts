@@ -328,7 +328,7 @@ export const papersApi = {
   getSettings: async (): Promise<SettingsInfo> =>
     request('/settings'),
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}>; cnki_url_prefix?: string | null }): Promise<{ success: boolean }> =>
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}>; cnki_url_prefix?: string | null; agent_enabled?: boolean }): Promise<{ success: boolean }> =>
     request('/settings', { method: 'PUT', body: data }),
 
   testModelLink: async (model: string): Promise<ModelLinkTestResult> =>
@@ -593,6 +593,7 @@ export interface ChatStreamCallbacks {
   onDone: (fullContent: string) => void;    // 流结束，传完整正文
   onError: (message: string) => void;
   onToolProgress?: (data: { tool: string; args?: Record<string, unknown> }) => void;  // 可选：Agent 正在调用工具
+  onTools?: (tools: Array<{ tool: string; args?: Record<string, unknown>; papers?: Array<Record<string, unknown>> }>) => void; // 可选：Agent 工具轨迹（结束后）
   onMeta?: (data: Record<string, unknown>) => void;  // 可选：非 content/reasoning/done 的结构化 SSE 载荷
 }
 
@@ -675,6 +676,9 @@ export async function streamChat(
           } else if (data.tool_progress && cb.onToolProgress) {
             // Agent 工具调用进度：前端显示"正在调用…"提示
             cb.onToolProgress(data.tool_progress);
+          } else if (data.tools && cb.onTools) {
+            // Agent 工具轨迹（流结束后的汇总）：前端渲染"AI 工作流"面板
+            cb.onTools(data.tools);
           } else if (cb.onMeta) {
             // 结构化元消息（如验证器的 papers 召回载荷）原样交回调处理
             cb.onMeta(data);
@@ -753,6 +757,9 @@ export function streamAssistantChat(
   messages: Array<{ role: string; content: string }>,
   cb: ChatStreamCallbacks,
   signal?: AbortSignal,
+  agentEnabled?: boolean,
 ): Promise<void> {
-  return streamChat('/assistant/chat', messages, undefined, cb, signal, { session_id: sessionId });
+  const extra: Record<string, unknown> = { session_id: sessionId };
+  if (agentEnabled !== undefined) extra.agent_enabled = agentEnabled;
+  return streamChat('/assistant/chat', messages, undefined, cb, signal, extra);
 }

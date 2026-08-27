@@ -713,6 +713,7 @@ async def get_latest_analysis(paper_id: str, db: AsyncSession = Depends(get_db))
 class ChatRequest(BaseModel):
     messages: List[dict]
     model: Optional[str] = None
+    agent_enabled: Optional[bool] = None      # 请求级"数据库检索"开关；None 跟随全局 settings.agent_enabled
 
 
 class ChatSaveRequest(BaseModel):
@@ -729,7 +730,8 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
 
-    # Agent 工具检索开关：关闭时移除工具规则，追问退化为普通对话（不检索论文库）
+    # Agent 工具检索开关：请求级覆盖优先于全局；关闭时移除工具规则，追问退化为普通对话（不检索论文库）
+    agent_enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
     tool_rules = """\
 ## 工具使用规则（重要）
 你可以在论文库中检索更多相关文献。当用户询问涉及库内论文的问题时——例如"还有哪些相关论文"、"这个方向的研究脉络/方法/结论是什么"、"谁在研究这个"、"相关文献数量/趋势"——**必须**先调用工具检索：
@@ -737,7 +739,7 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 - `retrieve_context`：语义召回最相关的论文（返回标题/摘要/编号，适合"研究到哪了/结论是什么"）
 - `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文
 
-检索之后，引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空或与问题无关，如实说明。""" if settings.agent_enabled else ""
+检索之后，引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空或与问题无关，如实说明。""" if agent_enabled else ""
 
     system_prompt = f"""你是一位学术论文分析助手，正在与用户围绕一篇论文进行多轮对话。以下是当前讨论的论文信息：
 
@@ -773,7 +775,8 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 
     # 论文追问接入 Agent：在单篇论文内容之上，可用工具跨库检索相关文献/语义召回/趋势。
     # 流式过程中实时推送工具调用进度（"正在调用检索论文…"），结束再输出工具轨迹与正文。
-    return _stream_agent_chat_response(client, provider, messages, model=bare_model, surface="paper_chat")
+    return _stream_agent_chat_response(client, provider, messages, model=bare_model, surface="paper_chat",
+                                       agent_enabled=agent_enabled)
 
 
 @router.get("/papers/{paper_id}/chats")

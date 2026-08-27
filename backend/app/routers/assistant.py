@@ -22,6 +22,7 @@ from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.config import settings
 from app.crud import PaperCRUD
 from app.models import AssistantSession, AssistantMessage
 from app.routers.deps import (
@@ -59,6 +60,7 @@ class SessionCreate(BaseModel):
 class ChatRequest(BaseModel):
     session_id: int
     messages: List[dict] = []                 # 本轮新增消息（通常只有一条 user）
+    agent_enabled: Optional[bool] = None      # 请求级"数据库检索"开关；None 跟随全局 settings.agent_enabled
 
 
 class MessagesIn(BaseModel):
@@ -253,6 +255,19 @@ async def assistant_chat(
             paper = None
 
     system_prompt = _build_system_prompt(session.page, paper, session.context_text)
+    enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
+    if enabled:
+        system_prompt += (
+            "\n\n## 工具使用规则（重要）\n"
+            "当用户问题涉及论文库内信息时（如「还有哪些相关论文」「这个方向研究到哪了/结论/方法」、"
+            "「谁在研究」「相关文献数量/趋势」），**必须**先调用工具检索论文库，再基于结果回答：\n"
+            "- `search_papers`：按关键词/期刊/年份检索（返回标题/期刊/关键词/评分）\n"
+            "- `retrieve_context`：语义召回最相关的论文（返回标题/摘要/[编号]，适合「研究到哪了」）\n"
+            "- `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文；"
+            "`keyword_gaps`：研究空白组合；`subfield_distribution`：子领域分布\n\n"
+            "引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；"
+            "检索结果为空或与问题无关时如实说明。"
+        )
     history = await _load_messages(db, session.id)
     new_msgs = [m for m in (body.messages or []) if str(m.get("role") or "") and str(m.get("content") or "").strip()]
     messages = [{"role": "system", "content": system_prompt}] + history + new_msgs
@@ -267,4 +282,5 @@ async def assistant_chat(
 
     return _stream_agent_chat_response(
         client, provider, messages, model=bare_model, surface="assistant_chat",
+        agent_enabled=enabled,
     )

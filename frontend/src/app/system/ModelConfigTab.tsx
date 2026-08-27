@@ -46,6 +46,9 @@ interface ModelConfigTabProps {
   testingModel: string;
   testResults: Record<string, TestResult>;
   onTestModelLink: (model: string) => void;
+  agentEnabled: boolean;
+  savingAgent: boolean;
+  onToggleAgent: () => void;
   fetchingModels: boolean;
   onFetchModels: () => void;
 }
@@ -90,6 +93,9 @@ export default function ModelConfigTab({
   testingModel,
   testResults,
   onTestModelLink,
+  agentEnabled,
+  savingAgent,
+  onToggleAgent,
   fetchingModels,
   onFetchModels,
 }: ModelConfigTabProps) {
@@ -135,6 +141,9 @@ export default function ModelConfigTab({
         onClearDefaultModel={onClearDefaultModel}
         onSetDefaultModel={onSetDefaultModel}
         onTestModelLink={onTestModelLink}
+        agentEnabled={agentEnabled}
+        savingAgent={savingAgent}
+        onToggleAgent={onToggleAgent}
       />
       <ModelPriorityPanel
         modelList={modelList}

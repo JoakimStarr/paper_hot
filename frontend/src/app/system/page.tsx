@@ -200,6 +200,10 @@ export default function SystemPage() {
   const [savingEmbeddingModel, setSavingEmbeddingModel] = useState(false);
   const [embeddingModelMessage, setEmbeddingModelMessage] = useState('');
 
+  // AI 追问数据库检索（Agent 工具）全局开关
+  const [agentEnabled, setAgentEnabled] = useState(false);
+  const [savingAgent, setSavingAgent] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -235,6 +239,7 @@ export default function SystemPage() {
       setDefaultModel(res.default_model || null);
       setEmbeddingModel(res.embedding_model || null);
       setEmbeddingModelDraft(res.embedding_model || '');
+      setAgentEnabled(!!res.agent_enabled);
       if (res.ports) {
         setPorts(res.ports);
       }
@@ -562,6 +567,19 @@ export default function SystemPage() {
     }
   };
 
+  const handleToggleAgent = async () => {
+    const next = !agentEnabled;
+    setSavingAgent(true);
+    try {
+      await papersApi.updateSettings({ agent_enabled: next });
+      setAgentEnabled(next);
+    } catch (error: any) {
+      console.error('Error toggling agent:', error);
+    } finally {
+      setSavingAgent(false);
+    }
+  };
+
   const handleTestModelLink = async (model: string) => {
     setTestingModel(model);
     setTestResults(prev => ({ ...prev, [model]: prev[model] || { ok: false, message: '' } }));
@@ -718,6 +736,9 @@ export default function SystemPage() {
             testingModel={testingModel}
             testResults={testResults}
             onTestModelLink={handleTestModelLink}
+            agentEnabled={agentEnabled}
+            savingAgent={savingAgent}
+            onToggleAgent={handleToggleAgent}
             fetchingModels={fetchingModels}
             onFetchModels={handleFetchModels}
           />

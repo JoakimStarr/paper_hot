@@ -23,6 +23,9 @@ interface ModelConfigPanelProps {
   modelList: SettingsInfo['models'];
   testResults: Record<string, TestResult>;
   testingModel: string;
+  agentEnabled: boolean;
+  savingAgent: boolean;
+  onToggleAgent: () => void;
   onSaveEmbeddingModel: () => void;
   onClearDefaultModel: () => void;
   onSetDefaultModel: (model: string) => void;
@@ -41,6 +44,9 @@ export default function ModelConfigPanel({
   modelList,
   testResults,
   testingModel,
+  agentEnabled,
+  savingAgent,
+  onToggleAgent,
   onSaveEmbeddingModel,
   onClearDefaultModel,
   onSetDefaultModel,
@@ -121,6 +127,34 @@ export default function ModelConfigPanel({
               {t('sys.embeddingCurrent')}: <code className="font-mono bg-green-100 dark:bg-green-900/40 px-1 rounded">{embeddingModel}</code>
             </div>
           )}
+        </div>
+
+        {/* AI 追问数据库检索（Agent 工具）开关 */}
+        <div className="mb-6 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-lg">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs text-indigo-700 dark:text-indigo-300 mb-0.5">AI 追问数据库检索（Agent 工具）</div>
+              <p className="text-xs text-gray-400">
+                开启后，AI 对话可调用工具检索论文库（搜索/语义召回/趋势/空白/作者），
+                并实时显示调用进展与 [n] 引用；关闭则保持普通对话。悬浮助手内也可逐会话切换。
+              </p>
+            </div>
+            <button
+              onClick={onToggleAgent}
+              disabled={savingAgent}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 ${
+                agentEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+              title={agentEnabled ? '点击关闭' : '点击开启'}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  agentEnabled ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+          {savingAgent && <div className="mt-1 text-xs text-gray-400">保存中…</div>}
         </div>
 
         {/* 模型列表：设为默认 + 测试连接 */}

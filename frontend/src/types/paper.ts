@@ -255,6 +255,7 @@ export interface SettingsInfo {
   default_model?: string | null;
   embedding_model?: string | null;
   cnki_url_prefix?: string;
+  agent_enabled?: boolean;
 }
 
 export interface ModelLinkTestResult {

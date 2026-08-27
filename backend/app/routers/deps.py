@@ -141,18 +141,23 @@ async def _stream_llm_content(client, model: str, messages: list):
 
 
 def _stream_agent_chat_response(client, provider: str, messages: list, model: Optional[str] = None,
-                                surface: str = "trend_chat"):
+                                surface: str = "trend_chat",
+                                agent_enabled: Optional[bool] = None):
     """追问 SSE：默认跑 Agent 工具循环（实时推送工具调用进度 → 工具轨迹 → 正文）；
-    当 AGENT_ENABLED=false 时退化为普通对话——不调用任何工具，直接流式输出回答。
+    当 Agent 关闭时退化为普通对话——不调用任何工具，直接流式输出回答。
+
+    agent_enabled：请求级覆盖（悬浮助手"检索数据库"开关）。为 None 时使用全局 settings.agent_enabled。
     """
     from app.agent import run_agent_chat
 
     if not model:
         model = _get_default_model(provider)
 
+    enabled = agent_enabled if agent_enabled is not None else settings.agent_enabled
+
     async def event_generator():
         # Agent 开关关闭：普通追问，无检索、无工具轨迹/进度
-        if not settings.agent_enabled:
+        if not enabled:
             async for frame in _stream_llm_content(client, model, messages):
                 yield frame
             return

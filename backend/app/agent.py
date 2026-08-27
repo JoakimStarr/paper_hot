@@ -207,6 +207,23 @@ TOOL_HANDLERS = {
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
+    # 全局悬浮助手（跨页面通用）：完整工具集，覆盖论文/趋势/空白/子领域/作者检索
+    "assistant_chat": [
+        _schema("search_papers", "按关键词/年份/期刊检索论文库中的论文",
+                {"keyword": {"type": "string"}, "year_from": {"type": "integer"},
+                 "year_to": {"type": "integer"}, "journal": {"type": "string"},
+                 "limit": {"type": "integer"}}, ["keyword"]),
+        _schema("retrieve_context", "语义召回最相关的论文（含摘要，带 [n] 编号），回答涉及论文内容/结论/方法时使用",
+                {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
+        _schema("paper_trend", "查询某关键词的逐年发文量趋势",
+                {"keyword": {"type": "string"}}, ["keyword"]),
+        _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
+                {"top_n": {"type": "integer"}}, []),
+        _schema("subfield_distribution", "获取经济学子领域论文分布",
+                {}, []),
+        _schema("author_papers", "按作者名查询其论文列表",
+                {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
+    ],
     # 趋势追问（P0）
     "trend_chat": [
         _schema("search_papers", "按关键词/年份/期刊检索论文库中的论文",
