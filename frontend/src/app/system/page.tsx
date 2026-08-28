@@ -18,13 +18,6 @@ type TabType = 'overview' | 'crawler' | 'data' | 'modelConfig' | 'logs';
 
 const TAB_KEYS: TabType[] = ['overview', 'crawler', 'data', 'modelConfig', 'logs'];
 
-/** 从 URL ?tab= 恢复页签，刷新/分享链接后停留在原页签 */
-const initialTab = (): TabType => {
-  if (typeof window === 'undefined') return 'overview';
-  const t = new URLSearchParams(window.location.search).get('tab') as TabType;
-  return TAB_KEYS.includes(t) ? t : 'overview';
-};
-
 /** 操作反馈 5s 后自动消失 */
 function useAutoClear(value: unknown, clear: () => void, ms = 5000) {
   useEffect(() => {
@@ -36,7 +29,7 @@ function useAutoClear(value: unknown, clear: () => void, ms = 5000) {
 
 export default function SystemPage() {
   const { t } = useLanguage();
-  const [activeTab, setActiveTabState] = useState<TabType>(initialTab);
+  const [activeTab, setActiveTabState] = useState<TabType>('overview');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [crawlLogs, setCrawlLogs] = useState<CrawlLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -260,6 +253,13 @@ export default function SystemPage() {
     fetchData();
     // 设置页所有页签都依赖 settings（CNKI 前缀、应用名、端口、模型等），进入即加载
     fetchSettings();
+  }, []);
+
+  // 挂载后从 URL ?tab= 恢复页签：不在 useState 初始化器里读 URL，
+  // 避免服务端预渲染(overview)与客户端(logs)不一致导致水合后页签高亮与内容割裂
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab') as TabType | null;
+    if (tab && TAB_KEYS.includes(tab)) setActiveTabState(tab);
   }, []);
 
   const fetchData = async () => {
