@@ -178,6 +178,8 @@ export default function AIAssistant() {
   const [streamReasoning, setStreamReasoning] = useState('');
   const [streamToolProgress, setStreamToolProgress] = useState<ChatToolProgress | null>(null);
   const [toolTrail, setToolTrail] = useState<ChatToolsEvent[]>([]);
+  // 流式调试计数：观察事件是否实时到达（临时，确认后移除）
+  const [streamEvents, setStreamEvents] = useState(0);
   // "检索数据库"（Agent 工具）开关：默认跟随全局 agent_enabled，可逐会话切换
   const [agentOn, setAgentOn] = useState(false);
   // 首页/趋势页注入的论文库热门趋势（agent 关闭时也能用真实数据回答"热门趋势"）
@@ -287,6 +289,7 @@ export default function AIAssistant() {
     setStreamReasoning('');
     setStreamToolProgress(null);
     setToolTrail([]);
+    setStreamEvents(0);
     setHistoryOpen(false);
 
     let sid = sessionId;
@@ -311,9 +314,9 @@ export default function AIAssistant() {
     abortRef.current = controller;
     try {
       await streamAssistantChat(activeSessionId, [{ role: 'user', content: userMsg.content }], {
-        onContent: (t) => setStreamContent(t),
-        onReasoning: (r) => setStreamReasoning(r),
-        onToolProgress: (p) => setStreamToolProgress(p),
+        onContent: (t) => { setStreamContent(t); setStreamEvents((n) => n + 1); },
+        onReasoning: (r) => { setStreamReasoning(r); setStreamEvents((n) => n + 1); },
+        onToolProgress: (p) => { setStreamToolProgress(p); setStreamEvents((n) => n + 1); },
         onTools: (tools) => {
           // 工具轨迹里的论文并入当前流（引用 [n] 可点击）；结束后保留为「AI 工作流」
           setToolTrail(tools as ChatToolsEvent[]);
@@ -435,6 +438,11 @@ export default function AIAssistant() {
             <Sparkles className="w-4 h-4" />
             <span className="font-medium text-sm truncate">{pageLabel}</span>
             <span className="text-[10px] text-white/70 truncate">{sessionId ? `会话 #${sessionId}` : '新会话'}</span>
+            {streaming && (
+              <span className="text-[10px] text-amber-200 shrink-0" title="流式调试：实时到达的事件数（确认流式后移除）">
+                流式{streamEvents}条
+              </span>
+            )}
             <div className="ml-auto flex items-center gap-1 shrink-0">
               <button
                 onClick={() => setAgentOn(!agentOn)}

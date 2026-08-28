@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select as sa_select
 from pydantic import BaseModel
@@ -119,7 +119,9 @@ async def get_papers(
     )
 
     if request and request.headers.get("if-none-match") == etag:
-        return JSONResponse(status_code=304, content=None)
+        # 304 必须无 body：JSONResponse(304, content=None) 会渲染 b"null" 并带 Content-Length，
+        # 触发 uvicorn 'Response content longer than Content-Length' 崩溃（间歇性 500）
+        return Response(status_code=304)
 
     response_data = PaperCardListResponse(
         papers=[_paper_to_card(paper) for paper in papers],

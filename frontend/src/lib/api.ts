@@ -665,13 +665,23 @@ export async function streamChat(
           const data = JSON.parse(line.slice(6));
           if (data.done) {
             done = true;
+            // 流式调试：done 到达时的累计量
+            if (typeof console !== 'undefined') {
+              console.debug('[stream:done]', JSON.stringify({ contentChars: fullContent.length, reasoningChars: fullReasoning.length }));
+            }
             cb.onDone(fullContent);
             break;
           } else if (data.reasoning) {
             fullReasoning += data.reasoning;
+            if (typeof console !== 'undefined') {
+              console.debug('[stream:reasoning]', fullReasoning.length);
+            }
             if (cb.onReasoning) cb.onReasoning(fullReasoning);
           } else if (data.content) {
             fullContent += data.content;
+            if (typeof console !== 'undefined') {
+              console.debug('[stream:content]', fullContent.length);
+            }
             cb.onContent(fullContent);
           } else if (data.tool_progress && cb.onToolProgress) {
             // Agent 工具调用进度：前端显示"正在调用…"提示
