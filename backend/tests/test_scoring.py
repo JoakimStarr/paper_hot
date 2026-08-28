@@ -22,9 +22,12 @@ def test_final_score_weights():
 
 
 def test_recency_half_life():
-    """180 天半衰期：180 天前 → 约 0.5；今天 → ≈1.0；且单调递减。"""
+    """180 天半衰期：今天 → ≈1.0；180 天前 → 约 0.5；且单调递减。
+
+    用相对 datetime.now() 构造日期，避免系统时间越过固定基准日后测试失效。
+    """
     s = make_score_system()
-    now = datetime.datetime(2026, 8, 25, 12, 0, 0)
+    now = datetime.datetime.now()
     today = s.compute_recency_score(now)
     half = s.compute_recency_score(now - datetime.timedelta(days=180))
     older = s.compute_recency_score(now - datetime.timedelta(days=360))

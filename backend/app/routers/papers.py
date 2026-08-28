@@ -352,6 +352,7 @@ async def analyze_paper(
     body: Optional[AnalyzePaperRequest] = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
 ):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
@@ -382,7 +383,9 @@ async def analyze_paper(
 
     # 创建 pending 记录后立即返回，AI 生成放到后台任务（与批量分析一致），
     # 前端对 status=pending 轮询 /analyses/latest 即可，避免同步长请求阻塞与偶发 500。
-    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
+    analysis_id = await PaperAnalysisCRUD.create_pending(
+        db, paper_id, model=model, user_id=(x_user_id or "").strip() or "local"
+    )
     await db.commit()
 
     from app.main import spawn_background_task
@@ -396,6 +399,7 @@ async def analyze_paper_stream(
     body: Optional[AnalyzePaperRequest] = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
 ):
     """单篇论文 AI 分析——SSE 流式版（AI 分析悬浮窗用）。
 
@@ -429,7 +433,9 @@ async def analyze_paper_stream(
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
+    analysis_id = await PaperAnalysisCRUD.create_pending(
+        db, paper_id, model=model, user_id=(x_user_id or "").strip() or "local"
+    )
     await db.commit()
 
     messages = _build_single_analysis_messages(paper)
@@ -717,9 +723,11 @@ async def _run_batch_analyze_background(batch_id: int, ids: List[str], model: Op
             report.paper_count = len(papers)
             report.status = "success"
 
-            # 保留原行为：摘要同时落入每篇论文的 analysis 记录
+            # 保留原行为：摘要同时落入每篇论文的 analysis 记录（归属批量发起人）
             for p in papers:
-                analysis_id = await PaperAnalysisCRUD.create_pending(db, p.id, model=bare_model)
+                analysis_id = await PaperAnalysisCRUD.create_pending(
+                    db, p.id, model=bare_model, user_id=report.user_id
+                )
                 await PaperAnalysisCRUD.update_analysis(db, analysis_id, summary, "success")
             await db.commit()
             logger.info(f"Batch analyze {batch_id} done for {len(papers)} papers")

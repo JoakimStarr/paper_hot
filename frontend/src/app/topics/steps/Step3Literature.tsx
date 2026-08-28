@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { BookOpen, Loader2, Plus, Trash2, Search, Sparkles, Download, Check } from 'lucide-react';
+import { BookOpen, Loader2, Plus, Trash2, Search, Sparkles, Download, Check, RefreshCw, GitBranch } from 'lucide-react';
 import { workbenchApi, producerApi } from '@/lib/api';
 import { downloadTextFile } from '@/lib/utils';
-import type { ProjectPaper, ProjectSearchPaper } from '@/types/paper';
+import type { ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper } from '@/types/paper';
 import type { StepProps } from './types';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -27,9 +27,58 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
   const [searchMode, setSearchMode] = useState('');
   const [addingId, setAddingId] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [recommended, setRecommended] = useState<ProjectRecommendedPaper[]>([]);
+  const [recommending, setRecommending] = useState(false);
+  // 单篇「相似论文」展开：paper_id -> 相似论文列表（仅展开时加载）
+  const [simByPaper, setSimByPaper] = useState<Record<string, ProjectRecommendedPaper[]>>({});
+  const [simLoadingId, setSimLoadingId] = useState<string | null>(null);
+  // 懒召回：文献集为空时按选题标题自动召回 Top-10 论文（仅挂载时触发一次）
+  const [recalling, setRecalling] = useState(false);
+  const recallFiredRef = useRef(false);
 
   const aiRunning = project.ai_pending === 'literature_review';
   const papers = project.papers || [];
+
+  // 检索关键词：来自选题灵感快照 generated_topics[*].keywords，跨候选去重合并
+  const keywords = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const g of project.generated_topics || []) {
+      for (const k of g.keywords || []) {
+        const t = k.trim();
+        if (t) set.add(t);
+      }
+    }
+    return Array.from(set);
+  }, [project.generated_topics]);
+
+  // 相关文献推荐：基于「选题方向 + 文献集」召回；文献集变化（加入/移除后 onRefresh）时自动重取
+  const loadRecommendations = React.useCallback(async () => {
+    setRecommending(true);
+    try {
+      const res = await workbenchApi.recommendProjectPapers(project.id, 10);
+      setRecommended(res.papers || []);
+    } catch { /* 忽略：不阻塞文献管理主流程 */ }
+    finally { setRecommending(false); }
+  }, [project.id]);
+
+  const papersKey = (project.papers || []).map((x) => x.paper_id).join(',');
+  useEffect(() => {
+    loadRecommendations();
+  }, [loadRecommendations, papersKey]);
+
+  // 懒召回：文献集为空时自动按选题标题召回相似论文（仅挂载时触发一次，失败静默）
+  useEffect(() => {
+    if (recallFiredRef.current) return;
+    if ((project.papers || []).length > 0) return;
+    recallFiredRef.current = true;
+    setRecalling(true);
+    workbenchApi.recallProjectPapers(project.id)
+      .then(async () => {
+        try { await onRefresh(); } catch { /* 刷新失败忽略 */ }
+      })
+      .catch(() => { /* 召回失败静默忽略 */ })
+      .finally(() => setRecalling(false));
+  }, [project.id, project.papers, onRefresh]);
 
   const citations = React.useMemo(() => {
     const map: Record<number, { id: string; title?: string }> = {};
@@ -37,12 +86,12 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
     return map;
   }, [papers]);
 
-  const doSearch = async () => {
-    const q = query.trim();
-    if (!q || searching) return;
+  const doSearch = async (q?: string) => {
+    const kw = (q ?? query).trim();
+    if (!kw || searching) return;
     setSearching(true);
     try {
-      const res = await workbenchApi.searchProjectPapers(project.id, q, 10);
+      const res = await workbenchApi.searchProjectPapers(project.id, kw, 10);
       setCandidates(res.papers || []);
       setSearchMode(res.mode || '');
     } catch { /* ignore */ }
@@ -55,8 +104,30 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
       await workbenchApi.addProjectPaper(project.id, p.id, p.similarity);
       await onRefresh();
       setCandidates((prev) => prev.map((x) => (x.id === p.id ? { ...x, in_project: true } : x)));
+      // 单篇「相似论文」展开列表同步标记为已在库
+      setSimByPaper((prev) => {
+        const next: Record<string, ProjectRecommendedPaper[]> = {};
+        for (const [k, list] of Object.entries(prev)) {
+          next[k] = list.map((x) => (x.id === p.id ? { ...x, in_project: true } : x));
+        }
+        return next;
+      });
     } catch { /* 已存在等错误忽略 */ }
     finally { setAddingId(null); }
+  };
+
+  // 单篇「相似论文」展开/收起（懒加载，只查该篇的相似论文）
+  const toggleSimilar = async (p: ProjectPaper) => {
+    if (simByPaper[p.paper_id]) {
+      setSimByPaper((prev) => { const next = { ...prev }; delete next[p.paper_id]; return next; });
+      return;
+    }
+    setSimLoadingId(p.paper_id);
+    try {
+      const res = await workbenchApi.recommendProjectPapers(project.id, 8, p.paper_id);
+      setSimByPaper((prev) => ({ ...prev, [p.paper_id]: res.papers || [] }));
+    } catch { /* 忽略 */ }
+    finally { setSimLoadingId(null); }
   };
 
   const setStatus = async (p: ProjectPaper, status: string) => {
@@ -96,6 +167,25 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
           <BookOpen className="w-4 h-4 text-green-600" /> 文献管理
           <span className="text-xs font-normal text-gray-400">{papers.length} 篇</span>
         </h2>
+        {recalling && (
+          <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400 mb-3">
+            <Loader2 className="w-3 h-3 animate-spin" /> 正在召回相关论文…
+          </div>
+        )}
+        {keywords.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            <span className="text-xs text-gray-400 shrink-0">检索关键词</span>
+            {keywords.map((k) => (
+              <button
+                key={k}
+                onClick={() => { setQuery(k); doSearch(k); }}
+                className="text-[11px] px-2 py-0.5 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800 rounded-full hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2 mb-3">
           <input
             value={query}
@@ -105,7 +195,7 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
             className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-2 focus:ring-green-500"
           />
           <button
-            onClick={doSearch}
+            onClick={() => doSearch()}
             disabled={searching || !query.trim()}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors shrink-0"
           >
@@ -136,6 +226,57 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* 相关文献推荐 */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white">相关文献推荐</h2>
+          <span className="text-xs text-gray-400">基于选题方向与文献集，供你决定是否加入引用</span>
+          <button
+            onClick={loadRecommendations}
+            disabled={recommending}
+            className="ml-auto inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 hover:border-primary-400 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`w-3 h-3 ${recommending ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {recommending ? (
+          <div className="flex items-center justify-center gap-2 text-sm text-gray-400 py-6">
+            <Loader2 className="w-4 h-4 animate-spin" /> 正在查找相关文献…
+          </div>
+        ) : recommended.length === 0 ? (
+          <p className="text-xs text-gray-400 py-3">暂无相关推荐，完善选题方向或加入文献后再试。</p>
+        ) : (
+          <>
+            {papers.length === 0 && (
+              <p className="text-[11px] text-gray-400 mb-2">暂无参考文献，当前按选题方向推荐。</p>
+            )}
+            <div className="space-y-1.5">
+              {recommended.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-amber-50/60 dark:bg-amber-900/10 border border-amber-200/70 dark:border-amber-800/60 rounded-md">
+                  <a href={`/paper/${c.id}`} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
+                    <div className="text-xs text-gray-700 dark:text-gray-300 truncate">{c.title}</div>
+                    <div className="text-[11px] text-gray-400 truncate">
+                      {c.journal || c.source || ''}{c.published_at ? ` · ${c.published_at}` : ''}
+                      {c.similarity != null ? ` · 相似度 ${(c.similarity * 100).toFixed(0)}%` : ''}
+                      {c.via_title ? ` · 与《${c.via_title}》相关` : ' · 基于选题方向'}
+                    </div>
+                  </a>
+                  <button
+                    onClick={() => addPaper(c)}
+                    disabled={c.in_project || addingId === c.id}
+                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md shrink-0 transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    {c.in_project ? <><Check className="w-3 h-3" /> 已在库</> : addingId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3" /> 加入</>}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -182,6 +323,18 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => toggleSimilar(p)}
+                      title="查看/添加相似论文"
+                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border transition-colors ${
+                        simByPaper[p.paper_id] || simLoadingId === p.paper_id
+                          ? 'bg-amber-50 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400'
+                          : 'border-gray-200 dark:border-gray-600 text-gray-400 hover:text-amber-600 hover:border-amber-300'
+                      }`}
+                    >
+                      {simLoadingId === p.paper_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
+                      <span className="hidden sm:inline">相似</span>
+                    </button>
                     <select
                       value={p.read_status}
                       onChange={(e) => setStatus(p, e.target.value)}
@@ -206,6 +359,38 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
                     className="flex-1 px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 placeholder-gray-400 outline-none focus:ring-1 focus:ring-green-400"
                   />
                 </div>
+
+                {/* 单篇相似论文（展开） */}
+                {(simByPaper[p.paper_id] || simLoadingId === p.paper_id) && (
+                  <div className="mt-2 pl-3 border-l-2 border-amber-200 dark:border-amber-800/60 space-y-1.5">
+                    {simLoadingId === p.paper_id ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-400 py-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> 正在查找相似论文…
+                      </div>
+                    ) : (simByPaper[p.paper_id] || []).length === 0 ? (
+                      <p className="text-xs text-gray-400 py-1">没有找到更多相似论文。</p>
+                    ) : (
+                      (simByPaper[p.paper_id] || []).map((c) => (
+                        <div key={c.id} className="flex items-center justify-between gap-3 px-2.5 py-1.5 bg-amber-50/60 dark:bg-amber-900/10 border border-amber-200/70 dark:border-amber-800/60 rounded-md">
+                          <a href={`/paper/${c.id}`} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
+                            <div className="text-xs text-gray-700 dark:text-gray-300 truncate">{c.title}</div>
+                            <div className="text-[11px] text-gray-400 truncate">
+                              {c.journal || c.source || ''}{c.published_at ? ` · ${c.published_at}` : ''}
+                              {c.similarity != null ? ` · 相似度 ${(c.similarity * 100).toFixed(0)}%` : ''}
+                            </div>
+                          </a>
+                          <button
+                            onClick={() => addPaper(c)}
+                            disabled={c.in_project || addingId === c.id}
+                            className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md shrink-0 transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-amber-600 hover:bg-amber-700 text-white"
+                          >
+                            {c.in_project ? <><Check className="w-3 h-3" /> 已在库</> : addingId === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3" /> 加入</>}
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

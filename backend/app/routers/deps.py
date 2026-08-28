@@ -35,7 +35,11 @@ def _get_ai_client(provider: Optional[str] = None):
     except KeyError:
         if provider:
             raise HTTPException(status_code=503, detail=f"AI provider '{provider}' is not configured or initialized.")
-        raise HTTPException(status_code=503, detail="No AI provider configured. Please set an API key in Settings.")
+        raise HTTPException(
+            status_code=503,
+            detail="没有可用于对话的 AI 模型。请在系统设置里配置 provider 的 API key 并至少填一个对话模型"
+                   "（只配 embedding/重排模型如 bge-m3 的 provider 会被跳过）。",
+        )
 
 
 def _resolve_model_provider(model: Optional[str]):
@@ -307,7 +311,7 @@ def _usage_to_dict(usage) -> dict:
     }
 
 
-def _paper_to_card(paper) -> PaperCardResponse:
+def _paper_to_card(paper, reason: Optional[dict] = None) -> PaperCardResponse:
     return PaperCardResponse(
         id=paper.id,
         title=paper.title,
@@ -328,7 +332,8 @@ def _paper_to_card(paper) -> PaperCardResponse:
         venue_score=paper.scores.venue_score if paper.scores else 0.0,
         trend_score=paper.scores.trend_score if paper.scores else 0.0,
         final_score=paper.scores.final_score if paper.scores else 0.0,
-        created_at=paper.created_at
+        created_at=paper.created_at,
+        reason=reason,
     )
 
 

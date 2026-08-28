@@ -31,6 +31,18 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
   const aiRunning = project.ai_pending === 'overview';
   const hasReport = !!(project.validation_report || reportContent);
 
+  // 检索关键词：来自选题灵感快照（generated_topics），跨候选去重，仅只读展示
+  const keywords = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of project.generated_topics || []) {
+      for (const k of g.keywords || []) {
+        const t = k.trim();
+        if (t) set.add(t);
+      }
+    }
+    return Array.from(set);
+  }, [project.generated_topics]);
+
   const citations = useMemo(() => {
     const map: Record<number, { id: string; title?: string }> = {};
     for (const p of retrievedPapers) {
@@ -114,6 +126,19 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
             <p className="text-xs text-gray-400 mt-0.5">
               基于论文库 embedding 召回 + 拥挤度统计 + 竞争地图，评估「{project.title}」
             </p>
+            {keywords.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                <span className="text-xs text-gray-400">检索关键词</span>
+                {keywords.map((k) => (
+                  <span
+                    key={k}
+                    className="text-[11px] px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-600 rounded-full"
+                  >
+                    {k}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             {validating ? (

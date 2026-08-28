@@ -793,7 +793,8 @@ async def create_topic_project(
 ):
     """创建研究项目（从验证器/空白页/热点/一句话想法沉淀）。
 
-    创建后自动用 embedding 召回与选题最相关的论文作为初始文献集（失败不阻塞创建）。
+    创建保持轻量快速：不再同步做 embedding 召回。初始文献改为懒加载，
+    用户首次进入 Step3（文献管理）时通过 POST /topic-projects/{id}/recall-papers 召回。
     """
     if not (body.title or "").strip():
         raise HTTPException(status_code=400, detail="Title is required")
@@ -815,21 +816,6 @@ async def create_topic_project(
     db.add(p)
     await db.commit()
     await db.refresh(p)
-
-    # 初始文献集：embedding 召回 top-10 写入 project_papers（失败静默，不阻塞创建）
-    from app.models import ProjectPaper
-    try:
-        query = p.title
-        briefs, _mode = await _retrieve_similar_papers(db, query, k=10)
-        for b in briefs:
-            db.add(ProjectPaper(
-                user_id=p.user_id, project_id=p.id,
-                paper_id=str(b["id"]), similarity=b.get("similarity"),
-            ))
-        await db.commit()
-    except Exception as e:
-        logger.warning(f"auto recall initial papers failed for project {p.id}: {e}")
-        await db.rollback()
 
     return _project_out(p)
 

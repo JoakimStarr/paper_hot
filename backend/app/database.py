@@ -124,3 +124,8 @@ async def init_db():
         for col, ddl in _tp_new_cols:
             if col not in tp_cols:
                 await conn.execute(text(f"ALTER TABLE topic_projects ADD COLUMN {col} {ddl}"))
+        # paper_analyses.user_id：分析归属（旧库补列，历史数据回填为 'local'）
+        pa_rows = (await conn.execute(text("PRAGMA table_info(paper_analyses)"))).fetchall()
+        pa_cols = {r[1] for r in pa_rows}
+        if "user_id" not in pa_cols:
+            await conn.execute(text("ALTER TABLE paper_analyses ADD COLUMN user_id VARCHAR(50) DEFAULT 'local'"))

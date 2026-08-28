@@ -13,7 +13,7 @@ _filter_stats_cache: dict = {}
 _filter_stats_cache_time: float = 0
 _FILTER_STATS_TTL = 60
 
-from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog, PaperReference
+from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
 from app.schemas import PaperCreate, CrawlLogCreate
 from app.config import settings
 
@@ -1154,44 +1154,6 @@ class PaperChatCRUD:
         from app.models import PaperChat
         await db.execute(delete(PaperChat).where(PaperChat.paper_id == paper_id))
         await db.flush()
-
-
-class PaperReferenceCRUD:
-    """论文参考文献条目：按 paper_url 覆盖式写入（先删旧再插新，保证序号连续）。"""
-
-    @staticmethod
-    async def replace_paper_references(
-        db: AsyncSession,
-        paper_url: str,
-        paper_title: Optional[str],
-        refs: List[dict],
-        task_id: Optional[int] = None,
-    ) -> int:
-        """refs: [{text: str, url: Optional[str]}, ...]，按顺序编号。"""
-        await db.execute(delete(PaperReference).where(PaperReference.paper_url == paper_url))
-        rows = []
-        for idx, ref in enumerate(refs, start=1):
-            rows.append(PaperReference(
-                paper_url=paper_url,
-                paper_title=paper_title,
-                ref_index=idx,
-                raw_text=(ref.get('text') or '')[:2000] or None,
-                ref_url=(ref.get('url') or None),
-                task_id=task_id,
-            ))
-        if rows:
-            db.add_all(rows)
-        await db.flush()
-        return len(rows)
-
-    @staticmethod
-    async def get_paper_references(db: AsyncSession, paper_url: str) -> List[PaperReference]:
-        result = await db.execute(
-            select(PaperReference)
-            .where(PaperReference.paper_url == paper_url)
-            .order_by(PaperReference.ref_index)
-        )
-        return list(result.scalars().all())
 
 
 class CrawlLogCRUD:

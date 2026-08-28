@@ -206,19 +206,6 @@ export interface CNKISearchInfo {
   checkpoint?: { keyword: string; phase: string; page: number; papers: number; saved_at?: string } | null;
 }
 
-/** 参考文献爬取任务状态 */
-export interface ReferencesCrawlInfo {
-  running: boolean;
-  paper_url: string | null;
-  paper_title: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  message: string | null;
-  stopped_by_user?: boolean;
-  progress?: CNKISearchProgress | null;
-  last_log?: string[];
-}
-
 export interface NetworkNode {
   id: string;
   name: string;

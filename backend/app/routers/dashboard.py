@@ -8,9 +8,9 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func, or_ as sa_or
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,9 +32,11 @@ from app.routers.deps import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 领域快讯 AI 一句话结论：LLM 每次 Dashboard 都调太贵，做 1 小时缓存 + 降级兜底
-_briefing_ai_cache: dict = {"ts": None, "note": None}
+# 领域快讯 AI 一句话结论：LLM 每次 Dashboard 都调太贵，做 1 小时缓存 + 降级兜底；
+# 失败时 5 分钟内不重试，避免 AI 故障期间每个请求都打一次 LLM。
+_briefing_ai_cache: dict = {"ts": None, "note": None, "failed_at": None}
 _BRIEFING_AI_TTL = timedelta(hours=1)
+_BRIEFING_AI_FAIL_TTL = timedelta(minutes=5)
 
 
 def _uid(x_user_id: Optional[str]) -> str:
@@ -49,6 +51,8 @@ async def _briefing_ai_note(topics: List[str]) -> Optional[str]:
     cached = _briefing_ai_cache
     if cached["note"] and cached["ts"] and (now - cached["ts"]) < _BRIEFING_AI_TTL:
         return cached["note"]
+    if cached["failed_at"] and (now - cached["failed_at"]) < _BRIEFING_AI_FAIL_TTL:
+        return None
     try:
         provider, bare_model = _resolve_model_provider(None)
         client, provider = _get_ai_client(provider)
@@ -71,11 +75,13 @@ async def _briefing_ai_note(topics: List[str]) -> Optional[str]:
         note = (resp.choices[0].message.content or "").strip() or None
         cached["ts"] = now
         cached["note"] = note
+        cached["failed_at"] = None
         return note
     except Exception as e:
         logger.warning(f"dashboard ai_note generation failed: {e}")
         cached["ts"] = now
         cached["note"] = None
+        cached["failed_at"] = now
         return None
 
 
@@ -217,6 +223,7 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
     x_user_id: str = Header(default=None),
+    seed: int = Query(default=0, ge=0),
 ):
     uid = _uid(x_user_id)
 
@@ -241,7 +248,7 @@ async def get_dashboard(
         hidden = {}
 
     return {
-        "today_read": await _today_read(db, uid, followed_subfields, followed_keywords, hidden),
+        "today_read": await _today_read(db, uid, followed_subfields, followed_keywords, hidden, seed=seed),
         "briefing": await _briefing(db),
         "mine": await _mine(db, uid, has_followed=bool(followed_subfields)),
     }
@@ -253,20 +260,58 @@ async def _today_read(
     followed_subfields: List[str],
     followed_keywords: List[str],
     hidden: Optional[dict] = None,
+    seed: int = 0,
 ) -> List[dict]:
     """今日值得读：向量召回 + 综合评分混排，多样性约束去重，共 6 篇。
 
     四路候选合并：
     1. 向量召回：用户画像向量 FAISS 检索语义相似论文（最多 10 篇）
-    2. 子领域匹配：关注子领域按 final_score 降序（最多 4 篇）
-    3. 关键词匹配：关注关键词按 final_score 降序（最多 4 篇）
+    2. 子领域匹配：关注子领域按 final_score 降序（最多 6 篇）
+    3. 关键词匹配：关注关键词按 final_score 降序（最多 6 篇）
     4. 全局高分：全库 final_score 降序补位
 
-    合并后统一按 final_score 排序，再过多样性过滤（embedding 余弦 > 0.92 跳过）。
+    合并后统一按 final_score 排序；seed 非 0 时轮转候选池（「换一批」）；
+    最后过多样性过滤（embedding 余弦 > 0.92 跳过）。已读论文（阅读历史）
+    不参与推荐（「看过了」闭环）。每篇附推荐理由 reason。
     """
     hidden_cond = _hidden_paper_condition(hidden or {})
+
+    # 已读排除：打开过详情 / 做过 AI 分析的论文不再重复推荐
+    read_ids: set = set()
+    try:
+        read_result = await db.execute(
+            sa_select(ReadingHistory.paper_id)
+            .where(ReadingHistory.user_id == uid)
+            .order_by(sa_desc(ReadingHistory.id))
+            .limit(500)
+        )
+        read_ids = {r[0] for r in read_result.all()}
+    except Exception as e:
+        logger.warning(f"load reading history in today_read failed: {e}")
+
     existing_ids: set = set()
     candidates: List[Paper] = []
+    reason_map: dict = {}
+
+    def _add_candidates(papers: List[Paper], reason: dict) -> None:
+        for p in papers:
+            if p.id in existing_ids:
+                continue
+            existing_ids.add(p.id)
+            candidates.append(p)
+            reason_map[p.id] = reason
+
+    def _base_query() -> Any:
+        q = (
+            sa_select(Paper)
+            .options(selectinload(Paper.features), selectinload(Paper.scores))
+            .join(PaperScore, PaperScore.paper_id == Paper.id)
+        )
+        if read_ids:
+            q = q.where(Paper.id.not_in(read_ids))
+        if hidden_cond is not None:
+            q = q.where(hidden_cond)
+        return q
 
     # ---- 路线 1：向量召回（用户画像相似） ----
     try:
@@ -274,41 +319,25 @@ async def _today_read(
         if profile_vec:
             recall_ids = await _embedding_recall_for_dashboard(db, profile_vec, k=10)
             if recall_ids:
-                where = [Paper.id.in_(recall_ids)]
-                if hidden_cond is not None:
-                    where.append(hidden_cond)
                 result = await db.execute(
-                    sa_select(Paper)
-                    .options(selectinload(Paper.features), selectinload(Paper.scores))
-                    .join(PaperScore, PaperScore.paper_id == Paper.id)
-                    .where(*where)
+                    _base_query()
+                    .where(Paper.id.in_(recall_ids))
                     .order_by(sa_desc(PaperScore.final_score))
                     .limit(10)
                 )
-                for p in result.scalars().all():
-                    if p.id not in existing_ids:
-                        candidates.append(p)
-                        existing_ids.add(p.id)
+                _add_candidates(result.scalars().all(), {"type": "profile", "label": "与你的阅读/收藏画像相似"})
     except Exception as e:
         logger.warning(f"embedding recall in today_read failed: {e}")
 
     # ---- 路线 2：子领域匹配（关注方向优先） ----
     if followed_subfields:
-        where = [Paper.economics_subfield.in_(followed_subfields)]
-        if hidden_cond is not None:
-            where.append(hidden_cond)
         result = await db.execute(
-            sa_select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
-            .join(PaperScore, PaperScore.paper_id == Paper.id)
-            .where(*where)
+            _base_query()
+            .where(Paper.economics_subfield.in_(followed_subfields))
             .order_by(sa_desc(PaperScore.final_score))
             .limit(6)
         )
-        for p in result.scalars().all():
-            if p.id not in existing_ids:
-                candidates.append(p)
-                existing_ids.add(p.id)
+        _add_candidates(result.scalars().all(), {"type": "subfield", "label": "你关注的子领域"})
 
     # ---- 路线 3：关键词匹配（关注关键词） ----
     if followed_keywords:
@@ -322,39 +351,23 @@ async def _today_read(
             .where(sa_text(f"json_each.value IN ({kw_placeholders})"))
             .params(**kw_params)
         )
-        where = [Paper.id.in_(kw_subq)]
-        if hidden_cond is not None:
-            where.append(hidden_cond)
         result = await db.execute(
-            sa_select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
-            .join(PaperScore, PaperScore.paper_id == Paper.id)
-            .where(*where)
+            _base_query()
+            .where(Paper.id.in_(kw_subq))
             .order_by(sa_desc(PaperScore.final_score))
             .limit(6)
         )
-        for p in result.scalars().all():
-            if p.id not in existing_ids:
-                candidates.append(p)
-                existing_ids.add(p.id)
+        _add_candidates(result.scalars().all(), {"type": "keyword", "label": "命中你关注的关键词"})
 
     # ---- 路线 4：全局高分补位 ----
     remaining = 20 - len(candidates)
     if remaining > 0:
-        query = (
-            sa_select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
-            .join(PaperScore, PaperScore.paper_id == Paper.id)
-        )
-        if hidden_cond is not None:
-            query = query.where(hidden_cond)
         result = await db.execute(
-            query.order_by(sa_desc(PaperScore.final_score)).limit(remaining)
+            _base_query()
+            .order_by(sa_desc(PaperScore.final_score))
+            .limit(remaining)
         )
-        for p in result.scalars().all():
-            if p.id not in existing_ids:
-                candidates.append(p)
-                existing_ids.add(p.id)
+        _add_candidates(result.scalars().all(), {"type": "top", "label": "全库高分推荐"})
 
     # ---- 精排：按 final_score 降序 ----
     candidates.sort(
@@ -362,10 +375,15 @@ async def _today_read(
         reverse=True,
     )
 
+    # ---- 「换一批」：按 seed 轮转排序后的候选池，换取不同的展示窗口 ----
+    if seed and len(candidates) > 1:
+        rot = seed % len(candidates)
+        candidates = candidates[rot:] + candidates[:rot]
+
     # ---- 多样性过滤：相邻论文 embedding 余弦 > 0.92 跳过 ----
     diversified = _diversity_filter(candidates, max_sim=0.92)
 
-    return [_paper_to_card(p) for p in diversified[:6]]
+    return [_paper_to_card(p, reason=reason_map.get(p.id)) for p in diversified[:6]]
 
 
 async def _briefing(db: AsyncSession) -> dict:
@@ -386,27 +404,59 @@ async def _briefing(db: AsyncSession) -> dict:
     if not recent_buckets:
         return {"topics": [], "ai_note": None}
 
+    # 按主题跨桶聚合：同一 topic 在多个年份桶上榜时合并，避免重复展示；
+    # 篇数取各桶之和，增长率取桶内最大值（与「热度」排序语义一致）。
     result = await db.execute(
-        sa_select(TopicTrend)
+        sa_select(
+            TopicTrend.topic,
+            sa_func.sum(TopicTrend.paper_count),
+            sa_func.max(TopicTrend.growth_rate),
+        )
         .where(TopicTrend.week_start.in_(recent_buckets))
-        .order_by(sa_desc(TopicTrend.growth_rate))
+        .group_by(TopicTrend.topic)
+        .order_by(sa_func.max(TopicTrend.growth_rate).desc())
         .limit(5)
     )
-    total_result = await db.execute(
-        sa_select(TopicTrend.topic, TopicTrend.paper_count)
-        .where(TopicTrend.week_start.in_(recent_buckets))
-    )
-    stats = {row[0]: row[1] for row in total_result.all()}
 
     topics = []
-    for trend in result.scalars():
-        trend_status = "rising" if trend.growth_rate > 0.2 else ("declining" if trend.growth_rate < -0.1 else "stable")
+    for topic, paper_count, growth_rate in result.all():
+        trend_status = "rising" if growth_rate > 0.2 else ("declining" if growth_rate < -0.1 else "stable")
         topics.append({
-            "topic": trend.topic,
-            "paper_count": stats.get(trend.topic, trend.paper_count),
-            "growth_rate": trend.growth_rate,
+            "topic": topic,
+            "paper_count": paper_count,
+            "growth_rate": growth_rate,
             "trend": trend_status,
         })
+
+    # 每个主题的逐年篇数序列（领域快讯 sparkline 数据源）：
+    # 按「主题 × 年份桶」取逐桶篇数，供前端画迷你柱状图；
+    # 失败时降级为空序列（不影响主体数据）。
+    series_map: dict = {}
+    series_ok = False
+    try:
+        series_rows = await db.execute(
+            sa_select(TopicTrend.topic, TopicTrend.week_start, TopicTrend.paper_count)
+            .where(TopicTrend.week_start.in_(recent_buckets))
+            .where(TopicTrend.topic.in_([t["topic"] for t in topics]))
+            .order_by(TopicTrend.week_start)
+        )
+        for st_topic, st_week, st_count in series_rows.all():
+            series_map.setdefault(st_topic, {})[st_week.year] = int(st_count)
+        series_ok = True
+    except Exception as e:
+        logger.warning(f"dashboard briefing series failed: {e}")
+
+    years = sorted({ws.year for ws in recent_buckets})
+    for topic_item in topics:
+        if not series_ok:
+            topic_item["series"] = []
+            continue
+        by_year = series_map.get(topic_item["topic"], {})
+        topic_item["series"] = [
+            {"year": str(y), "count": by_year.get(y, 0)}
+            for y in years
+        ]
+
     # P0 遗留#4：调用 LLM 生成一句话领域结论（带 1h 缓存，AI 不可用时降级为 None）
     ai_note = await _briefing_ai_note([t["topic"] for t in topics])
     return {"topics": topics, "ai_note": ai_note}
@@ -414,12 +464,14 @@ async def _briefing(db: AsyncSession) -> dict:
 
 async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
     """我的研究栈：最近分析 + 最近验证选题 + 收藏数/已读数。"""
-    fav_ids = []
-    for model in (Favorite, ReadingHistory):
-        result = await db.execute(
-            sa_select(model.paper_id).where(model.user_id == uid).order_by(model.id.desc()).limit(200)
-        )
-        fav_ids.extend(r[0] for r in result.all())
+    # 最近收藏：仅 Favorite 表（展示最近 8 篇），收藏数用真实 COUNT 避免被展示上限截断
+    fav_result = await db.execute(
+        sa_select(Favorite.paper_id)
+        .where(Favorite.user_id == uid)
+        .order_by(Favorite.id.desc())
+        .limit(8)
+    )
+    fav_ids = [r[0] for r in fav_result.all()]
 
     fav_papers = []
     if fav_ids:
@@ -428,13 +480,20 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
             .options(selectinload(Paper.features), selectinload(Paper.scores))
             .where(Paper.id.in_(fav_ids))
         )
-        fav_papers = [_paper_to_card(p) for p in presult.scalars().all()][:8]
+        fav_papers = [_paper_to_card(p) for p in presult.scalars().all()]
 
-    # 最近分析（paper_analyses 最新 5 条，附带论文标题）
+    favorite_count = (
+        await db.execute(
+            sa_select(sa_func.count()).select_from(Favorite).where(Favorite.user_id == uid)
+        )
+    ).scalar() or 0
+
+    # 最近分析（paper_analyses 最新 5 条，按用户隔离，附带论文标题）
     recent_analyses = []
     try:
         an_result = await db.execute(
             sa_select(PaperAnalysis.paper_id, PaperAnalysis.status, PaperAnalysis.created_at)
+            .where(PaperAnalysis.user_id == uid)
             .order_by(sa_desc(PaperAnalysis.created_at))
             .limit(5)
         )
@@ -501,6 +560,28 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
         for r in review_rows.scalars()
     ]
 
+    # 关注子领域近 30 天新增论文数（工作台「新论文提醒」入口，未关注任何子领域时为 None）
+    watch_subfield_count: Optional[int] = None
+    try:
+        sf_result = await db.execute(
+            sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid)
+        )
+        subfields = [r[0] for r in sf_result.all()]
+        if subfields:
+            month_start = datetime.now() - timedelta(days=30)
+            watch_subfield_count = (
+                await db.execute(
+                    sa_select(sa_func.count())
+                    .select_from(Paper)
+                    .where(
+                        Paper.economics_subfield.in_(subfields),
+                        Paper.published_at >= month_start,
+                    )
+                )
+            ).scalar() or 0
+    except Exception as e:
+        logger.warning(f"watch_subfield_count failed: {e}")
+
     return {
         "favorites": fav_papers,
         "recent_analyses": recent_analyses,
@@ -508,8 +589,9 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
         "reviews": reviews,
         "latest_report_summary": report.summary if report else None,
         "latest_report_id": report.id if report else None,
-        "favorite_count": len(fav_papers),
+        "favorite_count": int(favorite_count),
         "has_followed_subfields": has_followed,
+        "watch_subfield_count": int(watch_subfield_count) if watch_subfield_count is not None else None,
     }
 
 

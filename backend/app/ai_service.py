@@ -154,10 +154,18 @@ class AITrendService:
             self.models[name] = models
         for provider in settings.get_custom_providers():
             name = provider.get("name", "")
-            if name:
-                self.models[name] = [
-                    m for m in (provider.get("models", []) or []) if not _is_non_chat_model(m)
-                ]
+            if not name:
+                continue
+            self.models[name] = [
+                m for m in (provider.get("models", []) or []) if not _is_non_chat_model(m)
+            ]
+            # 配了 key 但模型全是 embedding/重排类：该 provider 无法用于对话，会在
+            # get_client() 里被跳过。不提示的话表现为「选中的 provider 没模型 → 400」。
+            if name in self.clients and not self.models[name]:
+                logger.warning(
+                    f"AI provider '{name}' is configured but has no chat model "
+                    f"(all models look like embedding/rerank models); it will be skipped for chat"
+                )
 
     def is_available(self) -> bool:
         return bool(self.clients)
@@ -187,14 +195,19 @@ class AITrendService:
         return names
 
     def get_client(self, provider: Optional[str] = None) -> Tuple[Any, str]:
-        """获取指定 provider 的客户端；provider 为空时按默认优先级返回第一个可用的。"""
+        """获取指定 provider 的客户端；provider 为空时按默认优先级返回第一个可用的。
+
+        未指定 provider 时跳过「没有任何可用对话模型」的 provider：只配了 embedding 模型
+        （如 ollama 仅配 bge-m3）的 provider 会被 _load_model_order 过滤成空列表，
+        选中它会导致 model=None 的请求 → 400 "model is required"。
+        """
         if provider:
             client = self.clients.get(provider)
             if not client:
                 raise KeyError(provider)
             return client, provider
         for name in self.provider_order():
-            if name in self.clients:
+            if name in self.clients and self.models.get(name):
                 return self.clients[name], name
         raise KeyError(None)
 

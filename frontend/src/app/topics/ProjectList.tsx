@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
@@ -9,6 +9,7 @@ import { topicsApi, papersApi, personalApi, workbenchApi } from '@/lib/api';
 import { reportPageContext } from '@/lib/assistantBus';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { TopicProject, ResearchGap, TrendingTopic, GapAnalysisResponse } from '@/types/paper';
+import IdeaWizard from './IdeaWizard';
 import {
   Compass, Sparkles, Loader2, Plus, Lightbulb, Flame, BookmarkCheck,
   ChevronRight, Wand2, Trash2, ArrowRight, Brain,
@@ -28,6 +29,24 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: '手动',
 };
 
+const STEP_FILTERS = [
+  { value: '', label: '全部步骤' },
+  { value: '1', label: '选题定义(1)' },
+  { value: '2', label: '选题验证(2)' },
+  { value: '3', label: '文献管理(3)' },
+  { value: '4', label: '数据与方法(4)' },
+  { value: '5', label: '写作输出(5)' },
+];
+
+const SOURCE_FILTERS = [
+  { value: '', label: '全部来源' },
+  { value: 'idea', label: '想法(idea)' },
+  { value: 'keyword', label: '热点(keyword)' },
+  { value: 'gap', label: '空白(gap)' },
+  { value: 'ai', label: 'AI 推荐(ai)' },
+  { value: 'manual', label: '手动(manual)' },
+];
+
 export default function ProjectList() {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -39,6 +58,21 @@ export default function ProjectList() {
   const [creating, setCreating] = useState(false);
   const [idea, setIdea] = useState('');
 
+  // ---- 项目列表筛选（客户端） ----
+  const [query, setQuery] = useState('');
+  const [stepFilter, setStepFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+
+  const filteredProjects = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return projects.filter((p) => {
+      if (q && !(p.title || '').toLowerCase().includes(q)) return false;
+      if (stepFilter && String(p.current_step || 1) !== stepFilter) return false;
+      if (sourceFilter && (p.source_type || 'manual') !== sourceFilter) return false;
+      return true;
+    });
+  }, [projects, query, stepFilter, sourceFilter]);
+
   // ---- 灵感区 ----
   const [gaps, setGaps] = useState<ResearchGap[]>([]);
   const [gapAnalysis, setGapAnalysis] = useState<GapAnalysisResponse | null>(null);
@@ -46,7 +80,8 @@ export default function ProjectList() {
   const [hotTopics, setHotTopics] = useState<TrendingTopic[]>([]);
   const [followedSubfields, setFollowedSubfields] = useState<string[]>([]);
   const [followedKeywords, setFollowedKeywords] = useState<string[]>([]);
-  const [inspirationOpen, setInspirationOpen] = useState(false);
+  const [inspirationOpen, setInspirationOpen] = useState(true);
+  const [wizardOpen, setWizardOpen] = useState(false);
   // AI 个性化灵感推荐
   const [recommendations, setRecommendations] = useState<Array<{ title: string; why: string; angle?: string }>>([]);
   const [recommending, setRecommending] = useState(false);
@@ -131,6 +166,7 @@ export default function ProjectList() {
   };
 
   const deleteProject = async (id: number) => {
+    if (!window.confirm('确定删除该项目？其中文献集/综述/立项书将不可恢复')) return;
     try {
       await topicsApi.deleteTopicProject(id);
       setProjects((prev) => prev.filter((x) => x.id !== id));
@@ -176,6 +212,19 @@ export default function ProjectList() {
 
         {inspirationOpen && (
           <div className="mt-4 space-y-5">
+            {/* AI 选题向导：一句话想法 → 偏好 → 选题方向+参考文献 → 立项 */}
+            <div>
+              <button
+                onClick={() => setWizardOpen(!wizardOpen)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-amber-600 hover:from-purple-700 hover:to-amber-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+              >
+                <Brain className="w-4 h-4" />
+                {wizardOpen ? '收起 AI 选题向导' : '打开 AI 选题向导'}
+                <span className="text-[11px] font-normal opacity-80">想法 → 偏好 → 选题+参考文献 → 立项</span>
+              </button>
+              {wizardOpen && <div className="mt-3"><IdeaWizard /></div>}
+            </div>
+
             {/* AI 个性化灵感推荐 */}
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -322,8 +371,41 @@ export default function ProjectList() {
           <p className="text-xs text-gray-400">在上方灵感区点一个空白/热点/关注开题，或输入一句话想法创建第一个项目</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {projects.map((p) => (
+        <>
+          <div className="flex flex-col sm:flex-row gap-2 mb-4">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="按标题搜索…"
+              className="flex-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-2 focus:ring-primary-500"
+            />
+            <select
+              value={stepFilter}
+              onChange={(e) => setStepFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              {STEP_FILTERS.map((s) => (
+                <option key={s.value || 'all'} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              {SOURCE_FILTERS.map((s) => (
+                <option key={s.value || 'all'} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {filteredProjects.length === 0 ? (
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-10 text-center">
+              <p className="text-sm text-gray-400">没有匹配的项目，试试调整筛选条件</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredProjects.map((p) => (
             <div
               key={p.id}
               onClick={() => router.push(`/topics?project=${p.id}`)}
@@ -340,16 +422,26 @@ export default function ProjectList() {
                 </button>
               </div>
               <div className="flex items-center justify-between mb-3">
-                <span className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300">
-                  {SOURCE_LABELS[p.source_type || 'manual'] || '手动'}
-                  {p.source_ref && p.source_ref !== p.title ? ` · ${p.source_ref.slice(0, 12)}` : ''}
-                </span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 shrink-0">
+                    {SOURCE_LABELS[p.source_type || 'manual'] || '手动'}
+                  </span>
+                  {p.source_ref && p.source_ref !== p.title && (
+                    <span
+                      title={p.source_ref}
+                      className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 truncate max-w-[9rem]"
+                    >
+                      {p.source_ref}
+                    </span>
+                  )}
+                </div>
                 {stepDots(p.current_step || 1)}
               </div>
               <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>
                   {STEP_NAMES[p.current_step || 1] || '选题定义'}
                   <span className="text-gray-300"> · 第 {(p.current_step || 1)}/5 步</span>
+                  {p.updated_at && <span className="text-gray-300"> · 更新 {p.updated_at.slice(0, 10)}</span>}
                 </span>
                 <span className="flex items-center gap-1 text-primary-600 dark:text-primary-400 group-hover:gap-1.5 transition-all">
                   继续 <ChevronRight className="w-3 h-3" />
@@ -357,7 +449,9 @@ export default function ProjectList() {
               </div>
             </div>
           ))}
-        </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* 研究空白（常驻） */}

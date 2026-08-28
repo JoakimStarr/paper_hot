@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import {
   Settings, Activity, Play, Pause, Square, ChevronDown, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
-  ToggleRight, ToggleLeft, Search, History as HistoryIcon, BookOpen,
+  ToggleRight, ToggleLeft, Search, History as HistoryIcon,
 } from 'lucide-react';
-import { CrawlLog, SchedulerJob, CNKISearchInfo, ReferencesCrawlInfo, Msg } from '@/types/paper';
+import { CrawlLog, SchedulerJob, CNKISearchInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export interface KeywordCrawlForm {
@@ -62,11 +62,6 @@ interface CrawlerTabProps {
   onPauseKeywordCrawl: () => void;
   onResumeKeywordCrawl: () => void;
   onStopKeywordCrawl: () => void;
-  refsInfo: ReferencesCrawlInfo | null;
-  refsStarting: boolean;
-  refsStopping: boolean;
-  onStartReferencesCrawl: (opts: { paper_url?: string; paper_title?: string; max_items?: number }) => void;
-  onStopReferencesCrawl: () => void;
 }
 
 export default function CrawlerTab({
@@ -94,19 +89,9 @@ export default function CrawlerTab({
   onPauseKeywordCrawl,
   onResumeKeywordCrawl,
   onStopKeywordCrawl,
-  refsInfo,
-  refsStarting,
-  refsStopping,
-  onStartReferencesCrawl,
-  onStopReferencesCrawl,
 }: CrawlerTabProps) {
   const { t } = useLanguage();
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
-  // 参考文献表单：链接与标题二选一（都填优先链接），条数上限可选
-  const [refUrl, setRefUrl] = useState('');
-  const [refTitle, setRefTitle] = useState('');
-  const [refMaxItems, setRefMaxItems] = useState('');
-  const refCanStart = !refsStarting && !refsInfo?.running && (refUrl.trim().length > 0 || refTitle.trim().length > 0);
 
   const phaseText = (phase?: string) => {
     const map: Record<string, string> = {
@@ -377,107 +362,6 @@ export default function CrawlerTab({
                   </div>
                 )}
                 {kwInfo.message && <div className="text-gray-600 dark:text-gray-300 break-words">{kwInfo.message}</div>}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 参考文献爬取 */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <BookOpen className="w-6 h-6 text-teal-600" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('sys.refsTitle')}</h2>
-          </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('sys.refsDesc')}</p>
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsUrlLabel')}</label>
-              <input
-                value={refUrl}
-                onChange={e => setRefUrl(e.target.value)}
-                placeholder="https://kns.cnki.net/kcms2/article/abstract?..."
-                disabled={refsStarting || !!refsInfo?.running}
-                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsTitleLabel')}</label>
-                <input
-                  value={refTitle}
-                  onChange={e => setRefTitle(e.target.value)}
-                  placeholder={t('sys.refsTitlePlaceholder')}
-                  disabled={refsStarting || !!refsInfo?.running}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsMaxLabel')}</label>
-                <input
-                  value={refMaxItems}
-                  onChange={e => setRefMaxItems(e.target.value.replace(/\D/g, ''))}
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="—"
-                  disabled={refsStarting || !!refsInfo?.running}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => onStartReferencesCrawl({
-                  paper_url: refUrl.trim() || undefined,
-                  paper_title: refUrl.trim() ? undefined : refTitle.trim(),
-                  max_items: refMaxItems ? Number(refMaxItems) : undefined,
-                })}
-                disabled={!refCanStart}
-                className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
-              >
-                {refsStarting || refsInfo?.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {refsStarting || refsInfo?.running ? t('sys.refsRunning') : t('sys.refsRun')}
-              </button>
-              {refsInfo?.running && (
-                <button
-                  onClick={onStopReferencesCrawl}
-                  disabled={refsStopping}
-                  className="flex items-center gap-1 px-3 py-2 text-xs font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
-                >
-                  {refsStopping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
-                  {t('sys.kwStop')}
-                </button>
-              )}
-            </div>
-
-            {refsInfo && (refsInfo.running || refsInfo.message) && (
-              <div className="mt-1 p-3 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-xs text-gray-700 dark:text-gray-200 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">{t('sys.kwStatus')}:</span>
-                  <span className={`inline-flex items-center gap-1 font-medium ${refsInfo.running ? 'text-teal-600' : 'text-gray-600 dark:text-gray-300'}`}>
-                    {refsInfo.running && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {refsInfo.running ? t('sys.refsRunningBadge') : phaseText(refsInfo.progress?.phase) || t('sys.simIdle')}
-                  </span>
-                  {refsInfo.paper_title && (
-                    <span className="truncate font-medium text-gray-800 dark:text-gray-100">{refsInfo.paper_title}</span>
-                  )}
-                </div>
-                {refsInfo.progress && (refsInfo.progress.collected > 0 || refsInfo.progress.page > 0) && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    {refsInfo.progress.page > 0 && <span>{t('sys.refsPage')}: {refsInfo.progress.page}</span>}
-                    {refsInfo.progress.collected > 0 && <span className="font-medium text-teal-600 dark:text-teal-400">{t('sys.refsCollected')}: {refsInfo.progress.collected}</span>}
-                    {refsInfo.progress.failed > 0 && <span className="text-red-500">{t('sys.kwFailed')}: {refsInfo.progress.failed}</span>}
-                  </div>
-                )}
-                {refsInfo.last_log && refsInfo.last_log.length > 0 && (
-                  <div className="pt-1">
-                    <div className="text-[11px] text-gray-400 mb-1">{t('sys.kwRecentLog')}</div>
-                    <div className="max-h-24 overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-900/60 p-2 text-[10px] leading-4 text-gray-500 dark:text-gray-400 font-mono break-all">
-                      {refsInfo.last_log.slice(-6).map((l, i) => <div key={i}>{l}</div>)}
-                    </div>
-                  </div>
-                )}
-                {refsInfo.message && <div className="text-gray-600 dark:text-gray-300 break-words">{refsInfo.message}</div>}
               </div>
             )}
           </div>

@@ -94,6 +94,8 @@ class PaperCardResponse(BaseModel):
     trend_score: float = 0.0
     final_score: float = 0.0
     created_at: datetime
+    # 工作台「今日值得读」专用：推荐理由（profile/subfield/keyword/top）
+    reason: Optional[dict] = None
 
     class Config:
         from_attributes = True

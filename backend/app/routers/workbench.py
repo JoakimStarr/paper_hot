@@ -4,8 +4,10 @@
 选题定义 → 验证 → 文献管理 → 数据/方法 → 写作输出 五步向导。
 
 - GET  /topic-projects/{id}                 项目详情（全字段 + 文献集）
+- GET  /topic-projects/{id}/status          轻量状态（id/status/ai_pending/ai_error/updated_at，轮询用）
 - GET  /topic-projects/{id}/papers          文献集列表
 - POST /topic-projects/{id}/papers          加入论文
+- POST /topic-projects/{id}/recall-papers   按选题懒召回 top-10 论文并入文献集
 - PATCH/DELETE /topic-projects/{id}/papers/{paper_id}   更新/移除
 - POST /topic-projects/{id}/search-papers   检索候选论文（embedding 召回）
 - POST /topic-projects/{id}/ai              统一 AI 操作（后台任务 + ai_pending 轮询）
@@ -141,6 +143,29 @@ async def get_project(
     return out
 
 
+@router.get("/topic-projects/{project_id}/status")
+async def get_project_status(
+    project_id: int,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """轻量项目状态：AI 长任务执行期间前端高频轮询打这里。
+
+    只返回 id/status/ai_pending/ai_error/updated_at，不携带
+    literature_review/proposal/overview 等大段 AI 文本，避免每次轮询全量序列化。
+    """
+    uid = _uid_from(request)
+    p = await _load_project(db, project_id, uid)
+    return {
+        "id": p.id,
+        "status": p.status,
+        "ai_pending": p.ai_pending,
+        "ai_error": p.ai_error,
+        "updated_at": _isoformat_utc(p.updated_at),
+    }
+
+
 # ---------------------------------------------------------------- 文献集
 
 class PaperAddRequest(BaseModel):
@@ -200,6 +225,46 @@ async def add_project_paper(
         await db.rollback()
         logger.warning(f"add paper {paper_id} to project {project_id} failed: {e}")
         raise HTTPException(status_code=409, detail="该论文已在文献集中")
+
+
+@router.post("/topic-projects/{project_id}/recall-papers")
+async def recall_project_papers(
+    project_id: int,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """按选题懒召回 top-10 论文并入文献集（Step3 首次进入时调用）。
+
+    创建项目时不再同步召回（见 create_topic_project），初始文献在这里按需生成。
+    已在该项目文献集内的论文自动去重跳过；返回本次新增数量。
+    """
+    uid = _uid_from(request)
+    p = await _load_project(db, project_id, uid)
+    try:
+        briefs, _mode = await _retrieve_similar_papers(db, p.title or "", k=10)
+        existing = set(
+            (await db.execute(
+                sa_select(ProjectPaper.paper_id).where(ProjectPaper.project_id == p.id)
+            )).scalars().all()
+        )
+        n = 0
+        for b in briefs:
+            pid = str(b["id"])
+            if pid in existing:
+                continue
+            existing.add(pid)
+            db.add(ProjectPaper(
+                user_id=p.user_id, project_id=p.id,
+                paper_id=pid, similarity=b.get("similarity"),
+            ))
+            n += 1
+        await db.commit()
+        return {"recalled": n}
+    except Exception as e:
+        await db.rollback()
+        logger.warning(f"recall papers for project {project_id} failed: {e}")
+        return {"recalled": 0}
 
 
 @router.patch("/topic-projects/{project_id}/papers/{paper_id}")
@@ -288,6 +353,114 @@ async def search_project_papers(
             "keywords": b.get("keywords", [])[:6],
             "similarity": b.get("similarity"),
             "in_project": str(b["id"]) in existing,
+        })
+    return {"mode": mode, "count": len(out), "papers": out}
+
+
+class RecommendRequest(BaseModel):
+    limit: int = 10
+    paper_id: Optional[str] = None   # 传了则只以该篇文献为种子召回（文献管理「相似论文」）
+
+
+@router.post("/topic-projects/{project_id}/recommend-papers")
+async def recommend_project_papers(
+    project_id: int,
+    body: Optional[RecommendRequest] = None,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """相关文献推荐：基于「选题方向 + 参考文献」召回相关论文，供用户决定是否加入引用。
+
+    不传 paper_id（聚合推荐）：
+      - 选题方向召回：以项目选题（title/source_ref）embedding 检索相关论文；
+      - 参考文献召回：以文献集前 5 篇为种子，从 PaperSimilarity 表取相似论文；
+      - 两者合并去重（同篇取最大相似度），排除已在文献集的，按相似度排序；
+      - 文献集为空时退化为纯选题方向召回。
+    传 paper_id（须在文献集内）：只以该篇为种子召回（文献管理「相似论文」展开用）。
+
+    每篇带 via_title：参考文献召回为引出它的项目文献标题，选题方向召回的为 None
+    （前端显示「基于选题方向」）。
+    """
+    uid = _uid_from(request)
+    p = await _load_project(db, project_id, uid)
+    papers = await _load_project_papers(db, project_id, p.user_id)
+    paper_id = (body.paper_id or "").strip() if body else ""
+    limit = min(max(int(body.limit) if body else 10, 1), 30)  # 注意：limit=0 也要钳到 1，不能用 `body.limit` 真值判断
+    in_project = {x["paper_id"] for x in papers}
+
+    from app.crud import PaperSimilarityCRUD
+
+    best: dict = {}  # paper_id -> {"similarity": float, "via_title": str|None}
+
+    def _add(pid: str, sim: float, via_title: Optional[str]) -> None:
+        sim = float(sim or 0)
+        cur = best.get(pid)
+        if cur is None or sim > cur["similarity"]:
+            best[pid] = {"similarity": sim, "via_title": via_title}
+
+    # ---- 单篇「相似论文」：只以该篇文献为种子 ----
+    if paper_id:
+        if paper_id not in in_project:
+            return {"mode": "no_results", "count": 0, "papers": []}
+        seed = next((x for x in papers if x["paper_id"] == paper_id), None)
+        if not seed:
+            return {"mode": "no_results", "count": 0, "papers": []}
+        similar_papers, score_map = await PaperSimilarityCRUD.get_similar_papers_with_scores(
+            db, seed["paper_id"], limit=8
+        )
+        for sp in similar_papers:
+            if sp.id in in_project:
+                continue
+            _add(sp.id, score_map.get(sp.id, 0), seed["title"])
+        mode = "similarity"
+    else:
+        # ---- 聚合推荐：选题方向 + 参考文献 ----
+        query = (p.title or "").strip() or (p.source_ref or p.source_gap or "").strip()
+        # (a) 选题方向召回（via_title=None → 前端显示「基于选题方向」）
+        topic_papers, _tmode = await _retrieve_similar_papers(db, query, k=10)
+        for b in topic_papers:
+            pid = b["id"]
+            if pid in in_project:
+                continue
+            _add(pid, b.get("similarity"), None)
+        # (b) 参考文献相似召回（无文献集时跳过，退化为纯方向推荐）
+        if papers:
+            for s in papers[:5]:
+                similar_papers, score_map = await PaperSimilarityCRUD.get_similar_papers_with_scores(
+                    db, s["paper_id"], limit=8
+                )
+                for sp in similar_papers:
+                    if sp.id in in_project:
+                        continue
+                    _add(sp.id, score_map.get(sp.id, 0), s["title"])
+        mode = "similarity" if any(v["via_title"] for v in best.values()) else "topic"
+
+    if not best:
+        return {"mode": "no_results", "count": 0, "papers": []}
+
+    ranked = sorted(best.items(), key=lambda kv: kv[1]["similarity"], reverse=True)[:limit]
+    result = await db.execute(
+        sa_select(Paper).where(Paper.id.in_([pid for pid, _ in ranked]))
+    )
+    paper_by_id = {paper.id: paper for paper in result.scalars().all()}
+
+    out = []
+    for pid, info in ranked:
+        paper = paper_by_id.get(pid)
+        if not paper:
+            continue
+        out.append({
+            "id": paper.id,
+            "title": paper.title,
+            "abstract": (paper.abstract or "")[:200],
+            "journal": paper.journal_name,
+            "source": paper.source,
+            "published_at": str(paper.published_at)[:10] if paper.published_at else None,
+            "keywords": (paper.keywords_cn or [])[:6],
+            "similarity": round(float(info["similarity"]), 4),
+            "via_title": info["via_title"],
+            "in_project": False,
         })
     return {"mode": mode, "count": len(out), "papers": out}
 

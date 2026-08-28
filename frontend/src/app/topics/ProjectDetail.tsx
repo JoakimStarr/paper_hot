@@ -29,6 +29,10 @@ export default function ProjectDetail({ projectId, initialStep }: { projectId: n
   const [project, setProject] = useState<TopicProject | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 深链：?step= 参数优先显示指定步骤；未传时跟随后端 current_step（点击步骤条后以本地为准）
+  const [stepOverride, setStepOverride] = useState<number | null>(
+    initialStep && initialStep >= 1 && initialStep <= 5 ? initialStep : null
+  );
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -61,22 +65,25 @@ export default function ProjectDetail({ projectId, initialStep }: { projectId: n
     });
   }, [project?.id, project?.current_step, project?.title]);
 
-  // ai_pending 期间轮询项目详情，直到后台任务完成
+  // ai_pending 期间轮询轻量 /status 接口（只更新顶栏状态），任务结束再全量刷新
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     if (!project?.ai_pending) return;
     pollRef.current = setInterval(async () => {
       try {
-        const p = await workbenchApi.getProject(projectId);
-        setProject(p);
-        if (!p.ai_pending) {
+        const s = await workbenchApi.getProjectStatus(projectId);
+        // 仅更新顶栏展示的 ai_pending/ai_error，避免每 3s 拉全量项目
+        setProject((prev) => (prev ? { ...prev, ai_pending: s.ai_pending, ai_error: s.ai_error } : prev));
+        if (!s.ai_pending) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          // AI 任务完成（或出错）→ 全量刷新，拿到各步骤最新内容
+          await load(true);
         }
       } catch { /* 忽略瞬时错误 */ }
     }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [project?.ai_pending, projectId]);
+  }, [project?.ai_pending, projectId, load]);
 
   const onRefresh = useCallback(async () => {
     await load(true);
@@ -104,6 +111,7 @@ export default function ProjectDetail({ projectId, initialStep }: { projectId: n
 
   const goStep = (n: number) => {
     if (!project) return;
+    setStepOverride(n);
     setProject({ ...project, current_step: n });
     workbenchApi.updateProject(project.id, { current_step: n }).catch(() => {});
     router.replace(`/topics?project=${project.id}&step=${n}`);
@@ -130,7 +138,7 @@ export default function ProjectDetail({ projectId, initialStep }: { projectId: n
     );
   }
 
-  const current = project.current_step || 1;
+  const current = stepOverride ?? (project.current_step || 1);
   const stepProps = { project, onRefresh, onPatch, runAi };
 
   return (
