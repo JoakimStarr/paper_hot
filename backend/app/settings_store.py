@@ -7,6 +7,7 @@
 - 端口类键（MIRROR_ENV_KEYS）额外镜像写 backend/.env：start.sh 在应用启动前读端口，
   仅存 DB 时启动器无法感知。
 """
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -17,6 +18,9 @@ from sqlalchemy import select as sa_select
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent.parent   # backend/
+
+# .env 镜像写并发锁：两个并发保存端口时避免交错读写
+_env_lock = asyncio.Lock()
 
 # 允许通过设置页持久化的 Settings 键白名单
 ALLOWED_KEYS = {
@@ -38,6 +42,7 @@ ALLOWED_KEYS = {
     "log_file_path",
     "log_retention_days",
     "agent_enabled",
+    "ai_model_prices",
 }
 
 # 这些键同时镜像写 .env —— start.sh 需要在 Python 进程启动前知道端口
@@ -134,7 +139,6 @@ async def save_override(db, key: str, value: Optional[str]):
 
 async def upsert_env_line(key: str, value: str):
     """镜像写一行 KEY=value 到 backend/.env（保留其余内容）。阻塞 IO 极小，放线程池执行。"""
-    import asyncio
 
     def _write():
         env_path = BASE_DIR / ".env"
@@ -161,7 +165,8 @@ async def upsert_env_line(key: str, value: str):
         tmp.replace(env_path)
 
     try:
-        await asyncio.to_thread(_write)
+        async with _env_lock:
+            await asyncio.to_thread(_write)
     except Exception as e:
         logger.warning(f"Mirror write of '{key}' to .env failed: {e}")
 

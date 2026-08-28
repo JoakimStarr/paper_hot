@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import Header, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse  # noqa: F401
@@ -79,24 +79,37 @@ def _stream_chat_response(client, provider: str, messages: list, model: Optional
         async for frame in _stream_llm_content(client, model, messages):
             yield frame
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # Cache-Control / X-Accel-Buffering：禁止代理/压缩层缓冲，保证 token 实时到达（借鉴 Quantlerning）
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-async def _stream_llm_content(client, model: str, messages: list):
-    """流式拉取 LLM 正文/reasoning 的异步生成器（SSE 帧），供各流式接口复用。"""
+async def _stream_llm_content(client, model: str, messages: list,
+                              on_event: Optional[Callable[[dict], None]] = None,
+                              temperature: Optional[float] = None,
+                              max_tokens: int = 4096):
+    """流式拉取 LLM 正文/reasoning 的异步生成器（SSE 帧），供各流式接口复用。
+
+    on_event：每个事件（content/reasoning/error/done）在转发前以 dict 形式回调，
+    供包装器累积全文/持久化；不传则无副作用（向后兼容）。
+    temperature/max_tokens：透传给 create；temperature 为 None 时用 provider 默认值。
+    """
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     timeout_seconds = 120
 
     def run_stream():
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                max_tokens=4096,
-            )
+            kwargs = dict(model=model, messages=messages, stream=True, max_tokens=max_tokens)
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            response = client.chat.completions.create(**kwargs)
+            usage = None
             for chunk in response:
+                # 流式末块常带 usage（best-effort，提供方支持才返回）
+                u = getattr(chunk, "usage", None)
+                if u:
+                    usage = u
                 if chunk.choices:
                     delta = chunk.choices[0].delta
                     content = getattr(delta, "content", None)
@@ -105,6 +118,8 @@ async def _stream_llm_content(client, model: str, messages: list):
                         loop.call_soon_threadsafe(queue.put_nowait, ("reasoning", reasoning))
                     if content:
                         loop.call_soon_threadsafe(queue.put_nowait, ("content", content))
+            if usage:
+                loop.call_soon_threadsafe(queue.put_nowait, ("usage", usage))
             loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
         except Exception as e:
             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
@@ -121,20 +136,32 @@ async def _stream_llm_content(client, model: str, messages: list):
                 elapsed = time.time() - start_time
                 if elapsed > timeout_seconds:
                     logger.warning(f"Stream timeout after {timeout_seconds}s")
-                    yield f"data: {json.dumps({'done': True})}\n\n"
+                    ev = {'done': True}
+                    if on_event:
+                        on_event(ev)
+                    yield f"data: {json.dumps(ev)}\n\n"
                     break
                 continue
 
             msg_type, msg_content = item
             if msg_type == "done":
-                yield f"data: {json.dumps({'done': True})}\n\n"
-                break
+                ev = {'done': True}
             elif msg_type == "error":
-                yield f"data: {json.dumps({'content': f'[ERROR] {msg_content}'})}\n\n"
+                # 错误用独立帧发给前端（前端经 onError 呈现），不再塞进 content 当正文渲染
+                ev = {'error': msg_content}
+            elif msg_type == "usage":
+                ev = {'usage': _usage_to_dict(msg_content)}
             elif msg_type == "reasoning":
-                yield f"data: {json.dumps({'reasoning': msg_content})}\n\n"
+                ev = {'reasoning': msg_content}
             elif msg_type == "content":
-                yield f"data: {json.dumps({'content': msg_content})}\n\n"
+                ev = {'content': msg_content}
+            else:
+                continue
+            if on_event:
+                on_event(ev)
+            yield f"data: {json.dumps(ev)}\n\n"
+            if msg_type == "done":
+                break
     finally:
         # 客户端断开（生成器被关闭）时取消后台拉流任务，避免继续消耗 LLM token
         future.cancel()
@@ -167,7 +194,7 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
 
         async def _run_agent():
             try:
-                msgs, trace, content_streamed = await run_agent_chat(
+                msgs, trace, content_streamed, usage = await run_agent_chat(
                     messages, client, model, surface=surface,
                     on_progress=out_q.put_nowait,   # {"tool","args"}
                     on_delta=out_q.put_nowait,      # {"content"|"reasoning", ...}
@@ -175,6 +202,7 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
                 box["messages"] = msgs
                 box["trace"] = trace
                 box["content_streamed"] = content_streamed
+                box["usage"] = usage
             except Exception as e:
                 logger.warning(f"agent loop failed, fallback to plain chat: {e}")
             finally:
@@ -206,9 +234,12 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
             async for frame in _stream_llm_content(client, model, box["messages"]):
                 yield frame
         else:
+            if box.get("usage"):
+                yield f"data: {json.dumps({'usage': _usage_to_dict(box['usage'])})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _clean_author_name(name: str) -> str:
@@ -263,6 +294,17 @@ def _isoformat_utc(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.isoformat()
+
+
+def _usage_to_dict(usage) -> dict:
+    """把 OpenAI 兼容的 usage 对象转成前端可展示的 dict（best-effort）。"""
+    if usage is None:
+        return {}
+    return {
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
 
 
 def _paper_to_card(paper) -> PaperCardResponse:

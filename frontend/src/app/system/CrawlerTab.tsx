@@ -5,7 +5,7 @@ import {
   Settings, Activity, Play, Pause, Square, ChevronDown, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
   ToggleRight, ToggleLeft, Search,
 } from 'lucide-react';
-import { CrawlLog, SchedulerJob, CNKISearchInfo } from '@/types/paper';
+import { CrawlLog, SchedulerJob, CNKISearchInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export interface KeywordCrawlForm {
@@ -38,7 +38,7 @@ const CNKI_SEARCH_FIELDS: { value: string; labelKey: string }[] = [
 ];
 
 interface CrawlerTabProps {
-  message: string;
+  message: Msg;
   crawling: boolean;
   cnkiCrawling: 'top50' | 'navi' | null;
   onStartCrawl: () => void;
@@ -153,8 +153,8 @@ export default function CrawlerTab({
           </div>
 
           {message && (
-            <div className={`p-3 rounded-lg text-sm ${message.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
-              {message}
+            <div className={`p-3 rounded-lg text-sm ${message.ok ? 'bg-green-50 dark:bg-green-900/30 text-green-600' : 'bg-red-50 dark:bg-red-900/30 text-red-600'}`}>
+              {message.text}
             </div>
           )}
           <div className="mt-4 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">

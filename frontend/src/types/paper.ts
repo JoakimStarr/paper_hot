@@ -256,6 +256,26 @@ export interface SettingsInfo {
   embedding_model?: string | null;
   cnki_url_prefix?: string;
   agent_enabled?: boolean;
+  /** 模型单价（每百万 tokens，元），用于 AI 用量成本估算 */
+  ai_model_prices?: Record<string, number>;
+}
+
+/** 设置页操作反馈：ok 决定颜色，替代旧的"中文字符串猜测"方案 */
+export type Msg = { ok: boolean; text: string } | null;
+
+/** GET /settings/export 导出的用户配置（含明文 API Key） */
+export interface ExportedSettings {
+  exported_at?: string;
+  app_version?: string;
+  api_keys?: Record<string, string>;
+  custom_providers?: Array<{ name: string; base_url: string; api_key: string; models: string[] }>;
+  ports?: { backend_port: number; frontend_port: number };
+  default_model?: string | null;
+  embedding_model?: string | null;
+  app_name?: string;
+  cnki_url_prefix?: string;
+  agent_enabled?: boolean;
+  ai_model_prices?: Record<string, number>;
 }
 
 export interface ModelLinkTestResult {
@@ -360,11 +380,25 @@ export interface TopicProject {
   id: number;
   title: string;
   source_gap: string | null;
+  source_type?: string;
+  source_ref?: string | null;
   source_paper_id: number | null;
   novelty: number | null;
   crowding: string | null;
   feasibility: number | null;
   status: 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
+  validation_report?: string | null;
+  research_questions?: string[];
+  current_step?: number;
+  generated_topics?: GeneratedTopic[];
+  overview?: string | null;
+  data_insights?: DataInsights | null;
+  literature_review?: string | null;
+  proposal?: string | null;
+  journal_advice?: string | null;
+  ai_pending?: string | null;
+  ai_error?: string | null;
+  papers?: ProjectPaper[];
   created_at: string | null;
   updated_at: string | null;
 }
@@ -372,9 +406,57 @@ export interface TopicProject {
 export interface TopicProjectPayload {
   title: string;
   source_gap?: string | null;
+  source_type?: string;
+  source_ref?: string | null;
   source_paper_id?: number | null;
   validation_report?: string | null;
   novelty?: number | null;
   crowding?: string | null;
   feasibility?: number | null;
+  research_questions?: string[];
+  current_step?: number;
+}
+
+/** 项目文献集条目（Step3 文献管理）。 */
+export interface ProjectPaper {
+  id: number;
+  paper_id: string;
+  similarity: number | null;
+  read_status: 'to_read' | 'reading' | 'read';
+  note: string | null;
+  title: string;
+  journal: string | null;
+  authors: string[];
+  published_at: string | null;
+  keywords: string[];
+  abstract: string;
+}
+
+/** Step1 LLM 生成的候选选题。 */
+export interface GeneratedTopic {
+  title: string;
+  research_questions: string[];
+  hypothesis: string;
+  why: string;
+}
+
+/** Step4 数据与方法线索。 */
+export interface DataInsights {
+  data_sources?: Array<{ name: string; papers: string[]; usage: string }>;
+  methods?: Array<{ name: string; papers: string[]; note: string }>;
+  advice?: string;
+  my_notes?: string;
+}
+
+/** 文献检索候选（search-papers 返回）。 */
+export interface ProjectSearchPaper {
+  id: string;
+  title: string;
+  abstract: string;
+  journal: string | null;
+  source: string | null;
+  published_at: string | null;
+  keywords: string[];
+  similarity: number | null;
+  in_project: boolean;
 }

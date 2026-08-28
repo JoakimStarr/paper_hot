@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import SkeletonCard from '@/components/SkeletonCard';
-import { papersApi } from '@/lib/api';
+import { papersApi, topicsApi } from '@/lib/api';
 import KeywordContextActions from '@/components/KeywordContextActions';
 import EntryCard from '@/components/EntryCard';
 import { NetworkData, NetworkNode } from '@/types/paper';
@@ -128,12 +128,12 @@ export default function NetworkPage() {
     return () => { cancelled = true; };
   }, [infoNode]);
 
-  /** 一键转选题：把关键词带入选题验证器。 */
-  const handleToTopic = (keyword: string) => {
+  /** 一键转选题：关键词 -> 研究工作台项目（创建后进入五步向导）。 */
+  const handleToTopic = async (keyword: string) => {
     try {
-      localStorage.setItem('pp_topic_prefill', keyword);
+      const p = await topicsApi.createTopicProject({ title: keyword, source_type: 'keyword', source_ref: keyword });
+      router.push(`/topics?project=${p.id}`);
     } catch { /* ignore */ }
-    router.push('/topics?tab=validator');
   };
 
   const handleConnectedNodeClick = (node: ConnectedNode) => {

@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
     app_name: str = "PaperPulse"
-    app_version: str = "2.16.0"
+    app_version: str = "2.17.0"
 
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
 
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     rerank_api_key: Optional[str] = None
     rerank_base_url: Optional[str] = None
 
-    arxiv_categories: list[str] = ["cs.AI", "cs.CL", "cs.LG", "cs.CV"]
+    arxiv_categories: list[str] = []  # 已关闭：arxiv 抓取的是 CS/AI 论文，非经济学
 
     scheduler_enabled: bool = True
 
@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # 关闭则退化为普通对话（不调用任何工具、不检索）。
     # 默认开启（悬浮助手/追问默认查库）；系统设置页与悬浮助手内均可关闭。
     agent_enabled: bool = True
+
+    # AI 模型单价（每百万 tokens，元），JSON 字符串：{"模型名": 单价}；用于用量成本估算
+    ai_model_prices: str = "{}"
 
     cors_origins: Union[list[str], str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
 

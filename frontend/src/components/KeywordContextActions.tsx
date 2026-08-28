@@ -8,6 +8,7 @@
 import { useRouter } from 'next/navigation';
 import { Search, TrendingUp, Target, Map as MapIcon } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { topicsApi } from '@/lib/api';
 
 interface Props {
   keyword: string;
@@ -20,11 +21,11 @@ export default function KeywordContextActions({ keyword, onMap, className = '' }
   const router = useRouter();
   const { t } = useLanguage();
 
-  const toTopic = () => {
+  const toTopic = async () => {
     try {
-      localStorage.setItem('pp_topic_prefill', keyword);
+      const p = await topicsApi.createTopicProject({ title: keyword, source_type: 'keyword', source_ref: keyword });
+      router.push(`/topics?project=${p.id}`);
     } catch { /* ignore */ }
-    router.push('/topics?tab=validator');
   };
 
   const btn = 'flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-300 transition-colors';

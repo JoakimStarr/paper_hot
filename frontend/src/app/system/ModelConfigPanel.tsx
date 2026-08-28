@@ -2,7 +2,7 @@
 
 import { Brain, Loader2, CheckCircle, XCircle, Save, RefreshCw, X } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
-import { SettingsInfo } from '@/types/paper';
+import { SettingsInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export interface TestResult {
@@ -14,17 +14,18 @@ export interface TestResult {
 interface ModelConfigPanelProps {
   defaultModel: string | null;
   savingDefaultModel: boolean;
-  defaultModelMessage: string;
+  defaultModelMessage: Msg;
   embeddingModel: string | null;
   embeddingModelDraft: string;
   setEmbeddingModelDraft: Dispatch<SetStateAction<string>>;
   savingEmbeddingModel: boolean;
-  embeddingModelMessage: string;
+  embeddingModelMessage: Msg;
   modelList: SettingsInfo['models'];
   testResults: Record<string, TestResult>;
   testingModel: string;
   agentEnabled: boolean;
   savingAgent: boolean;
+  agentMessage: Msg;
   onToggleAgent: () => void;
   onSaveEmbeddingModel: () => void;
   onClearDefaultModel: () => void;
@@ -46,6 +47,7 @@ export default function ModelConfigPanel({
   testingModel,
   agentEnabled,
   savingAgent,
+  agentMessage,
   onToggleAgent,
   onSaveEmbeddingModel,
   onClearDefaultModel,
@@ -91,8 +93,8 @@ export default function ModelConfigPanel({
           </div>
           <p className="mt-1 text-xs text-gray-400">{t('sys.defaultModelHint')}</p>
           {defaultModelMessage && (
-            <div className={`mt-2 text-xs ${defaultModelMessage.includes('失败') ? 'text-red-500' : 'text-green-600'}`}>
-              {defaultModelMessage}
+            <div className={`mt-2 text-xs ${defaultModelMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+              {defaultModelMessage.text}
             </div>
           )}
         </div>
@@ -118,8 +120,8 @@ export default function ModelConfigPanel({
           </div>
           <p className="mt-1 text-xs text-gray-400">{t('sys.embeddingHint')}</p>
           {embeddingModelMessage && (
-            <div className={`mt-2 text-xs ${embeddingModelMessage.includes('失败') ? 'text-red-500' : 'text-green-600'}`}>
-              {embeddingModelMessage}
+            <div className={`mt-2 text-xs ${embeddingModelMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+              {embeddingModelMessage.text}
             </div>
           )}
           {embeddingModel && (
@@ -133,11 +135,8 @@ export default function ModelConfigPanel({
         <div className="mb-6 p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-lg">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs text-indigo-700 dark:text-indigo-300 mb-0.5">AI 追问数据库检索（Agent 工具）</div>
-              <p className="text-xs text-gray-400">
-                开启后，AI 对话可调用工具检索论文库（搜索/语义召回/趋势/空白/作者），
-                并实时显示调用进展与 [n] 引用；关闭则保持普通对话。悬浮助手内也可逐会话切换。
-              </p>
+              <div className="text-xs text-indigo-700 dark:text-indigo-300 mb-0.5">{t('sys.agentTitle')}</div>
+              <p className="text-xs text-gray-400">{t('sys.agentDesc')}</p>
             </div>
             <button
               onClick={onToggleAgent}
@@ -145,7 +144,7 @@ export default function ModelConfigPanel({
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 ${
                 agentEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'
               }`}
-              title={agentEnabled ? '点击关闭' : '点击开启'}
+              title={agentEnabled ? t('sys.agentOn') : t('sys.agentOff')}
             >
               <span
                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -154,7 +153,12 @@ export default function ModelConfigPanel({
               />
             </button>
           </div>
-          {savingAgent && <div className="mt-1 text-xs text-gray-400">保存中…</div>}
+          {agentMessage && (
+            <div className={`mt-1 text-xs ${agentMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+              {agentMessage.text}
+            </div>
+          )}
+          {savingAgent && <div className="mt-1 text-xs text-gray-400"><Loader2 className="w-3 h-3 inline animate-spin" /> …</div>}
         </div>
 
         {/* 模型列表：设为默认 + 测试连接 */}

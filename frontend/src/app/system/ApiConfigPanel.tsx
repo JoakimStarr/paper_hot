@@ -1,8 +1,9 @@
 'use client';
 
-import { Key, CheckCircle, XCircle, Loader2, Edit3, Trash2, AlertCircle, Settings, RefreshCw } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Key, CheckCircle, XCircle, Loader2, Edit3, Trash2, AlertCircle, Settings, RefreshCw, Eye, EyeOff, Download, Upload, Plus } from 'lucide-react';
 import type { Dispatch, SetStateAction } from 'react';
-import { SettingsInfo } from '@/types/paper';
+import { SettingsInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export interface NewProviderInput {
@@ -15,7 +16,7 @@ export interface NewProviderInput {
 interface ApiConfigPanelProps {
   settingsInfo: SettingsInfo | null;
   apiKeys: Record<string, string>;
-  apiMessage: Record<string, string>;
+  apiMessage: Record<string, Msg>;
   updatingKey: string | null;
   onUpdateApiKey: (provider: string) => void;
   setApiKeys: Dispatch<SetStateAction<Record<string, string>>>;
@@ -23,7 +24,7 @@ interface ApiConfigPanelProps {
   setNewProvider: Dispatch<SetStateAction<NewProviderInput>>;
   editingProviderName: string | null;
   savingCustomProvider: boolean;
-  customProviderMessage: string;
+  customProviderMessage: Msg;
   onEditCustomProvider: (name: string) => void;
   onCancelEditProvider: () => void;
   onSaveCustomProvider: () => void;
@@ -31,10 +32,12 @@ interface ApiConfigPanelProps {
   ports: { backend: number; frontend: number };
   setPorts: Dispatch<SetStateAction<{ backend: number; frontend: number }>>;
   savingPorts: boolean;
-  portMessage: string;
+  portMessage: Msg;
   onUpdatePorts: () => void;
   fetchingModels: boolean;
   onFetchModels: () => void;
+  onExportConfig: () => void;
+  onImportConfig: (file: File) => void;
 }
 
 export default function ApiConfigPanel({
@@ -60,8 +63,17 @@ export default function ApiConfigPanel({
   onUpdatePorts,
   fetchingModels,
   onFetchModels,
+  onExportConfig,
+  onImportConfig,
 }: ApiConfigPanelProps) {
   const { t } = useLanguage();
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  // 未配置内置 Provider 的展示开关：默认隐藏，点「添加」展开对应卡片
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  // API Key 明文切换
+  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
+  const [showNewKey, setShowNewKey] = useState(false);
 
   const providers = [
     { key: 'zhipu', label: 'Zhipu' },
@@ -69,69 +81,129 @@ export default function ApiConfigPanel({
     { key: 'siliconflow', label: 'SiliconFlow' },
   ];
 
-  // 只展示已配置 API Key 的 Provider：未配置的卡片一律隐藏，避免界面冗余
-  const visibleProviders = providers.filter(provider => settingsInfo?.api_keys?.[provider.key as keyof typeof settingsInfo.api_keys]?.configured);
+  const isConfigured = (key: string) => !!settingsInfo?.api_keys?.[key as keyof typeof settingsInfo.api_keys]?.configured;
+  // 已配置的始终显示；未配置的默认隐藏，用户点「添加」时展开
+  const visibleProviders = providers.filter(p => isConfigured(p.key) || revealed[p.key]);
+  const hiddenProviders = providers.filter(p => !isConfigured(p.key) && !revealed[p.key]);
+
+  const toggleKeyVisible = (key: string) => setShowKey(prev => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <div className="space-y-6">
-      {visibleProviders.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {visibleProviders.map(provider => {
-          const status = settingsInfo?.api_keys?.[provider.key as keyof typeof settingsInfo.api_keys];
-          return (
-            <div key={provider.key} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Key className="w-5 h-5 text-primary-600" />
-                  <h3 className="font-semibold text-gray-900 dark:text-white">{provider.label}</h3>
+      <div className="space-y-4">
+        {/* 配置导出/导入 */}
+        <div className="flex items-center justify-end gap-2 flex-wrap">
+          <button
+            onClick={onExportConfig}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 transition-colors"
+            title={t('sys.exportConfigHint')}
+          >
+            <Download className="w-3.5 h-3.5" />
+            {t('sys.exportConfig')}
+          </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-primary-400 transition-colors"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            {t('sys.importConfig')}
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onImportConfig(file);
+              e.target.value = '';
+            }}
+          />
+        </div>
+
+        {visibleProviders.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {visibleProviders.map(provider => {
+            const status = settingsInfo?.api_keys?.[provider.key as keyof typeof settingsInfo.api_keys];
+            return (
+              <div key={provider.key} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Key className="w-5 h-5 text-primary-600" />
+                    <h3 className="font-semibold text-gray-900 dark:text-white">{provider.label}</h3>
+                  </div>
+                  {status?.configured ? (
+                    <span className="flex items-center gap-1 text-xs font-medium text-green-600">
+                      <CheckCircle className="w-4 h-4" />
+                      {t('sys.configured')}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-xs font-medium text-red-500">
+                      <XCircle className="w-4 h-4" />
+                      {t('sys.notConfigured')}
+                    </span>
+                  )}
                 </div>
-                {status?.configured ? (
-                  <span className="flex items-center gap-1 text-xs font-medium text-green-600">
-                    <CheckCircle className="w-4 h-4" />
-                    {t('sys.configured')}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-xs font-medium text-red-500">
-                    <XCircle className="w-4 h-4" />
-                    {t('sys.notConfigured')}
-                  </span>
+                {status?.masked && (
+                  <div className="mb-3 px-3 py-2 bg-gray-50 dark:bg-gray-700/50 rounded text-sm text-gray-600 dark:text-gray-400 font-mono">
+                    {status.masked}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type={showKey[provider.key] ? 'text' : 'password'}
+                    placeholder={t('sys.newKeyPlaceholder')}
+                    value={apiKeys[provider.key] || ''}
+                    onChange={e => setApiKeys(prev => ({ ...prev, [provider.key]: e.target.value }))}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={() => toggleKeyVisible(provider.key)}
+                    className="px-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                    title={showKey[provider.key] ? t('sys.hideKey') : t('sys.showKey')}
+                  >
+                    {showKey[provider.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={() => onUpdateApiKey(provider.key)}
+                    disabled={updatingKey === provider.key || !apiKeys[provider.key]?.trim()}
+                    className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                  >
+                    {updatingKey === provider.key ? <Loader2 className="w-4 h-4 animate-spin" /> : t('sys.updateBtn')}
+                  </button>
+                </div>
+                {apiMessage[provider.key] && (
+                  <div className={`mt-2 text-xs ${apiMessage[provider.key]!.ok ? 'text-green-600' : 'text-red-500'}`}>
+                    {apiMessage[provider.key]!.text}
+                  </div>
                 )}
               </div>
-              {status?.masked && (
-                <div className="mb-3 px-3 py-2 bg-gray-50 dark:bg-gray-700/50 rounded text-sm text-gray-600 dark:text-gray-400 font-mono">
-                  {status.masked}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  placeholder={t('sys.newKeyPlaceholder')}
-                  value={apiKeys[provider.key] || ''}
-                  onChange={e => setApiKeys(prev => ({ ...prev, [provider.key]: e.target.value }))}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                />
-                <button
-                  onClick={() => onUpdateApiKey(provider.key)}
-                  disabled={updatingKey === provider.key || !apiKeys[provider.key]?.trim()}
-                  className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
-                >
-                  {updatingKey === provider.key ? <Loader2 className="w-4 h-4 animate-spin" /> : t('sys.updateBtn')}
-                </button>
-              </div>
-              {apiMessage[provider.key] && (
-                <div className={`mt-2 text-xs ${apiMessage[provider.key].includes('成功') ? 'text-green-600' : 'text-red-500'}`}>
-                  {apiMessage[provider.key]}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        </div>
-      ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 text-sm text-gray-400 dark:text-gray-500">
-          {t('sys.noConfiguredProvider')}
-        </div>
-      )}
+            );
+          })}
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6 text-sm text-gray-400 dark:text-gray-500">
+            {t('sys.noConfiguredProvider')}
+          </div>
+        )}
+
+        {/* 未配置的内置服务：折叠入口，点击展开配置卡片 */}
+        {hiddenProviders.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+            <span>{t('sys.unconfiguredBuiltin')}:</span>
+            {hiddenProviders.map(p => (
+              <button
+                key={p.key}
+                onClick={() => setRevealed(prev => ({ ...prev, [p.key]: true }))}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+              >
+                <Plus className="w-3 h-3" />
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Custom Providers Section */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
@@ -148,7 +220,7 @@ export default function ApiConfigPanel({
           <div className="mb-4 space-y-3">
             {settingsInfo.custom_providers.map((cp) => (
               <div key={cp.name} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-wrap">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-gray-900 dark:text-white">{cp.name}</span>
                     {cp.api_key_configured ? (
@@ -222,13 +294,22 @@ export default function ApiConfigPanel({
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                 {t('sys.apiKeyLabel')}{editingProviderName ? ` (${t('sys.keepKeyHint')})` : '*'}
               </label>
-              <input
-                type="password"
-                placeholder={editingProviderName ? t('sys.keepKeyHint') : t('sys.newKeyPlaceholder')}
-                value={newProvider.api_key}
-                onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
+              <div className="flex gap-2">
+                <input
+                  type={showNewKey ? 'text' : 'password'}
+                  placeholder={editingProviderName ? t('sys.keepKeyHint') : t('sys.newKeyPlaceholder')}
+                  value={newProvider.api_key}
+                  onChange={e => setNewProvider(prev => ({ ...prev, api_key: e.target.value }))}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+                <button
+                  onClick={() => setShowNewKey(v => !v)}
+                  className="px-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                  title={showNewKey ? t('sys.hideKey') : t('sys.showKey')}
+                >
+                  {showNewKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -271,8 +352,8 @@ export default function ApiConfigPanel({
               </button>
             )}
             {customProviderMessage && (
-              <span className={`text-xs ${customProviderMessage.includes('成功') || customProviderMessage.includes('已') ? 'text-green-600' : 'text-red-500'}`}>
-                {customProviderMessage}
+              <span className={`text-xs ${customProviderMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+                {customProviderMessage.text}
               </span>
             )}
           </div>
@@ -310,8 +391,13 @@ export default function ApiConfigPanel({
             <div className="flex gap-2">
               <input
                 type="number"
+                min={1}
+                max={65535}
                 value={ports.backend}
-                onChange={e => setPorts(prev => ({ ...prev, backend: parseInt(e.target.value) || 8000 }))}
+                onChange={e => {
+                  const v = parseInt(e.target.value);
+                  setPorts(prev => ({ ...prev, backend: Number.isNaN(v) ? prev.backend : v }));
+                }}
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
@@ -321,8 +407,13 @@ export default function ApiConfigPanel({
             <div className="flex gap-2">
               <input
                 type="number"
+                min={1}
+                max={65535}
                 value={ports.frontend}
-                onChange={e => setPorts(prev => ({ ...prev, frontend: parseInt(e.target.value) || 3000 }))}
+                onChange={e => {
+                  const v = parseInt(e.target.value);
+                  setPorts(prev => ({ ...prev, frontend: Number.isNaN(v) ? prev.frontend : v }));
+                }}
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
@@ -337,12 +428,14 @@ export default function ApiConfigPanel({
             {savingPorts ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
           </button>
           {portMessage && (
-            <span className={`text-xs ${portMessage.includes('成功') || portMessage.includes('保存') ? 'text-green-600' : 'text-red-500'}`}>
-              {portMessage}
+            <span className={`text-xs ${portMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+              {portMessage.text}
             </span>
           )}
         </div>
         <p className="mt-2 text-xs text-gray-400">{t('sys.portRestartHint')}</p>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('sys.portRestartCmdHint')}</p>
+        <code className="inline-block mt-1 px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-xs font-mono text-gray-700 dark:text-gray-200">./stop.sh &amp;&amp; ./start.sh</code>
       </div>
     </div>
   );

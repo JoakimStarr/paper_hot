@@ -11,12 +11,16 @@ export default function GapsPanel() {
   const { t } = useLanguage();
   const router = useRouter();
 
-  /** 一键验证：组合命题预填选题验证器（跨页 localStorage 预填机制） */
-  const toValidator = (source: string, target: string) => {
+  /** 一键开题：空白组合 -> 研究工作台项目（跨页直达，创建后进入五步向导） */
+  const toValidator = async (source: string, target: string) => {
     try {
-      localStorage.setItem('pp_topic_prefill', `${source} 与 ${target} 的交叉研究`);
+      const p = await topicsApi.createTopicProject({
+        title: `交叉研究：${source} 与 ${target} 的结合`,
+        source_type: 'gap',
+        source_ref: `${source}×${target}`,
+      });
+      router.push(`/topics?project=${p.id}`);
     } catch { /* ignore */ }
-    router.push('/topics?tab=validator');
   };
   const [data, setData] = useState<ResearchGapsResponse | null>(null);
   const [loading, setLoading] = useState(true);

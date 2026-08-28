@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Favorite, PinnedPaper, MAX_PINNED_PAPERS, HiddenPreference, ReadingHistory, FollowedSubfield, Paper
+from app.models import Favorite, PinnedPaper, MAX_PINNED_PAPERS, HiddenPreference, ReadingHistory, FollowedSubfield, FollowedKeyword, Paper, PaperFeatures
 from app.routers.deps import verify_token, _paper_to_card, _isoformat_utc
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,10 @@ def _user_id(x_user_id: Optional[str]) -> str:
 
 class FollowedSubfieldsRequest(BaseModel):
     subfields: List[str]
+
+
+class FollowedKeywordsRequest(BaseModel):
+    keywords: List[str]
 
 
 async def _paper_ids_by_status(db: AsyncSession, user_id: str, model, limit: int = 200):
@@ -357,3 +361,138 @@ async def set_subfields(
             db.add(FollowedSubfield(user_id=uid, subfield=s))
     await db.commit()
     return {"subfields": [s for s in body.subfields if (s or "").strip()]}
+
+
+# ---------- 关注关键词 ----------
+
+@router.get("/personal/keywords")
+async def get_keywords(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    uid = _user_id(x_user_id)
+    result = await db.execute(
+        sa_select(FollowedKeyword.keyword).where(FollowedKeyword.user_id == uid)
+    )
+    return {"keywords": [r[0] for r in result.all()]}
+
+
+@router.put("/personal/keywords")
+async def set_keywords(
+    body: FollowedKeywordsRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """整体替换关注的关键词列表（前端已选集合一次提交）。"""
+    uid = _user_id(x_user_id)
+    await db.execute(sa_delete(FollowedKeyword).where(FollowedKeyword.user_id == uid))
+    for kw in body.keywords:
+        k = (kw or "").strip()
+        if k:
+            db.add(FollowedKeyword(user_id=uid, keyword=k))
+    await db.commit()
+    return {"keywords": [k for k in body.keywords if (k or "").strip()]}
+
+
+# ---------- 智能推荐（基于阅读/收藏历史） ----------
+
+@router.get("/personal/suggestions")
+async def get_suggestions(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """基于用户收藏+阅读历史，推荐可能感兴趣的子领域和关键词。"""
+    from collections import Counter
+
+    uid = _user_id(x_user_id)
+
+    # 收集历史 paper_id
+    fav_ids, read_ids = [], []
+    for model, limit in ((Favorite, 20), (ReadingHistory, 20)):
+        rows = (
+            await db.execute(
+                sa_select(model.paper_id)
+                .where(model.user_id == uid)
+                .order_by(model.id.desc())
+                .limit(limit)
+            )
+        ).all()
+        if model is Favorite:
+            fav_ids = [r[0] for r in rows]
+        else:
+            read_ids = [r[0] for r in rows]
+
+    all_ids = list(set(fav_ids + read_ids))
+    if not all_ids:
+        return {"subfields": [], "keywords": []}
+
+    # 查论文的 subfield 和 keywords_cn
+    result = await db.execute(
+        sa_select(Paper.economics_subfield, Paper.keywords_cn)
+        .where(Paper.id.in_(all_ids))
+    )
+    rows = result.all()
+
+    # 统计频次（收藏的 paper 权重 2x）
+    sf_counter: Counter = Counter()
+    kw_counter: Counter = Counter()
+    fav_set = set(fav_ids)
+
+    for sf, kws in rows:
+        if sf:
+            w = 2 if sf in fav_set else 1  # 简化：用 paper_id 是否在收藏中判断
+            sf_counter[sf] += w
+        for kw in (kws or []):
+            kw = (kw or "").strip()
+            if kw:
+                kw_counter[kw] += 1
+
+    # 排除已关注的
+    followed_sf = set()
+    followed_kw = set()
+    r1 = await db.execute(sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid))
+    followed_sf = {r[0] for r in r1.all()}
+    r2 = await db.execute(sa_select(FollowedKeyword.keyword).where(FollowedKeyword.user_id == uid))
+    followed_kw = {r[0] for r in r2.all()}
+
+    # 查论文数分布
+    from sqlalchemy import text as sa_text
+    sf_dist = {}
+    kw_dist = {}
+    try:
+        sf_rows = await db.execute(
+            sa_select(Paper.economics_subfield, sa_func.count(Paper.id))
+            .where(Paper.economics_subfield.isnot(None))
+            .group_by(Paper.economics_subfield)
+        )
+        sf_dist = {r[0]: r[1] for r in sf_rows.all()}
+
+        kw_result = await db.execute(
+            sa_select(Paper.keywords_cn)
+            .where(Paper.keywords_cn.isnot(None))
+        )
+        for (kws,) in kw_result.all():
+            for kw in (kws or []):
+                kw = (kw or "").strip()
+                if kw:
+                    kw_dist[kw] = kw_dist.get(kw, 0) + 1
+    except Exception:
+        pass
+
+    # 组装推荐结果
+    subfield_suggestions = [
+        {"name": sf, "reason": "阅读历史匹配", "paper_count": sf_dist.get(sf, 0)}
+        for sf, _ in sf_counter.most_common(8)
+        if sf not in followed_sf
+    ][:5]
+
+    keyword_suggestions = [
+        {"name": kw, "reason": "收藏论文高频词", "paper_count": kw_dist.get(kw, 0)}
+        for kw, _ in kw_counter.most_common(15)
+        if kw not in followed_kw
+    ][:5]
+
+    return {"subfields": subfield_suggestions, "keywords": keyword_suggestions}

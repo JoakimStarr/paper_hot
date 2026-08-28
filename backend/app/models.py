@@ -226,11 +226,14 @@ class ResearchGapReport(Base):
 
 
 class TopicProject(Base):
-    """选题工作台：把「验证过的选题」沉淀为可决策、可跟踪的项目（P6）。
+    """研究工作台：把一个选题从「灵感 → 验证 → 文献 → 数据/方法 → 写作」沉淀为可跟踪的项目。
 
     多用户预留：user_id 当前恒为 "local"，接入账号体系后按真实用户隔离。
     status 流转：to_validate -> validated -> subscribed -> abandoned，
     用于记录选题从「刚验证」到「决定做了(订阅跟踪)」或「放弃」的决策状态。
+    current_step 记录五步向导进度（1 选题定义 / 2 选题验证 / 3 文献管理 / 4 数据与方法 / 5 写作输出）；
+    各步的 AI 产出（generated_topics/overview/data_insights/literature_review/proposal/journal_advice）
+    均持久化在本表，ai_pending 标记正在执行的后台 AI 任务（供前端轮询）。
     """
     __tablename__ = "topic_projects"
 
@@ -238,14 +241,47 @@ class TopicProject(Base):
     user_id = Column(String(50), default="local", index=True)
     title = Column(String(500), nullable=False)            # 选题标题
     source_gap = Column(String(200), nullable=True)        # 来源空白词对，如 "耐心资本×新质生产力"
+    source_type = Column(String(20), default="manual")     # gap | keyword | idea | manual
+    source_ref = Column(String(200), nullable=True)        # 来源引用（空白词对/热点词/一句话想法）
     source_paper_id = Column(Integer, nullable=True)       # 若从某篇论文起题，记录来源论文 id
+    research_questions = Column(UnicodeJSON, nullable=True)  # 研究问题列表
     validation_report = Column(Text, nullable=True)        # 验证器生成的报告（markdown）
     novelty = Column(Integer, nullable=True)               # 新颖性评分 1-10
     crowding = Column(String(20), nullable=True)           # 拥挤度 低/中/高
     feasibility = Column(Integer, nullable=True)           # 可行性评分 1-10
+    current_step = Column(Integer, default=1)              # 五步向导进度 1-5
+    generated_topics = Column(UnicodeJSON, nullable=True)  # Step1 LLM 生成的候选选题
+    overview = Column(Text, nullable=True)                 # Step2 已有研究盘点（markdown）
+    data_insights = Column(UnicodeJSON, nullable=True)     # Step4 数据/方法线索
+    literature_review = Column(Text, nullable=True)        # Step3 文献脉络 / Step5 综述
+    proposal = Column(Text, nullable=True)                 # 立项书
+    journal_advice = Column(Text, nullable=True)           # 期刊适配结果
+    ai_pending = Column(String(50), nullable=True)         # 正在执行的后台 AI 任务名；空=空闲
+    ai_error = Column(Text, nullable=True)                 # 最近一次 AI 任务错误信息（成功后清空）
     status = Column(String(20), default="to_validate", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProjectPaper(Base):
+    """项目文献集：研究工作台某个项目里收集的相关论文（Step3 文献管理）。
+
+    每条记录标记精读状态与笔记；similarity 为加入时与选题的相似度（embedding 召回值）。
+    多用户预留：user_id 恒 "local"。
+    """
+    __tablename__ = "project_papers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "project_id", "paper_id", name="uq_project_papers_user_project_paper"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    project_id = Column(Integer, nullable=False, index=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    similarity = Column(Float, nullable=True)              # 与选题的相似度（0-1）
+    read_status = Column(String(20), default="to_read")    # to_read | reading | read
+    note = Column(Text, nullable=True)                     # 用户笔记
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Favorite(Base):
@@ -331,6 +367,19 @@ class FollowedSubfield(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(50), default="local", index=True)
     subfield = Column(String(100), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class FollowedKeyword(Base):
+    """关注的关键词（P1-10 个人化）：驱动「今日值得读」关键词召回。"""
+    __tablename__ = "followed_keywords"
+    __table_args__ = (
+        UniqueConstraint("user_id", "keyword", name="uq_followed_user_keyword"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    keyword = Column(String(100), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -466,4 +515,24 @@ class AssistantMessage(Base):
     session_id = Column(Integer, index=True)
     role = Column(String(20))                          # user | assistant
     content = Column(Text)
+    reasoning = Column(Text, nullable=True)            # 助手消息的思考过程（reasoning_content），仅 assistant 有
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class UserEvent(Base):
+    """用户行为埋点：追踪推荐曝光、点击、收藏等行为，用于量化推荐效果。
+
+    event_type: impression(曝光) | click(点击) | favorite(收藏) | unfavorite(取消收藏)
+    surface: dashboard_today_read | paper_list | search | ...
+    ref_id: 关联的论文 ID（paper_id）
+    meta: 扩展信息（如推荐分数、排名位置等 JSON）
+    """
+    __tablename__ = "user_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    event_type = Column(String(30), nullable=False, index=True)
+    surface = Column(String(50), nullable=False, index=True)
+    ref_id = Column(String(36), nullable=True, index=True)
+    meta = Column(UnicodeJSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

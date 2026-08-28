@@ -2,18 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Database, Trash2, Loader2, PieChart, CalendarDays, Brain, RefreshCw, GitCompareArrows, DownloadCloud, TrendingUp, Layers,
+  Database, Trash2, Loader2, PieChart, CalendarDays, Brain, RefreshCw, GitCompareArrows, DownloadCloud, TrendingUp, Layers, Coins, Pencil,
 } from 'lucide-react';
-import { SystemStats, MaintenanceResult, DataHealth, NetworkNode } from '@/types/paper';
+import { SystemStats, MaintenanceResult, DataHealth, NetworkNode, Msg } from '@/types/paper';
 import { papersApi, topicsApi } from '@/lib/api';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 interface DataTabProps {
   stats: SystemStats | null;
   cleaning: boolean;
-  cleanupMessage: string;
+  cleanupMessage: Msg;
   cleanupResult: MaintenanceResult | null;
   onCleanup: () => void;
+  aiModelPrices: Record<string, number>;
+  onSaveAiModelPrices: (prices: Record<string, number>) => Promise<string | null>;
 }
 
 /** 简单横向条形图（用于来源/年度分布） */
@@ -42,8 +44,8 @@ function StatCard({ label, value, icon }: { label: string; value: string | numbe
   );
 }
 
-// 数据健康轮询保护：200 次（约 10 分钟）仍未完成则停止自动刷新，提示手动查看
-const POLL_ATTEMPTS_LIMIT = 200;
+// 数据健康轮询保护：80 次（15s 间隔约 20 分钟）仍未完成则停止自动刷新，提示手动查看
+const POLL_ATTEMPTS_LIMIT = 80;
 
 export default function DataTab({
   stats,
@@ -51,6 +53,8 @@ export default function DataTab({
   cleanupMessage,
   cleanupResult,
   onCleanup,
+  aiModelPrices,
+  onSaveAiModelPrices,
 }: DataTabProps) {
   const { t } = useLanguage();
 
@@ -63,6 +67,11 @@ export default function DataTab({
   const [recomputing, setRecomputing] = useState(false);
   const [actionMessage, setActionMessage] = useState<string>('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AI 成本估算：单价编辑态
+  const [editingPrices, setEditingPrices] = useState(false);
+  const [pricesDraft, setPricesDraft] = useState('');
+  const [pricesMessage, setPricesMessage] = useState<string>('');
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) {
@@ -101,7 +110,7 @@ export default function DataTab({
   const tRef = useRef(t);
   tRef.current = t;
 
-  // 常驻健康轮询：向量覆盖 / 趋势 / 相似度每 3s 实时刷新。
+  // 常驻健康轮询：向量覆盖 / 趋势 / 相似度每 15s 低频刷新（统计页非实时关键页，降低后端压力）。
   // 后台补齐向量（无论从本页还是别处触发）进行时，"已向量化"数字会自动滚动更新。
   useEffect(() => {
     loadHealth();
@@ -118,10 +127,10 @@ export default function DataTab({
         } else if (attempts > POLL_ATTEMPTS_LIMIT) {
           backfillRef.current = false;
           setBackfilling(false);
-          setActionMessage('向量补齐耗时较长，已复位按钮；页面仍会自动刷新进度');
+          setActionMessage(tRef.current('sys.bfPollTimeout'));
         }
       }
-    }, 3000);
+    }, 15000);
     return () => { clearInterval(id); stopPoll(); };
   }, [loadHealth, loadKo, stopPoll]);
 
@@ -133,10 +142,11 @@ export default function DataTab({
     try {
       await topicsApi.backfillEmbeddings(100);
       setActionMessage(t('sys.bfStarted'));
-    } catch {
+    } catch (e: any) {
       setBackfilling(false);
       backfillRef.current = false;
-      setActionMessage(t('sys.bfFailed'));
+      const msg = e?.detail || e?.message || t('sys.bfFailed');
+      setActionMessage(msg);
     }
   };
 
@@ -169,7 +179,7 @@ export default function DataTab({
           stopPoll();
           setRecomputing(false);
           loadHealth();
-          setActionMessage('相似度重算耗时较长，已停止自动刷新，请稍后手动刷新查看进度');
+          setActionMessage(tRef.current('sys.simPollTimeout'));
           return;
         }
         const st = await papersApi.getSimilaritiesStatus().catch(() => null);
@@ -207,6 +217,35 @@ export default function DataTab({
   const ai = stats?.ai_usage;
   const sourceMax = Math.max(1, ...(sources.map(([, c]) => c)));
   const yearMax = Math.max(1, ...(years.map(([, c]) => c)));
+
+  // 估算总成本：按各模型 token 消耗 × 配置单价（每百万 tokens）
+  const estimatedCost = ai && ai.by_model
+    ? ai.by_model.reduce((sum, m) => sum + ((m.tokens ?? 0) / 1_000_000) * (aiModelPrices[m.model] ?? 0), 0)
+    : 0;
+
+  // 保存模型单价（JSON 文本 → 校验 → 调后端）
+  const handleSavePrices = async () => {
+    setPricesMessage('');
+    try {
+      const parsed = JSON.parse(pricesDraft || '{}');
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid');
+      const cleaned: Record<string, number> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        const n = Number(v);
+        if (!k || Number.isNaN(n) || n < 0) throw new Error('invalid');
+        cleaned[k] = n;
+      }
+      const err = await onSaveAiModelPrices(cleaned);
+      if (err) {
+        setPricesMessage(err);
+        return;
+      }
+      setPricesMessage(t('sys.aiCostPricesSaved'));
+      setEditingPrices(false);
+    } catch {
+      setPricesMessage(t('sys.aiCostPricesInvalid'));
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -326,6 +365,50 @@ export default function DataTab({
                 </div>
               </div>
             )}
+            {/* 成本估算（按配置单价） */}
+            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <Coins className="w-4 h-4 text-amber-500" />
+                  <span className="text-gray-600 dark:text-gray-300">{t('sys.aiCostTitle')}</span>
+                  <span className="font-semibold text-gray-900 dark:text-white">¥{estimatedCost.toFixed(4)}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setEditingPrices(v => !v);
+                    setPricesDraft(JSON.stringify(aiModelPrices, null, 2));
+                    setPricesMessage('');
+                  }}
+                  className="flex items-center gap-1 text-xs text-purple-600 dark:text-purple-300 hover:underline"
+                >
+                  <Pencil className="w-3 h-3" />
+                  {t('sys.aiCostEdit')}
+                </button>
+              </div>
+              {editingPrices && (
+                <div className="mt-2">
+                  <textarea
+                    value={pricesDraft}
+                    onChange={(e) => setPricesDraft(e.target.value)}
+                    rows={5}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-xs font-mono text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    placeholder='{"glm-4": 15}'
+                  />
+                  <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={handleSavePrices}
+                      className="px-3 py-1.5 bg-purple-600 text-white text-xs rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                      {t('common.save')}
+                    </button>
+                    <span className="text-xs text-gray-400">{t('sys.aiCostPricesHint')}</span>
+                    {pricesMessage && (
+                      <span className="text-xs text-red-500">{pricesMessage}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
       </div>
@@ -339,7 +422,7 @@ export default function DataTab({
           </div>
           <button
             onClick={handleBackfill}
-            disabled={backfilling || !embedding || embedding.missing <= 0}
+            disabled={!embedding || embedding.missing <= 0}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
             {backfilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
@@ -365,6 +448,11 @@ export default function DataTab({
             </p>
           </>
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
+        {actionMessage && (
+          <div className="mt-3 p-3 rounded-lg text-sm text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+            {actionMessage}
+          </div>
+        )}
       </div>
 
       {/* 趋势分析情况 */}
@@ -453,13 +541,6 @@ export default function DataTab({
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
       </div>
 
-      {/* 动作反馈 */}
-      {actionMessage && (
-        <div className="p-3 rounded-lg text-sm text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-          {actionMessage}
-        </div>
-      )}
-
       {/* 清理维护（保留原样） */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border p-6">
         <div className="flex items-center justify-between mb-4">
@@ -480,8 +561,8 @@ export default function DataTab({
           {t('sys.cleanupDesc')}
         </p>
         {cleanupMessage && (
-          <div className={`p-3 rounded-lg text-sm ${cleanupMessage.includes('失败') ? 'bg-red-50 dark:bg-red-900/30 text-red-600' : 'bg-green-50 dark:bg-green-900/30 text-green-600'}`}>
-            {cleanupMessage}
+          <div className={`p-3 rounded-lg text-sm ${cleanupMessage.ok ? 'bg-green-50 dark:bg-green-900/30 text-green-600' : 'bg-red-50 dark:bg-red-900/30 text-red-600'}`}>
+            {cleanupMessage.text}
           </div>
         )}
         {cleanupResult && (

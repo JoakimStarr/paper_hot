@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ExportedSettings } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -307,12 +307,6 @@ export const papersApi = {
   getTopicRelevance: async (paperId: string, topic?: string): Promise<{ score: number | null; reason: string; ai_used: boolean; overlaps?: string[] }> =>
     request(`/papers/${paperId}/relevance`, { method: 'POST', body: { ...(topic ? { topic } : {}) } }),
 
-  getChats: async (paperId: string): Promise<Array<{ role: string; content: string }>> =>
-    request(`/papers/${paperId}/chats`),
-
-  saveChats: async (paperId: string, messages: Array<{ role: string; content: string }>): Promise<void> =>
-    request(`/papers/${paperId}/chats`, { method: 'POST', body: { messages } }),
-
   getAuthorPapers: async (authorName: string, page: number = 1, pageSize: number = 20): Promise<AuthorPapersResponse> =>
     request(`/authors/${encodeURIComponent(authorName)}/papers`, { params: { page, page_size: pageSize } }),
 
@@ -325,11 +319,17 @@ export const papersApi = {
   getSubfieldDistribution: async (): Promise<SubfieldDistributionResponse> =>
     request('/subfield-distribution'),
 
+  getKeywordDistribution: async (): Promise<{ distribution: Array<{ keyword: string; count: number }> }> =>
+    request('/keyword-distribution'),
+
   getSettings: async (): Promise<SettingsInfo> =>
     request('/settings'),
 
-  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]}>; cnki_url_prefix?: string | null; agent_enabled?: boolean }): Promise<{ success: boolean }> =>
+  updateSettings: async (data: { api_keys?: Record<string, string>; model_priority?: string[]; ports?: Record<string, number>; app_name?: string; default_model?: string | null; embedding_model?: string | null; custom_providers?: Array<{name: string; base_url: string; api_key: string; models: string[]; previous_name?: string}>; cnki_url_prefix?: string | null; agent_enabled?: boolean; ai_model_prices?: Record<string, number> }): Promise<{ success: boolean }> =>
     request('/settings', { method: 'PUT', body: data }),
+
+  exportSettings: async (): Promise<ExportedSettings> =>
+    request('/settings/export'),
 
   testModelLink: async (model: string): Promise<ModelLinkTestResult> =>
     request('/settings/test-model', { method: 'POST', body: { model } }),
@@ -402,6 +402,15 @@ export const personalApi = {
 
   setSubfields: async (subfields: string[]): Promise<{ subfields: string[] }> =>
     request('/personal/subfields', { method: 'PUT', body: { subfields } }),
+
+  getKeywords: async (): Promise<{ keywords: string[] }> =>
+    request('/personal/keywords'),
+
+  setKeywords: async (keywords: string[]): Promise<{ keywords: string[] }> =>
+    request('/personal/keywords', { method: 'PUT', body: { keywords } }),
+
+  getSuggestions: async (): Promise<{ subfields: Array<{ name: string; reason: string; paper_count: number }>; keywords: Array<{ name: string; reason: string; paper_count: number }> }> =>
+    request('/personal/suggestions'),
 };
 
 // —— 研究工作台（P1-7）——
@@ -536,6 +545,63 @@ export const topicsApi = {
     request<void>(`/topic-projects/${id}`, { method: 'DELETE' }),
 };
 
+// —— 研究工作台（Workbench）：项目详情 / 文献集 / 统一 AI 操作 ——
+export const workbenchApi = {
+  /** 项目详情（全字段 + 文献集 + ai_pending/ai_error 状态）。 */
+  getProject: async (id: number): Promise<TopicProject> =>
+    request<TopicProject>(`/topic-projects/${id}`),
+
+  /** 更新项目任意步骤字段（research_questions/current_step/validation_report 等）。 */
+  updateProject: async (id: number, payload: Record<string, unknown>): Promise<TopicProject> =>
+    request<TopicProject>(`/topic-projects/${id}`, { method: 'PATCH', body: payload }),
+
+  // —— 文献集 ——
+  listProjectPapers: async (id: number): Promise<ProjectPaper[]> =>
+    request<ProjectPaper[]>(`/topic-projects/${id}/papers`),
+
+  addProjectPaper: async (id: number, paperId: string, similarity?: number | null): Promise<ProjectPaper> =>
+    request<ProjectPaper>(`/topic-projects/${id}/papers`, {
+      method: 'POST',
+      body: { paper_id: paperId, ...(similarity != null ? { similarity } : {}) },
+    }),
+
+  updateProjectPaper: async (
+    id: number,
+    paperId: string,
+    payload: Partial<Pick<ProjectPaper, 'read_status' | 'note'>>,
+  ): Promise<ProjectPaper> =>
+    request<ProjectPaper>(`/topic-projects/${id}/papers/${paperId}`, { method: 'PATCH', body: payload }),
+
+  deleteProjectPaper: async (id: number, paperId: string): Promise<void> =>
+    request<void>(`/topic-projects/${id}/papers/${paperId}`, { method: 'DELETE' }),
+
+  /** 检索候选论文（embedding 召回，带 in_project 标记）。 */
+  searchProjectPapers: async (id: number, query: string, limit = 12): Promise<{ mode: string; count: number; papers: ProjectSearchPaper[] }> =>
+    request(`/topic-projects/${id}/search-papers`, { method: 'POST', body: { query, limit } }),
+
+  // —— 统一 AI 操作（后台任务，轮询项目详情等待完成）——
+  aiAction: async (id: number, action: string, ideaText?: string): Promise<{ status: string; action: string }> =>
+    request(`/topic-projects/${id}/ai`, {
+      method: 'POST',
+      body: { action, ...(ideaText ? { idea_text: ideaText } : {}) },
+    }),
+
+  /** 立项书（结果存回项目 proposal）。 */
+  generateProposal: async (id: number, validationReport?: string): Promise<{ proposal: string; model: string }> =>
+    request(`/topic-projects/${id}/proposal`, {
+      method: 'POST',
+      body: { ...(validationReport ? { validation_report: validationReport } : {}) },
+    }),
+
+  /** 期刊适配（结果存回项目 journal_advice）。 */
+  suggestJournal: async (id: number): Promise<{ recommendations: string; suggestions: Array<{ journal: string; reason: string }>; ai_used: boolean }> =>
+    request(`/topic-projects/${id}/journal`, { method: 'POST' }),
+
+  /** 个性化选题灵感推荐（基于关注/阅读/空白，结果缓存 10 分钟）。 */
+  recommendTopics: async (): Promise<{ recommendations: Array<{ title: string; why: string; angle?: string }>; cached: boolean }> =>
+    request('/topic-projects/recommend', { method: 'POST' }),
+};
+
 /** 选题验证器（SSE 流式，带 token）。 */
 export function streamValidateTopic(
   topic: string,
@@ -663,7 +729,12 @@ export async function streamChat(
         if (!line.startsWith('data: ')) continue;
         try {
           const data = JSON.parse(line.slice(6));
-          if (data.done) {
+          if (data.error) {
+            // 后端错误帧（{error: msg}）：以错误终止，不再渲染为正文
+            cb.onError(String(data.error));
+            done = true;
+            break;
+          } else if (data.done) {
             done = true;
             // 流式调试：done 到达时的累计量
             if (typeof console !== 'undefined') {
@@ -715,17 +786,6 @@ export function streamTrendChat(
   return streamChat(`/ai-analysis/reports/${reportId}/chat`, messages, model, cb, signal);
 }
 
-/** 单篇论文多轮对话（SSE 流式，带 token）。 */
-export function streamPaperChat(
-  paperId: string,
-  messages: Array<{ role: string; content: string }>,
-  model: string | undefined,
-  cb: ChatStreamCallbacks,
-  signal?: AbortSignal,
-): Promise<void> {
-  return streamChat(`/papers/${paperId}/chat`, messages, model, cb, signal);
-}
-
 // —— 全局 AI 悬浮助手（会话管理 + 历史记录）——
 export interface AssistantSession {
   id: number;
@@ -738,7 +798,7 @@ export interface AssistantSession {
 }
 
 export interface AssistantSessionDetail extends AssistantSession {
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string; reasoning?: string | null }>;
 }
 
 export const assistantApi = {
@@ -757,21 +817,37 @@ export const assistantApi = {
     request(`/assistant/sessions/${id}`),
   deleteSession: async (id: number): Promise<{ ok: boolean }> =>
     request(`/assistant/sessions/${id}`, { method: 'DELETE' }),
-  saveMessages: async (id: number, messages: Array<{ role: string; content: string }>): Promise<{ ok: boolean }> =>
+  saveMessages: async (id: number, messages: Array<{ role: string; content: string; reasoning?: string | null }>): Promise<{ ok: boolean }> =>
     request(`/assistant/sessions/${id}/messages`, { method: 'POST', body: { messages } }),
   submitFeedback: async (data: { surface?: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
     request('/ai/feedback', { method: 'POST', body: data }),
 };
 
-/** 全局悬浮助手对话（SSE 流式）：基于某个会话继续，后端加载历史消息。 */
-export function streamAssistantChat(
-  sessionId: number,
-  messages: Array<{ role: string; content: string }>,
-  cb: ChatStreamCallbacks,
-  signal?: AbortSignal,
-  agentEnabled?: boolean,
-): Promise<void> {
-  const extra: Record<string, unknown> = { session_id: sessionId };
-  if (agentEnabled !== undefined) extra.agent_enabled = agentEnabled;
-  return streamChat('/assistant/chat', messages, undefined, cb, signal, extra);
+
+// —— 用户行为埋点 ——
+
+export interface TrackEvent {
+  event_type: 'impression' | 'click' | 'favorite' | 'unfavorite';
+  surface: string;
+  ref_id?: string;
+  meta?: Record<string, unknown>;
 }
+
+export interface AnalyticsData {
+  period_days: number;
+  event_counts: Record<string, number>;
+  funnel: { impressions: number; clicks: number; favorites: number; ctr: number; fav_rate: number };
+  daily: Record<string, Record<string, number>>;
+  top_clicked: Array<{ paper_id: string; clicks: number }>;
+}
+
+export const trackingApi = {
+  trackEvent: async (event: TrackEvent): Promise<{ ok: boolean }> =>
+    request('/tracking/event', { method: 'POST', body: event }),
+
+  trackEvents: async (events: TrackEvent[]): Promise<{ ok: boolean; count: number }> =>
+    request('/tracking/events', { method: 'POST', body: { events } }),
+
+  getAnalytics: async (days = 7, surface?: string): Promise<AnalyticsData> =>
+    request('/tracking/analytics', { params: { days, ...(surface ? { surface } : {}) } }),
+};

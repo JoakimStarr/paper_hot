@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Layout from '@/components/Layout';
 import { papersApi, ApiError } from '@/lib/api';
-import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo } from '@/types/paper';
+import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo, Msg, ExportedSettings } from '@/types/paper';
 import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide-react';
 import { KeywordCrawlForm } from './CrawlerTab';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -12,27 +12,46 @@ import CrawlerTab from './CrawlerTab';
 import DataTab from './DataTab';
 import ModelConfigTab from './ModelConfigTab';
 import LogsTab from './LogsTab';
+import ConfirmModal from './ConfirmModal';
 
 type TabType = 'overview' | 'crawler' | 'data' | 'modelConfig' | 'logs';
 
+const TAB_KEYS: TabType[] = ['overview', 'crawler', 'data', 'modelConfig', 'logs'];
+
+/** 从 URL ?tab= 恢复页签，刷新/分享链接后停留在原页签 */
+const initialTab = (): TabType => {
+  if (typeof window === 'undefined') return 'overview';
+  const t = new URLSearchParams(window.location.search).get('tab') as TabType;
+  return TAB_KEYS.includes(t) ? t : 'overview';
+};
+
+/** 操作反馈 5s 后自动消失 */
+function useAutoClear(value: unknown, clear: () => void, ms = 5000) {
+  useEffect(() => {
+    if (!value) return;
+    const id = setTimeout(clear, ms);
+    return () => clearTimeout(id);
+  }, [value, clear, ms]);
+}
+
 export default function SystemPage() {
   const { t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [activeTab, setActiveTabState] = useState<TabType>(initialTab);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [crawlLogs, setCrawlLogs] = useState<CrawlLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [crawling, setCrawling] = useState(false);
   const [cnkiCrawling, setCnkiCrawling] = useState<'top50' | 'navi' | null>(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<Msg>(null);
 
   const [settingsInfo, setSettingsInfo] = useState<SettingsInfo | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [apiMessage, setApiMessage] = useState<Record<string, string>>({});
+  const [apiMessage, setApiMessage] = useState<Record<string, Msg>>({});
   const [updatingKey, setUpdatingKey] = useState<string | null>(null);
 
   const [modelList, setModelList] = useState<SettingsInfo['models']>([]);
   const [savingModels, setSavingModels] = useState(false);
-  const [modelMessage, setModelMessage] = useState('');
+  const [modelMessage, setModelMessage] = useState<Msg>(null);
 
   const [schedulerRunning, setSchedulerRunning] = useState(false);
   const [schedulerJobs, setSchedulerJobs] = useState<SchedulerJob[]>([]);
@@ -41,7 +60,16 @@ export default function SystemPage() {
 
   const [cleaning, setCleaning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<MaintenanceResult | null>(null);
-  const [cleanupMessage, setCleanupMessage] = useState('');
+  const [cleanupMessage, setCleanupMessage] = useState<Msg>(null);
+
+  // 确认弹窗（替代原生 confirm）
+  type ConfirmState =
+    | { type: 'cleanup' }
+    | { type: 'deleteProvider'; name: string }
+    | { type: 'import'; data: ExportedSettings }
+    | null;
+  const [confirm, setConfirm] = useState<ConfirmState>(null);
+  const [importing, setImporting] = useState(false);
 
   // 关键词检索爬取
   const [kwInfo, setKwInfo] = useState<CNKISearchInfo | null>(null);
@@ -49,7 +77,14 @@ export default function SystemPage() {
   const [kwStopping, setKwStopping] = useState(false);
   const [rerunningLogId, setRerunningLogId] = useState<number | null>(null);
   const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', detail_workers: '3', show_browser: false });
-  const kwPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const kwPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** 统一把异常转成结构化反馈 */
+  const errMsg = useCallback((error: unknown, fallback: string): Msg => ({
+    ok: false,
+    text: error instanceof ApiError ? (error.detail || error.message) : (error as Error)?.message || fallback,
+  }), []);
+  const okMsg = useCallback((text: string): Msg => ({ ok: true, text }), []);
 
   const loadKwStatus = async () => {
     try {
@@ -75,7 +110,7 @@ export default function SystemPage() {
         clearInterval(kwPollRef.current);
         kwPollRef.current = null;
         setKwStarting(false);
-        setMessage('关键词爬取仍在后台进行，已停止状态轮询，请稍后手动刷新查看进度');
+        setMessage({ ok: true, text: t('sys.kwPollTimeout') });
       }
     }, 3000);
   };
@@ -95,11 +130,11 @@ export default function SystemPage() {
         detail_workers: kwForm.detail_workers ? Math.min(Math.max(1, Number(kwForm.detail_workers)), 12) : 3,
         show_browser: kwForm.show_browser,
       });
-      setMessage(t('sys.kwStarted'));
+      setMessage(okMsg(t('sys.kwStarted')));
       startKwStatusPoll();
       void res;
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwStartFailed'));
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.kwStartFailed')));
       setKwStarting(false);
     }
   };
@@ -107,18 +142,18 @@ export default function SystemPage() {
   const handlePauseKeywordCrawl = async () => {
     try {
       const res = await papersApi.pauseCNKISearch();
-      setMessage(res.status === 'paused' ? t('sys.kwPaused') : t('sys.kwPauseFailed'));
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwPauseFailed'));
+      setMessage(res.status === 'paused' ? okMsg(t('sys.kwPaused')) : { ok: false, text: t('sys.kwPauseFailed') });
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.kwPauseFailed')));
     }
   };
 
   const handleResumeKeywordCrawl = async () => {
     try {
       await papersApi.resumeCNKISearch();
-      setMessage(t('sys.kwResumed'));
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwResumeFailed'));
+      setMessage(okMsg(t('sys.kwResumed')));
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.kwResumeFailed')));
     }
   };
 
@@ -127,12 +162,12 @@ export default function SystemPage() {
     setKwStopping(true);
     try {
       await papersApi.stopCNKISearch();
-      setMessage(t('sys.kwStopped'));
+      setMessage(okMsg(t('sys.kwStopped')));
       setKwStopping(false);
       // 状态轮询很快会拉到 running=false 并自动复位
-    } catch (error: any) {
+    } catch (error: unknown) {
       setKwStopping(false);
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.kwStopFailed'));
+      setMessage(errMsg(error, t('sys.kwStopFailed')));
     }
   };
 
@@ -141,16 +176,16 @@ export default function SystemPage() {
     setRerunningLogId(logId);
     try {
       const res = await papersApi.rerunCrawl(logId);
-      setMessage(res.task_type === 'keyword'
-        ? `已重新启动关键词爬取：${res.name}`
-        : `已重新启动期刊爬取：${res.name}`);
+      setMessage(okMsg(res.task_type === 'keyword'
+        ? t('sys.rerunKw', { name: res.name })
+        : t('sys.rerunCrawl', { name: res.name })));
       if (res.task_type === 'keyword') {
         // 关键词任务重跑：立即拉一次状态并启动轮询，进度实时更新
         loadKwStatus();
         startKwStatusPoll();
       }
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || '任务重跑失败');
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.rerunFailed')));
     } finally {
       setRerunningLogId(null);
       fetchData();
@@ -159,18 +194,18 @@ export default function SystemPage() {
 
   const [ports, setPorts] = useState({ backend: 8000, frontend: 3000 });
   const [savingPorts, setSavingPorts] = useState(false);
-  const [portMessage, setPortMessage] = useState('');
+  const [portMessage, setPortMessage] = useState<Msg>(null);
 
   const [appInfo, setAppInfo] = useState({ name: '', version: '' });
   const [editingAppName, setEditingAppName] = useState(false);
   const [savingAppName, setSavingAppName] = useState(false);
-  const [appNameMessage, setAppNameMessage] = useState('');
+  const [appNameMessage, setAppNameMessage] = useState<Msg>(null);
 
   // CNKI 论文详情跳转域名头
   const [cnkiUrlPrefix, setCnkiUrlPrefix] = useState('');
   const [cnkiPrefixDraft, setCnkiPrefixDraft] = useState('');
   const [savingCnkiPrefix, setSavingCnkiPrefix] = useState(false);
-  const [cnkiPrefixMessage, setCnkiPrefixMessage] = useState('');
+  const [cnkiPrefixMessage, setCnkiPrefixMessage] = useState<Msg>(null);
 
   // Custom providers state
   const [customProviders, setCustomProviders] = useState<Array<{
@@ -181,13 +216,13 @@ export default function SystemPage() {
   }>>([]);
   const [newProvider, setNewProvider] = useState({ name: '', base_url: '', api_key: '', models: '' });
   const [savingCustomProvider, setSavingCustomProvider] = useState(false);
-  const [customProviderMessage, setCustomProviderMessage] = useState('');
+  const [customProviderMessage, setCustomProviderMessage] = useState<Msg>(null);
   const [editingProviderName, setEditingProviderName] = useState<string | null>(null);
 
   // Default model + link test state
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [savingDefaultModel, setSavingDefaultModel] = useState(false);
-  const [defaultModelMessage, setDefaultModelMessage] = useState('');
+  const [defaultModelMessage, setDefaultModelMessage] = useState<Msg>(null);
   const [testingModel, setTestingModel] = useState('');
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms?: number; message: string }>>({});
 
@@ -198,14 +233,33 @@ export default function SystemPage() {
   const [embeddingModel, setEmbeddingModel] = useState<string | null>(null);
   const [embeddingModelDraft, setEmbeddingModelDraft] = useState('');
   const [savingEmbeddingModel, setSavingEmbeddingModel] = useState(false);
-  const [embeddingModelMessage, setEmbeddingModelMessage] = useState('');
+  const [embeddingModelMessage, setEmbeddingModelMessage] = useState<Msg>(null);
 
   // AI 追问数据库检索（Agent 工具）全局开关
   const [agentEnabled, setAgentEnabled] = useState(false);
   const [savingAgent, setSavingAgent] = useState(false);
+  const [agentMessage, setAgentMessage] = useState<Msg>(null);
+
+  // AI 模型单价（成本估算）
+  const aiModelPrices = settingsInfo?.ai_model_prices || {};
+
+  // 各类反馈 5s 自动消失
+  useAutoClear(message, () => setMessage(null));
+  useAutoClear(apiMessage, () => setApiMessage({}));
+  useAutoClear(modelMessage, () => setModelMessage(null));
+  useAutoClear(cleanupMessage, () => setCleanupMessage(null));
+  useAutoClear(appNameMessage, () => setAppNameMessage(null));
+  useAutoClear(cnkiPrefixMessage, () => setCnkiPrefixMessage(null));
+  useAutoClear(portMessage, () => setPortMessage(null));
+  useAutoClear(customProviderMessage, () => setCustomProviderMessage(null));
+  useAutoClear(defaultModelMessage, () => setDefaultModelMessage(null));
+  useAutoClear(embeddingModelMessage, () => setEmbeddingModelMessage(null));
+  useAutoClear(agentMessage, () => setAgentMessage(null));
 
   useEffect(() => {
     fetchData();
+    // 设置页所有页签都依赖 settings（CNKI 前缀、应用名、端口、模型等），进入即加载
+    fetchSettings();
   }, []);
 
   const fetchData = async () => {
@@ -277,24 +331,31 @@ export default function SystemPage() {
   };
 
   useEffect(() => {
-    if (activeTab === 'modelConfig') {
-      fetchSettings();
-    }
     if (activeTab === 'crawler') {
       fetchSchedulerJobs();
       loadKwStatus();
     }
   }, [activeTab]);
 
+  // 页签切换同步到 URL（replaceState 不触发导航），刷新/分享后停留在原页签
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabState(tab);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      window.history.replaceState(null, '', url.toString());
+    } catch { /* URL 同步失败不影响切换 */ }
+  };
+
   const handleStartCrawl = async () => {
     setCrawling(true);
-    setMessage('');
+    setMessage(null);
     try {
       const res = await papersApi.startCrawl();
-      setMessage(res.message || t('sys.crawlStarted'));
+      setMessage(okMsg(res.message || t('sys.crawlStarted')));
       setTimeout(fetchData, 3000);
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.crawlStartFailed'));
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.crawlStartFailed')));
     } finally {
       setCrawling(false);
     }
@@ -302,14 +363,14 @@ export default function SystemPage() {
 
   const handleCNKICrawl = async (kind: 'top50' | 'navi') => {
     setCnkiCrawling(kind);
-    setMessage('');
+    setMessage(null);
     try {
       const res = kind === 'top50'
         ? await papersApi.startCNKITop50Crawl()
         : await papersApi.startCNKNaviCrawl();
-      setMessage(res.message || t('sys.cnkiStarted'));
-    } catch (error: any) {
-      setMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.cnkiStartFailed'));
+      setMessage(okMsg(res.message || t('sys.cnkiStarted')));
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.cnkiStartFailed')));
     } finally {
       setCnkiCrawling(null);
     }
@@ -319,14 +380,14 @@ export default function SystemPage() {
     const key = apiKeys[provider];
     if (!key || !key.trim()) return;
     setUpdatingKey(provider);
-    setApiMessage(prev => ({ ...prev, [provider]: '' }));
+    setApiMessage(prev => ({ ...prev, [provider]: null }));
     try {
       await papersApi.updateSettings({ api_keys: { [provider]: key.trim() } });
-      setApiMessage(prev => ({ ...prev, [provider]: t('sys.updatedMsg') }));
+      setApiMessage(prev => ({ ...prev, [provider]: okMsg(t('sys.updatedMsg')) }));
       setApiKeys(prev => ({ ...prev, [provider]: '' }));
       fetchSettings();
-    } catch (error: any) {
-      setApiMessage(prev => ({ ...prev, [provider]: error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.updateFailedMsg') }));
+    } catch (error: unknown) {
+      setApiMessage(prev => ({ ...prev, [provider]: errMsg(error, t('sys.updateFailedMsg')) }));
     } finally {
       setUpdatingKey(null);
     }
@@ -340,17 +401,26 @@ export default function SystemPage() {
     setModelList(newList);
   };
 
+  // 拖拽排序：把 from 位置的模型移动到 to 位置
+  const handleReorderModel = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= modelList.length || to >= modelList.length) return;
+    const newList = [...modelList];
+    const [moved] = newList.splice(from, 1);
+    newList.splice(to, 0, moved);
+    setModelList(newList);
+  };
+
   const handleSaveModelPriority = async () => {
     setSavingModels(true);
-    setModelMessage('');
+    setModelMessage(null);
     try {
       // 发送完整模型顺序（含自定义 Provider），后端会分别保存内置与自定义 Provider 的顺序
       const modelPriority = modelList.map(m => m.name);
       await papersApi.updateSettings({ model_priority: modelPriority });
-      setModelMessage(t('sys.orderSaved'));
+      setModelMessage(okMsg(t('sys.orderSaved')));
       fetchSettings();
-    } catch (error: any) {
-      setModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
+    } catch (error: unknown) {
+      setModelMessage(errMsg(error, t('sys.saveFailed')));
     } finally {
       setSavingModels(false);
     }
@@ -361,8 +431,10 @@ export default function SystemPage() {
     try {
       const res = await papersApi.toggleScheduler();
       setSchedulerRunning(res.running);
+      setMessage(okMsg(res.running ? t('sys.running') : t('sys.stopped')));
     } catch (error) {
       console.error('Error toggling scheduler:', error);
+      setMessage(errMsg(error, t('sys.schedulerToggleFailed')));
     } finally {
       setTogglingScheduler(false);
     }
@@ -375,68 +447,86 @@ export default function SystemPage() {
       setTimeout(fetchSchedulerJobs, 2000);
     } catch (error) {
       console.error('Error triggering job:', error);
+      setMessage(errMsg(error, t('sys.schedulerToggleFailed')));
     } finally {
       setTriggeringJob(null);
     }
   };
 
   const handleCleanup = async () => {
-    if (!confirm(t('sys.cleanupConfirm'))) return;
     setCleaning(true);
     setCleanupResult(null);
-    setCleanupMessage('');
+    setCleanupMessage(null);
     try {
       const res = await papersApi.cleanupData();
       setCleanupResult(res);
-      setCleanupMessage(t('sys.cleanupDone'));
+      setCleanupMessage(okMsg(t('sys.cleanupDone')));
       fetchData();
-    } catch (error: any) {
-      setCleanupMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.cleanupFailed'));
+    } catch (error: unknown) {
+      setCleanupMessage(errMsg(error, t('sys.cleanupFailed')));
     } finally {
       setCleaning(false);
+      setConfirm(null);
     }
   };
 
   const handleSaveCnkiPrefix = async () => {
+    const value = cnkiPrefixDraft.trim();
+    if (value && !/^https?:\/\//.test(value)) {
+      setCnkiPrefixMessage({ ok: false, text: t('sys.cnkiPrefixInvalid') });
+      return;
+    }
     setSavingCnkiPrefix(true);
-    setCnkiPrefixMessage('');
+    setCnkiPrefixMessage(null);
     try {
-      const value = cnkiPrefixDraft.trim();
       await papersApi.updateSettings({ cnki_url_prefix: value });
       setCnkiUrlPrefix(value);
       setCnkiPrefixDraft(value);
-      setCnkiPrefixMessage(t('sys.cnkiPrefixSaved'));
+      setCnkiPrefixMessage(okMsg(t('sys.cnkiPrefixSaved')));
       fetchData();
-    } catch (error: any) {
-      setCnkiPrefixMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
+    } catch (error: unknown) {
+      setCnkiPrefixMessage(errMsg(error, t('sys.saveFailed')));
     } finally {
       setSavingCnkiPrefix(false);
     }
   };
 
   const handleUpdatePorts = async () => {
+    const invalid = (p: number) => !Number.isInteger(p) || p < 1 || p > 65535;
+    if (invalid(ports.backend) || invalid(ports.frontend)) {
+      setPortMessage({ ok: false, text: t('sys.portInvalid') });
+      return;
+    }
+    if (ports.backend === ports.frontend) {
+      setPortMessage({ ok: false, text: t('sys.portConflict') });
+      return;
+    }
     setSavingPorts(true);
-    setPortMessage('');
+    setPortMessage(null);
     try {
       await papersApi.updateSettings({ ports: { backend_port: ports.backend, frontend_port: ports.frontend } });
-      setPortMessage(t('sys.portSaved'));
-    } catch (error: any) {
-      setPortMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
+      setPortMessage(okMsg(t('sys.portSaved')));
+    } catch (error: unknown) {
+      setPortMessage(errMsg(error, t('sys.saveFailed')));
     } finally {
       setSavingPorts(false);
     }
   };
 
   const handleSaveAppName = async () => {
+    if (!appInfo.name.trim()) {
+      setAppNameMessage({ ok: false, text: t('sys.appNameLabel') });
+      return;
+    }
     setSavingAppName(true);
-    setAppNameMessage('');
+    setAppNameMessage(null);
     try {
-      await papersApi.updateSettings({ app_name: appInfo.name });
-      setAppNameMessage(t('sys.appNameSaved'));
+      await papersApi.updateSettings({ app_name: appInfo.name.trim() });
+      setAppNameMessage(okMsg(t('sys.appNameSaved')));
       setEditingAppName(false);
       fetchData();
-    } catch (error: any) {
-      setAppNameMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
+    } catch (error: unknown) {
+      setAppNameMessage(errMsg(error, t('sys.saveFailed')));
     } finally {
       setSavingAppName(false);
     }
@@ -449,7 +539,7 @@ export default function SystemPage() {
   const handleCancelEditAppName = () => {
     setEditingAppName(false);
     setAppInfo(prev => ({ ...prev, name: stats?.app_name || settingsInfo?.app_name || '' }));
-    setAppNameMessage('');
+    setAppNameMessage(null);
   };
 
   // Custom provider handlers
@@ -463,76 +553,84 @@ export default function SystemPage() {
       models: cp.models.join(', '),
     });
     setEditingProviderName(name);
-    setCustomProviderMessage('');
+    setCustomProviderMessage(null);
   };
 
   const handleCancelEditProvider = () => {
     setNewProvider({ name: '', base_url: '', api_key: '', models: '' });
     setEditingProviderName(null);
-    setCustomProviderMessage('');
+    setCustomProviderMessage(null);
   };
 
   const handleSaveCustomProvider = async () => {
     const name = newProvider.name.trim();
     const base_url = newProvider.base_url.trim();
     if (!name || !base_url) {
-      setCustomProviderMessage(t('sys.providerNameRequired'));
+      setCustomProviderMessage({ ok: false, text: t('sys.providerNameRequired') });
+      return;
+    }
+    if (!/^https?:\/\//.test(base_url)) {
+      setCustomProviderMessage({ ok: false, text: t('sys.cnkiPrefixInvalid') });
       return;
     }
     // 新增时必须提供 API Key；编辑时可留空（保留原 Key）
     if (!editingProviderName && !newProvider.api_key.trim()) {
-      setCustomProviderMessage(t('sys.providerKeyRequired'));
+      setCustomProviderMessage({ ok: false, text: t('sys.providerKeyRequired') });
       return;
     }
     setSavingCustomProvider(true);
-    setCustomProviderMessage('');
+    setCustomProviderMessage(null);
     try {
       const models = newProvider.models.split(',').map(m => m.trim()).filter(m => m);
-      const updatedProviders = [
-        ...customProviders.filter(p => p.name !== name),
+      const renamed = editingProviderName && editingProviderName !== name;
+      const updatedProviders: Array<{ name: string; base_url: string; api_key: string; models: string[]; previous_name?: string }> = [
+        // 编辑改名时同时剔除新旧两个名字，避免旧条目残留造成"复制"
+        ...customProviders.filter(p => p.name !== name && p.name !== editingProviderName),
         {
           name,
           base_url,
           api_key: newProvider.api_key.trim(),
-          models: models,
-        }
+          models,
+          // 改名时携带原名，后端按原名继承已存的 API Key
+          ...(renamed && editingProviderName ? { previous_name: editingProviderName } : {}),
+        },
       ];
       await papersApi.updateSettings({ custom_providers: updatedProviders });
-      setCustomProviderMessage(editingProviderName ? t('sys.providerUpdated') : t('sys.providerAdded'));
+      setCustomProviderMessage(okMsg(editingProviderName ? t('sys.providerUpdated') : t('sys.providerAdded')));
       handleCancelEditProvider();
       fetchSettings();
-    } catch (error: any) {
-      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.saveFailed'));
+    } catch (error: unknown) {
+      setCustomProviderMessage(errMsg(error, t('sys.saveFailed')));
     } finally {
       setSavingCustomProvider(false);
     }
   };
 
   const handleDeleteCustomProvider = async (name: string) => {
-    if (!confirm(t('sys.confirmDeleteProvider', { name }))) return;
     setSavingCustomProvider(true);
-    setCustomProviderMessage('');
+    setCustomProviderMessage(null);
     try {
       const updatedProviders = customProviders.filter(p => p.name !== name);
       await papersApi.updateSettings({ custom_providers: updatedProviders });
-      setCustomProviderMessage(t('sys.providerDeleteMsg', { name }));
+      setCustomProviderMessage(okMsg(t('sys.providerDeleteMsg', { name })));
       fetchSettings();
-    } catch (error: any) {
-      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.deleteFailed'));
+    } catch (error: unknown) {
+      setCustomProviderMessage(errMsg(error, t('sys.deleteFailed')));
     } finally {
       setSavingCustomProvider(false);
+      setConfirm(null);
     }
   };
 
   const handleSetDefaultModel = async (model: string) => {
     setSavingDefaultModel(true);
-    setDefaultModelMessage('');
+    setDefaultModelMessage(null);
     try {
       await papersApi.updateSettings({ default_model: model });
       setDefaultModel(model);
-      setDefaultModelMessage(t('sys.defaultSaved'));
-    } catch (error: any) {
-      setDefaultModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.defaultSaveFailed'));
+      setDefaultModelMessage(okMsg(t('sys.defaultSaved')));
+    } catch (error: unknown) {
+      setDefaultModelMessage(errMsg(error, t('sys.defaultSaveFailed')));
     } finally {
       setSavingDefaultModel(false);
     }
@@ -540,13 +638,14 @@ export default function SystemPage() {
 
   const handleClearDefaultModel = async () => {
     setSavingDefaultModel(true);
-    setDefaultModelMessage('');
+    setDefaultModelMessage(null);
     try {
-      await papersApi.updateSettings({ default_model: null });
+      // 空字符串 = 清除（后端与"未传字段"区分）
+      await papersApi.updateSettings({ default_model: '' });
       setDefaultModel(null);
-      setDefaultModelMessage(t('sys.defaultSaved'));
-    } catch (error: any) {
-      setDefaultModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.defaultSaveFailed'));
+      setDefaultModelMessage(okMsg(t('sys.defaultSaved')));
+    } catch (error: unknown) {
+      setDefaultModelMessage(errMsg(error, t('sys.defaultSaveFailed')));
     } finally {
       setSavingDefaultModel(false);
     }
@@ -555,13 +654,14 @@ export default function SystemPage() {
   const handleSaveEmbeddingModel = async () => {
     const value = embeddingModelDraft.trim();
     setSavingEmbeddingModel(true);
-    setEmbeddingModelMessage('');
+    setEmbeddingModelMessage(null);
     try {
-      await papersApi.updateSettings({ embedding_model: value || null });
+      // 空字符串 = 清除（后端与"未传字段"区分）
+      await papersApi.updateSettings({ embedding_model: value });
       setEmbeddingModel(value || null);
-      setEmbeddingModelMessage(t('sys.embeddingSaved'));
-    } catch (error: any) {
-      setEmbeddingModelMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.embeddingSaveFailed'));
+      setEmbeddingModelMessage(okMsg(t('sys.embeddingSaved')));
+    } catch (error: unknown) {
+      setEmbeddingModelMessage(errMsg(error, t('sys.embeddingSaveFailed')));
     } finally {
       setSavingEmbeddingModel(false);
     }
@@ -570,11 +670,14 @@ export default function SystemPage() {
   const handleToggleAgent = async () => {
     const next = !agentEnabled;
     setSavingAgent(true);
+    setAgentMessage(null);
     try {
       await papersApi.updateSettings({ agent_enabled: next });
       setAgentEnabled(next);
-    } catch (error: any) {
+      setAgentMessage(okMsg(t('sys.saved')));
+    } catch (error: unknown) {
       console.error('Error toggling agent:', error);
+      setAgentMessage(errMsg(error, t('sys.agentSaveFailed')));
     } finally {
       setSavingAgent(false);
     }
@@ -586,10 +689,10 @@ export default function SystemPage() {
     try {
       const res = await papersApi.testModelLink(model);
       setTestResults(prev => ({ ...prev, [model]: res }));
-    } catch (error: any) {
+    } catch (error: unknown) {
       setTestResults(prev => ({
         ...prev,
-        [model]: { ok: false, message: error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.testFailed') },
+        [model]: { ok: false, message: error instanceof ApiError ? (error.detail || error.message) : (error as Error)?.message || t('sys.testFailed') },
       }));
     } finally {
       setTestingModel('');
@@ -599,11 +702,11 @@ export default function SystemPage() {
   const handleFetchModels = async () => {
     const base_url = newProvider.base_url.trim();
     if (!base_url) {
-      setCustomProviderMessage(t('sys.fetchModelsNeedUrl'));
+      setCustomProviderMessage({ ok: false, text: t('sys.fetchModelsNeedUrl') });
       return;
     }
     setFetchingModels(true);
-    setCustomProviderMessage('');
+    setCustomProviderMessage(null);
     try {
       const res = await papersApi.fetchProviderModels({
         name: newProvider.name.trim() || undefined,
@@ -613,14 +716,81 @@ export default function SystemPage() {
       if (res.models && res.models.length > 0) {
         const ids = res.models;
         setNewProvider(prev => ({ ...prev, models: ids.join(', ') }));
-        setCustomProviderMessage(t('sys.fetchModelsOk', { n: ids.length }));
+        setCustomProviderMessage(okMsg(t('sys.fetchModelsOk', { n: ids.length })));
       } else {
-        setCustomProviderMessage(res.message || t('sys.fetchModelsEmpty'));
+        setCustomProviderMessage({ ok: false, text: res.message || t('sys.fetchModelsEmpty') });
       }
-    } catch (error: any) {
-      setCustomProviderMessage(error instanceof ApiError ? (error.detail || error.message) : error.message || t('sys.fetchModelsFailed'));
+    } catch (error: unknown) {
+      setCustomProviderMessage(errMsg(error, t('sys.fetchModelsFailed')));
     } finally {
       setFetchingModels(false);
+    }
+  };
+
+  // 配置导出：下载含明文 Key 的 JSON 备份
+  const handleExportConfig = async () => {
+    try {
+      const data = await papersApi.exportSettings();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `paperpulse-config-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      setCustomProviderMessage(errMsg(error, t('sys.importFailed')));
+    }
+  };
+
+  // 配置导入：解析文件后弹确认，确认后应用
+  const handleImportConfigFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('invalid');
+        setConfirm({ type: 'import', data });
+      } catch {
+        setCustomProviderMessage({ ok: false, text: t('sys.importInvalid') });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const applyImportConfig = async (data: ExportedSettings) => {
+    setImporting(true);
+    try {
+      await papersApi.updateSettings({
+        ...(data.api_keys ? { api_keys: data.api_keys } : {}),
+        ...(data.custom_providers ? { custom_providers: data.custom_providers } : {}),
+        ...(data.ports ? { ports: { backend_port: data.ports.backend_port, frontend_port: data.ports.frontend_port } } : {}),
+        ...(data.default_model !== undefined ? { default_model: data.default_model ?? '' } : {}),
+        ...(data.embedding_model !== undefined ? { embedding_model: data.embedding_model ?? '' } : {}),
+        ...(data.app_name !== undefined ? { app_name: data.app_name } : {}),
+        ...(data.cnki_url_prefix !== undefined ? { cnki_url_prefix: data.cnki_url_prefix } : {}),
+        ...(data.agent_enabled !== undefined ? { agent_enabled: data.agent_enabled } : {}),
+        ...(data.ai_model_prices !== undefined ? { ai_model_prices: data.ai_model_prices } : {}),
+      });
+      setCustomProviderMessage(okMsg(t('sys.importOk')));
+      fetchSettings();
+      fetchData();
+    } catch (error: unknown) {
+      setCustomProviderMessage(errMsg(error, t('sys.importFailed')));
+    } finally {
+      setImporting(false);
+      setConfirm(null);
+    }
+  };
+
+  // AI 模型单价保存（成本估算）；返回错误文案供 DataTab 展示
+  const handleSaveAiModelPrices = async (prices: Record<string, number>): Promise<string | null> => {
+    try {
+      await papersApi.updateSettings({ ai_model_prices: prices });
+      fetchSettings();
+      return null;
+    } catch (error: unknown) {
+      return errMsg(error, t('sys.aiCostPricesInvalid'))?.text ?? t('sys.aiCostPricesInvalid');
     }
   };
 
@@ -629,7 +799,7 @@ export default function SystemPage() {
     { key: 'crawler', label: t('systemTab.crawler'), icon: <Settings className="w-4 h-4" /> },
     { key: 'data', label: t('systemTab.data'), icon: <Database className="w-4 h-4" /> },
     { key: 'modelConfig', label: t('systemTab.modelConfig'), icon: <Brain className="w-4 h-4" /> },
-    { key: 'logs', label: '日志', icon: <ScrollText className="w-4 h-4" /> },
+    { key: 'logs', label: t('systemTab.logs'), icon: <ScrollText className="w-4 h-4" /> },
   ];
 
   const renderTabContent = () => {
@@ -691,7 +861,9 @@ export default function SystemPage() {
             cleaning={cleaning}
             cleanupMessage={cleanupMessage}
             cleanupResult={cleanupResult}
-            onCleanup={handleCleanup}
+            onCleanup={() => setConfirm({ type: 'cleanup' })}
+            aiModelPrices={aiModelPrices}
+            onSaveAiModelPrices={handleSaveAiModelPrices}
           />
         );
       case 'modelConfig':
@@ -711,7 +883,7 @@ export default function SystemPage() {
             onEditCustomProvider={handleEditCustomProvider}
             onCancelEditProvider={handleCancelEditProvider}
             onSaveCustomProvider={handleSaveCustomProvider}
-            onDeleteCustomProvider={handleDeleteCustomProvider}
+            onDeleteCustomProvider={(name) => setConfirm({ type: 'deleteProvider', name })}
             ports={ports}
             setPorts={setPorts}
             savingPorts={savingPorts}
@@ -722,6 +894,7 @@ export default function SystemPage() {
             modelMessage={modelMessage}
             onSaveModelPriority={handleSaveModelPriority}
             onMoveModel={handleMoveModel}
+            onReorderModel={handleReorderModel}
             defaultModel={defaultModel}
             savingDefaultModel={savingDefaultModel}
             defaultModelMessage={defaultModelMessage}
@@ -738,9 +911,12 @@ export default function SystemPage() {
             onTestModelLink={handleTestModelLink}
             agentEnabled={agentEnabled}
             savingAgent={savingAgent}
+            agentMessage={agentMessage}
             onToggleAgent={handleToggleAgent}
             fetchingModels={fetchingModels}
             onFetchModels={handleFetchModels}
+            onExportConfig={handleExportConfig}
+            onImportConfig={handleImportConfigFile}
           />
         );
       case 'logs':
@@ -755,11 +931,13 @@ export default function SystemPage() {
         <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">{t('system.subtitle')}</p>
       </div>
 
-      <div className="border-b border-gray-200 dark:border-gray-700 mb-4 sm:mb-6 overflow-x-auto">
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-4 sm:mb-6 overflow-x-auto" role="tablist">
         <nav className="flex gap-4 sm:gap-6 min-w-max">
           {tabs.map(tab => (
             <button
               key={tab.key}
+              role="tab"
+              aria-selected={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-1.5 sm:gap-2 px-1 py-2 sm:py-3 text-xs sm:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.key
@@ -781,6 +959,35 @@ export default function SystemPage() {
       ) : (
         renderTabContent()
       )}
+
+      {/* 统一确认弹窗（替代原生 confirm） */}
+      <ConfirmModal
+        open={confirm?.type === 'cleanup'}
+        title={t('sys.cleanupConfirm')}
+        description={t('sys.cleanupDesc')}
+        danger
+        confirming={cleaning}
+        onConfirm={handleCleanup}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmModal
+        open={confirm?.type === 'deleteProvider'}
+        title={t('sys.confirmDeleteProvider', { name: confirm?.type === 'deleteProvider' ? confirm.name : '' })}
+        description={t('sys.confirmDeleteProviderDesc')}
+        danger
+        confirming={savingCustomProvider}
+        onConfirm={() => confirm?.type === 'deleteProvider' && handleDeleteCustomProvider(confirm.name)}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmModal
+        open={confirm?.type === 'import'}
+        title={t('sys.importConfig')}
+        description={t('sys.importConfigConfirm')}
+        danger
+        confirming={importing}
+        onConfirm={() => confirm?.type === 'import' && applyImportConfig(confirm.data)}
+        onCancel={() => setConfirm(null)}
+      />
     </Layout>
   );
 }

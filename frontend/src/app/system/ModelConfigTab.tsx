@@ -1,7 +1,7 @@
 'use client';
 
 import type { Dispatch, SetStateAction } from 'react';
-import { SettingsInfo } from '@/types/paper';
+import { SettingsInfo, Msg } from '@/types/paper';
 import ApiConfigPanel, { NewProviderInput } from './ApiConfigPanel';
 import ModelConfigPanel, { TestResult } from './ModelConfigPanel';
 import ModelPriorityPanel from './ModelPriorityPanel';
@@ -9,7 +9,7 @@ import ModelPriorityPanel from './ModelPriorityPanel';
 interface ModelConfigTabProps {
   settingsInfo: SettingsInfo | null;
   apiKeys: Record<string, string>;
-  apiMessage: Record<string, string>;
+  apiMessage: Record<string, Msg>;
   updatingKey: string | null;
   onUpdateApiKey: (provider: string) => void;
   setApiKeys: Dispatch<SetStateAction<Record<string, string>>>;
@@ -17,7 +17,7 @@ interface ModelConfigTabProps {
   setNewProvider: Dispatch<SetStateAction<NewProviderInput>>;
   editingProviderName: string | null;
   savingCustomProvider: boolean;
-  customProviderMessage: string;
+  customProviderMessage: Msg;
   onEditCustomProvider: (name: string) => void;
   onCancelEditProvider: () => void;
   onSaveCustomProvider: () => void;
@@ -25,21 +25,22 @@ interface ModelConfigTabProps {
   ports: { backend: number; frontend: number };
   setPorts: Dispatch<SetStateAction<{ backend: number; frontend: number }>>;
   savingPorts: boolean;
-  portMessage: string;
+  portMessage: Msg;
   onUpdatePorts: () => void;
   modelList: SettingsInfo['models'];
   savingModels: boolean;
-  modelMessage: string;
+  modelMessage: Msg;
   onSaveModelPriority: () => void;
   onMoveModel: (index: number, direction: 'up' | 'down') => void;
+  onReorderModel: (from: number, to: number) => void;
   defaultModel: string | null;
   savingDefaultModel: boolean;
-  defaultModelMessage: string;
+  defaultModelMessage: Msg;
   embeddingModel: string | null;
   embeddingModelDraft: string;
   setEmbeddingModelDraft: Dispatch<SetStateAction<string>>;
   savingEmbeddingModel: boolean;
-  embeddingModelMessage: string;
+  embeddingModelMessage: Msg;
   onSaveEmbeddingModel: () => void;
   onClearDefaultModel: () => void;
   onSetDefaultModel: (model: string) => void;
@@ -48,9 +49,12 @@ interface ModelConfigTabProps {
   onTestModelLink: (model: string) => void;
   agentEnabled: boolean;
   savingAgent: boolean;
+  agentMessage: Msg;
   onToggleAgent: () => void;
   fetchingModels: boolean;
   onFetchModels: () => void;
+  onExportConfig: () => void;
+  onImportConfig: (file: File) => void;
 }
 
 export default function ModelConfigTab({
@@ -79,6 +83,7 @@ export default function ModelConfigTab({
   modelMessage,
   onSaveModelPriority,
   onMoveModel,
+  onReorderModel,
   defaultModel,
   savingDefaultModel,
   defaultModelMessage,
@@ -95,9 +100,12 @@ export default function ModelConfigTab({
   onTestModelLink,
   agentEnabled,
   savingAgent,
+  agentMessage,
   onToggleAgent,
   fetchingModels,
   onFetchModels,
+  onExportConfig,
+  onImportConfig,
 }: ModelConfigTabProps) {
   return (
     <>
@@ -124,6 +132,8 @@ export default function ModelConfigTab({
         onUpdatePorts={onUpdatePorts}
         fetchingModels={fetchingModels}
         onFetchModels={onFetchModels}
+        onExportConfig={onExportConfig}
+        onImportConfig={onImportConfig}
       />
       <ModelConfigPanel
         defaultModel={defaultModel}
@@ -137,13 +147,14 @@ export default function ModelConfigTab({
         modelList={modelList}
         testResults={testResults}
         testingModel={testingModel}
+        agentEnabled={agentEnabled}
+        savingAgent={savingAgent}
+        agentMessage={agentMessage}
+        onToggleAgent={onToggleAgent}
         onSaveEmbeddingModel={onSaveEmbeddingModel}
         onClearDefaultModel={onClearDefaultModel}
         onSetDefaultModel={onSetDefaultModel}
         onTestModelLink={onTestModelLink}
-        agentEnabled={agentEnabled}
-        savingAgent={savingAgent}
-        onToggleAgent={onToggleAgent}
       />
       <ModelPriorityPanel
         modelList={modelList}
@@ -152,6 +163,7 @@ export default function ModelConfigTab({
         settingsInfo={settingsInfo}
         onSaveModelPriority={onSaveModelPriority}
         onMoveModel={onMoveModel}
+        onReorderModel={onReorderModel}
       />
     </>
   );

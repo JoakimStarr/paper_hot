@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, memo } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
@@ -11,6 +11,7 @@ import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
 import { usePreferences } from '@/lib/usePreferences';
 import { useToast } from '@/components/Toast';
+import { useTrack } from '@/lib/useTrack';
 import { openAssistant } from '@/lib/assistantBus';
 
 interface PaperCardProps {
@@ -21,6 +22,8 @@ interface PaperCardProps {
   onToggleSelect?: (paperId: string) => void;
   /** 是否已读：true 时标题置灰并在标题处显示「已读」徽章 */
   read?: boolean;
+  /** 埋点来源位置 */
+  surface?: string;
 }
 
 // 卡片级「不感兴趣」快捷屏蔽的类型
@@ -36,7 +39,7 @@ const subfieldColors: Record<string, string> = {
   '国际经济学': 'bg-pink-100 text-pink-800',
 };
 
-function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: PaperCardProps) {
+function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, surface }: PaperCardProps) {
   const { t } = useLanguage();
   const router = useRouter();
   const score = paper.final_score;
@@ -46,12 +49,21 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
   const { has: isPinnedNow, toggle: togglePinState } = usePins();
   const pinned = isPinnedNow(paper.id);
   const { toast } = useToast();
+  const { track } = useTrack();
+
+  // 埋点：曝光
+  useEffect(() => {
+    if (surface) {
+      track({ event_type: 'impression', surface, ref_id: paper.id });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggleBookmark = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     try {
       const res = await toggleBookmarkState(paper.id);
+      track({ event_type: res ? 'favorite' : 'unfavorite', surface: surface || 'paper_card', ref_id: paper.id });
       toast(t(res ? 'paper.bookmarkMsg' : 'paper.unbookmarkMsg'), 'success');
     } catch {
       toast(t('paper.bookmarkFailed'), 'error');
@@ -73,15 +85,11 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
     }
   };
 
-  // —— AI 分析：打开全局 AI 悬浮助手并直接发起分析，内容在小浮窗中显示（P3）——
+  // —— AI 分析：打开统一 AI 悬浮助手（以该论文为上下文，自动发起分析）——
   const handleOpenAi = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openAssistant({
-      paperId: paper.id,
-      contextText: paper.title,
-      autoPrompt: '请帮我分析这篇论文',
-    });
+    openAssistant({ paperId: paper.id, contextText: paper.title, autoPrompt: '请分析这篇论文' });
   };
 
   // —— 「不感兴趣」快捷屏蔽：该论文的领域/期刊/关键词/作者入屏蔽表 ——
@@ -130,7 +138,7 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read }: P
               aria-label={t('paper.selectThis')}
             />
           )}
-          <Link href={`/paper/${paper.id}`}>
+          <Link href={`/paper/${paper.id}`} onClick={() => track({ event_type: 'click', surface: surface || 'paper_card', ref_id: paper.id })}>
             <div className="flex items-start gap-2 flex-1 min-w-0">
               <h3 className={`flex-1 min-w-0 text-base sm:text-lg font-semibold cursor-pointer line-clamp-2 ${
                 read

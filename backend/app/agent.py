@@ -6,8 +6,10 @@
   模型不返回合法 tool_calls 时原样返回消息（降级为普通对话）。
 """
 import asyncio
+import copy
 import json
 import logging
+import time as _time
 from typing import Any
 
 from sqlalchemy import select as sa_select, String as SAString, or_ as sa_or, func as sa_func
@@ -17,6 +19,27 @@ from app.database import AsyncSessionLocal
 from app.models import Paper, TopicTrend, PaperScore
 
 logger = logging.getLogger(__name__)
+
+# —— 全库统计类工具结果缓存（TTL）——
+# trending_topics / subfield_distribution 每次对话都现算很重；结果与库内数据强相关，
+# 短 TTL 内直接复用。仅缓存这类无副作用、结果可安全共享的工具。
+_TOOL_CACHE_TTL = 600  # 10 分钟
+_tool_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _run_cached_tool(name: str, fn, db: AsyncSession, args: dict) -> dict:
+    """带 TTL 缓存的工具执行；命中时返回深拷贝，避免调用方改写污染缓存。"""
+    now = _time.time()
+    hit = _tool_cache.get(name)
+    if hit and now - hit[0] < _TOOL_CACHE_TTL:
+        return copy.deepcopy(hit[1])
+    result = await fn(db, args)
+    _tool_cache[name] = (now, result)
+    return copy.deepcopy(result)
+
+
+# 可安全缓存（结果不随调用方改写）的工具名
+_CACHEABLE_TOOLS = {"trending_topics", "subfield_distribution"}
 
 MAX_TOOL_RESULTS_ITEMS = 8
 MAX_ROUND_TRIPS = 6
@@ -247,6 +270,44 @@ async def _t_retrieve_context(db: AsyncSession, args: dict) -> dict:
     return {"mode": mode, "count": len(items), "papers": items}
 
 
+async def _t_topic_crowding(db: AsyncSession, args: dict) -> dict:
+    """选题拥挤度评估：候选选题 -> 近似论文拥挤度统计 + 竞争地图（不调 LLM）。
+
+    与选题验证器同一套检索/统计（topic.py），但只返回定量信号不生成报告，
+    适合"这个选题能不能做/是否拥挤/竞争如何"类问题，快速给出依据。
+    """
+    topic = str(args.get("topic") or "").strip()
+    if not topic:
+        return {"error": "topic 参数必填"}
+    from app.routers.topic import _retrieve_similar_papers, _crowding_stats, _competition_map
+    try:
+        papers, mode = await _retrieve_similar_papers(db, topic, k=30)
+    except Exception as e:
+        return {"error": f"retrieval failed: {type(e).__name__}"}
+    stats = _crowding_stats(papers)
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers if p.get("id")])
+    except Exception as e:
+        logger.warning(f"topic_crowding competition map failed: {e}")
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+    return {
+        "topic": topic,
+        "mode": mode,
+        "retrieved": len(papers),
+        "top30_avg_similarity": stats["top30_avg_similarity"],
+        "max_similarity": stats["max_similarity"],
+        "recent_3m_count": stats["recent_3m_count"],
+        "keyword_overlap": stats["keyword_overlap"][:5],
+        "competition": {
+            "top_authors": competition["top_authors"][:5],
+            "journal_distribution": competition["journal_distribution"][:5],
+            "recent_1y_count": competition["recent_1y_count"],
+        },
+        # 近似论文走统一 [n] 编号，供回答引用
+        "papers": papers[:6],
+    }
+
+
 # ---------------------------------------------------------------- 工具注册表
 
 def _schema(name: str, description: str, props: dict, required: list[str]) -> dict:
@@ -272,6 +333,7 @@ TOOL_HANDLERS = {
     "author_papers": _t_author_papers,
     "retrieve_context": _t_retrieve_context,
     "trending_topics": _t_trending_topics,
+    "topic_crowding": _t_topic_crowding,
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
@@ -293,6 +355,8 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
+        _schema("topic_crowding", "选题拥挤度评估：给定候选选题，返回论文库近似论文的拥挤度统计（相似度/近3月发文量/竞争作者与期刊分布）。回答“这个选题能不能做/是否拥挤/竞争如何”时使用",
+                {"topic": {"type": "string"}}, ["topic"]),
     ],
     # 趋势追问（P0）
     "trend_chat": [
@@ -347,6 +411,10 @@ def _consume_stream(resp, collected: dict, on_delta: Any = None):
     供上层原样转发为 SSE——这是"流式输出"的关键（含 agent 循环各轮的思考）。
     """
     for chunk in resp:
+        # 流式末块常带 usage（best-effort，提供方支持才返回）
+        u = getattr(chunk, "usage", None)
+        if u:
+            collected["usage"] = u
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
@@ -418,7 +486,11 @@ async def _stream_model_round(client: Any, model: str, convo: list, schemas: lis
             _consume_stream(resp, collected, _forward)
 
     await asyncio.to_thread(run)
-    return {"content": collected["content"], "tool_calls": _build_tool_calls(collected)}
+    return {
+        "content": collected["content"],
+        "tool_calls": _build_tool_calls(collected),
+        "usage": collected.get("usage"),
+    }
 
 
 async def run_agent_chat(
@@ -434,10 +506,11 @@ async def run_agent_chat(
     """带工具调用循环的对话（全流式）。
 
     每轮 LLM 调用均走 stream=True，thinking/正文增量经 on_delta 实时转发；
-    返回 (messages, tool_trace, content_streamed)：
+    返回 (messages, tool_trace, content_streamed, usage)：
     - messages：补全了助手/工具轮次的完整消息
     - tool_trace：工具调用轨迹（日志/调试）
     - content_streamed：最终正文是否已通过 on_delta 流式推送（为 True 时外层无需重放）
+    - usage：最后一块的 token 用量（best-effort，无则 None）
     若模型未发起任何工具调用，直接流式回答并结束（普通对话降级）。
 
     on_progress：每次执行工具前调用 on_progress({"tool": name, "args": args})。
@@ -457,7 +530,7 @@ async def run_agent_chat(
             round_result = await _stream_model_round(client, model, convo, schemas, on_delta)
         except Exception as e:
             logger.warning(f"agent round {_round}: model call failed after retry: {e}")
-            return messages, trace, False
+            return messages, trace, False, None
 
         round_content = round_result["content"]
         tool_calls = round_result["tool_calls"]
@@ -468,7 +541,7 @@ async def run_agent_chat(
                 convo.append({"role": "assistant", "content": round_content})
                 content_streamed = True
             logger.info(f"agent surface={surface}: model chose not to call tools, answered directly")
-            return convo, trace, content_streamed
+            return convo, trace, content_streamed, round_result.get("usage")
 
         # 记录助手请求工具的消息
         convo.append({
@@ -500,7 +573,10 @@ async def run_agent_chat(
                 try:
                     async with AsyncSessionLocal() as session:
                         tool_db = session
-                        result = await handler(session, args)
+                        if name in _CACHEABLE_TOOLS:
+                            result = await _run_cached_tool(name, handler, session, args)
+                        else:
+                            result = await handler(session, args)
                 except Exception as e:
                     logger.warning(f"agent tool {name} failed: {e}")
                     if tool_db is not None:
@@ -524,4 +600,4 @@ async def run_agent_chat(
             })
 
     logger.warning("agent reached max rounds; falling back to plain answer")
-    return messages, trace, False
+    return messages, trace, False, None

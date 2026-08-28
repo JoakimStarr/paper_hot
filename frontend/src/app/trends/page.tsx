@@ -3,9 +3,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
-import { papersApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
+import { papersApi, getLastModel, rememberModel, streamTrendChat, ApiError } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
-import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain } from 'lucide-react';
+import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 // 重组件按需加载：recharts(雷达/折线) 与 react-markdown 栈各成独立懒 chunk，首屏不阻塞
@@ -51,7 +51,12 @@ const bareModelName = (name: string) => {
   return slashIndex >= 0 ? name.slice(slashIndex + 1) : name;
 };
 
+// 热点/关键词 -> 研究级检索直达（复用首页检索口径：按关键词字段）
+const searchHref = (kw: string) => `/search?search=${encodeURIComponent(kw)}&search_field=keyword`;
+
 const COLLAPSE_STORAGE_KEY = 'trends_collapse_state';
+const MAX_CONTEXT_MESSAGES = 20;
+const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
 
 export default function TrendsPage() {
   const { t } = useLanguage();
@@ -74,6 +79,16 @@ export default function TrendsPage() {
   const [historyReports, setHistoryReports] = useState<AIAnalysisReport[]>([]);
   const [restoringId, setRestoringId] = useState<number | null>(null);
 
+  // —— 选题分析追问窗口 ——
+  const [chatMessages, setChatMessages] = useState<Array<{ role: string; content: string }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatStreaming, setChatStreaming] = useState(false);
+  const [streamContent, setStreamContent] = useState('');
+  const [streamReasoning, setStreamReasoning] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [isChatFullscreen, setIsChatFullscreen] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
   const [analysisModel, setAnalysisModel] = useState('');
   const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
@@ -89,6 +104,10 @@ export default function TrendsPage() {
         setIsAIAnalysisCollapsed(state.aiAnalysis ?? false);
         setIsTrendingTopicsCollapsed(state.trendingTopics ?? false);
       } catch {}
+    }
+    const savedFullscreen = localStorage.getItem(CHAT_FULLSCREEN_STORAGE_KEY);
+    if (savedFullscreen) {
+      setIsChatFullscreen(savedFullscreen === 'true');
     }
   }, []);
 
@@ -157,6 +176,7 @@ export default function TrendsPage() {
           if (status.report) {
             setReport(status.report);
             setHasHistory(true);
+            loadTrendChats(status.report.id);
           } else {
             setAiError(t('tr.analysisNoResult'));
           }
@@ -186,6 +206,96 @@ export default function TrendsPage() {
     isRunningRef.current = false;
     setIsRunning(false);
   }, []);
+
+  const toggleChatFullscreen = () => {
+    const newState = !isChatFullscreen;
+    setIsChatFullscreen(newState);
+    localStorage.setItem(CHAT_FULLSCREEN_STORAGE_KEY, String(newState));
+  };
+
+  const loadTrendChats = async (reportId: number) => {
+    setChatLoading(true);
+    try {
+      const chats = await papersApi.getTrendChats(reportId);
+      setChatMessages(chats.map(c => ({ role: c.role, content: c.content })));
+    } catch {
+      setChatMessages([]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleTrendChatSubmit = async (overrideInput?: string) => {
+    const inputText = overrideInput || chatInput;
+    if (!inputText.trim() || !report) return;
+
+    const userMsg = { role: 'user', content: inputText.trim() };
+    const allMessages = [...chatMessages, userMsg];
+    setChatMessages(allMessages);
+    setChatInput('');
+    setChatStreaming(true);
+    setStreamContent('');
+    setStreamReasoning('');
+
+    try {
+      papersApi.saveTrendChats(report.id, [userMsg]);
+
+      const contextMessages = allMessages.slice(-MAX_CONTEXT_MESSAGES);
+
+      await streamTrendChat(report.id, contextMessages, analysisModel || undefined, {
+        onContent: (text) => setStreamContent(text),
+        onReasoning: (text) => setStreamReasoning(text),
+        onDone: (fullContent) => {
+          if (fullContent) {
+            setChatMessages(m => [...m, { role: 'assistant', content: fullContent }]);
+            papersApi.saveTrendChats(report.id, [
+              { role: 'assistant', content: fullContent }
+            ]);
+          }
+          setStreamContent('');
+          setStreamReasoning('');
+        },
+        onError: (message) => {
+          setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${message}` }]);
+        },
+      });
+    } catch (e: any) {
+      setChatMessages(m => [...m, { role: 'assistant', content: `[Error] ${e.message}` }]);
+    } finally {
+      setChatStreaming(false);
+    }
+  };
+
+  const handleClearChats = async () => {
+    if (!report) return;
+    try {
+      await papersApi.clearTrendChats(report.id);
+      setChatMessages([]);
+    } catch {}
+  };
+
+  const handleExportChats = () => {
+    if (chatMessages.length === 0) return;
+    const lines = chatMessages.map(msg => {
+      const role = msg.role === 'user' ? '👤 用户' : '🤖 选题分析师';
+      return `### ${role}\n\n${msg.content}\n`;
+    });
+    const content = `# 选题分析对话记录\n\n> 导出时间：${new Date().toLocaleString('zh-CN')}\n> 分析报告：${report?.summary || ''}\n\n---\n\n${lines.join('\n---\n\n')}`;
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `选题分析对话_${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    // 仅在流式回复进行中自动滚动，避免打开页面/加载历史对话就跳到底部
+    if (chatStreaming) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [streamContent, streamReasoning, chatStreaming]);
 
   useEffect(() => {
     // StrictMode 下 effect 会「挂载→卸载→重挂载」执行两次，重挂载时必须恢复 isMountedRef，
@@ -241,6 +351,7 @@ export default function TrendsPage() {
       } else {
         setReport(status.report);
         setHasHistory(status.has_history);
+        if (status.report) loadTrendChats(status.report.id);
       }
     } catch (error) {
       console.error('Error checking analysis status:', error);
@@ -271,17 +382,20 @@ export default function TrendsPage() {
   const restoreReport = async (reportId: number) => {
     if (isRunning) return;
     setRestoringId(reportId);
+    setChatLoading(true);
     try {
       const fullReport = await papersApi.getAIAnalysisReportById(reportId);
       if (fullReport) {
         setReport(fullReport);
         setHasHistory(true);
         setShowHistory(false);
+        await loadTrendChats(reportId);
       }
     } catch (error) {
       console.error('Error restoring report:', error);
     } finally {
       setRestoringId(null);
+      setChatLoading(false);
     }
   };
 
@@ -308,6 +422,7 @@ export default function TrendsPage() {
         // 后端未启动新任务但返回了已有报告（如服务不可用时带出最近报告），直接展示
         setReport(response.report);
         setHasHistory(true);
+        loadTrendChats(response.report.id);
         setAnalysisStarted(false);
       } else {
         setAnalysisStarted(false);
@@ -579,7 +694,13 @@ export default function TrendsPage() {
                         {i + 1}
                       </span>
                       <div className="flex-1">
-                        <h4 className="font-semibold text-gray-900 dark:text-white text-base">{item.topic}</h4>
+                        <h4 className="font-semibold text-gray-900 dark:text-white text-base">
+                          {item.topic ? (
+                            <a href={searchHref(item.topic)} className="hover:text-purple-600 dark:hover:text-purple-400 transition-colors">
+                              {item.topic}
+                            </a>
+                          ) : null}
+                        </h4>
                         <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{item.description}</p>
                         {item.evidence && (
                           <p className="text-gray-400 text-xs mt-1">{t('tr.evidenceLabel')}: {item.evidence}</p>
@@ -587,9 +708,14 @@ export default function TrendsPage() {
                         {item.related_keywords && item.related_keywords.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mt-2">
                             {item.related_keywords.map((kw, ki) => (
-                              <span key={ki} className="px-2 py-0.5 bg-purple-50 dark:bg-purple-900/30 text-purple-600 text-xs rounded-full border border-purple-100">
+                              <a
+                                key={ki}
+                                href={searchHref(kw)}
+                                title={`检索「${kw}」相关论文`}
+                                className="inline-block px-2 py-0.5 bg-purple-50 dark:bg-purple-900/30 text-purple-600 text-xs rounded-full border border-purple-100 hover:border-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                              >
                                 {kw}
-                              </span>
+                              </a>
                             ))}
                           </div>
                         )}
@@ -622,9 +748,14 @@ export default function TrendsPage() {
                     {item.keywords && item.keywords.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mb-2">
                         {item.keywords.map((kw, ki) => (
-                          <span key={ki} className="px-2 py-0.5 bg-green-50 dark:bg-green-900/30 text-green-600 text-xs rounded-full border border-green-100">
+                          <a
+                            key={ki}
+                            href={searchHref(kw)}
+                            title={`检索「${kw}」相关论文`}
+                            className="inline-block px-2 py-0.5 bg-green-50 dark:bg-green-900/30 text-green-600 text-xs rounded-full border border-green-100 hover:border-green-300 hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+                          >
                             {kw}
-                          </span>
+                          </a>
                         ))}
                       </div>
                     )}
@@ -660,9 +791,14 @@ export default function TrendsPage() {
                     {item.related_keywords && item.related_keywords.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {item.related_keywords.map((kw, ki) => (
-                          <span key={ki} className="px-2 py-0.5 bg-orange-50 dark:bg-orange-900/30 text-orange-600 text-xs rounded-full border border-orange-100">
+                          <a
+                            key={ki}
+                            href={searchHref(kw)}
+                            title={`检索「${kw}」相关论文`}
+                            className="inline-block px-2 py-0.5 bg-orange-50 dark:bg-orange-900/30 text-orange-600 text-xs rounded-full border border-orange-100 hover:border-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
+                          >
                             {kw}
-                          </span>
+                          </a>
                         ))}
                       </div>
                     )}
@@ -681,6 +817,150 @@ export default function TrendsPage() {
                     <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
                       <MarkdownRenderer content={report.raw_analysis} />
                     </div>
+                  )}
+                </div>
+
+                <div className={`border-t border-gray-100 dark:border-gray-700 mt-6 pt-6 ${isChatFullscreen ? 'fixed inset-y-0 right-0 z-50 bg-white dark:bg-gray-900 p-4 sm:p-6 overflow-hidden w-full md:w-[600px] lg:w-[800px] shadow-2xl' : ''}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0 mb-4">
+                    <div>
+                      <h3 className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                        <Bot className="w-4 h-4 text-purple-600" />
+                        {t('tr.chatTitle')}
+                      </h3>
+                      <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-1">{t('tr.chatSub')}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={toggleChatFullscreen}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                        title={isChatFullscreen ? t('tr.exitFullscreen') : t('tr.fullscreen')}
+                      >
+                        {isChatFullscreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                        {isChatFullscreen ? t('tr.exitFullscreen') : t('tr.fullscreen')}
+                      </button>
+                      <button
+                        onClick={handleExportChats}
+                        disabled={chatMessages.length === 0}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={t('tr.exportChatTitle')}
+                      >
+                        <Download className="w-3 h-3" />
+                        {t('tr.exportChat')}
+                      </button>
+                      <button
+                        onClick={handleClearChats}
+                        disabled={chatMessages.length === 0 || chatStreaming}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-red-500 bg-red-50 dark:bg-red-900/20 rounded hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={t('tr.clearChatTitle')}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        {t('tr.clearChat')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {chatLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
+                      <span className="ml-2 text-sm text-gray-400">{t('tr.loadChats')}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className={`space-y-4 mb-4 overflow-y-auto ${isChatFullscreen ? 'max-h-[calc(100vh-200px)]' : 'max-h-[500px]'}`}>
+                        {chatMessages.length === 0 && !chatStreaming && (
+                          <div className="text-center py-6">
+                            <div className="flex flex-wrap gap-2 justify-center">
+                              {[
+                                t('tr.suggestion1'),
+                                t('tr.suggestion2'),
+                                t('tr.suggestion3'),
+                                t('tr.suggestion4'),
+                              ].map((suggestion, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleTrendChatSubmit(suggestion)}
+                                  className="px-3 py-1.5 text-sm bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full border border-purple-100 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                                >
+                                  {suggestion}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {chatMessages.map((msg, i) => (
+                          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+                              msg.role === 'user'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+                            }`}>
+                              {msg.role === 'user' ? msg.content : (
+                                <MarkdownRenderer content={msg.content} />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {chatStreaming && streamReasoning && !streamContent && (
+                          <div className="flex justify-start">
+                            <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800">
+                              <div className="text-xs text-blue-500 dark:text-blue-400 mb-1 font-medium">💭 {t('tr.thinking')}</div>
+                              <div className="text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
+                            </div>
+                          </div>
+                        )}
+                        {chatStreaming && streamContent && (
+                          <div className="flex justify-start">
+                            <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+                              {streamReasoning && (
+                                <details className="mb-2">
+                                  <summary className="text-xs text-blue-500 dark:text-blue-400 cursor-pointer hover:text-blue-600">💭 {t('tr.viewThinking')}</summary>
+                                  <div className="mt-1 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-600 dark:text-blue-300 whitespace-pre-wrap">{streamReasoning}</div>
+                                </details>
+                              )}
+                              <MarkdownRenderer content={streamContent} />
+                              <span className="inline-block w-1.5 h-4 bg-purple-600 ml-0.5 animate-pulse align-middle" />
+                            </div>
+                          </div>
+                        )}
+                        {chatStreaming && !streamContent && !streamReasoning && (
+                          <div className="flex justify-start">
+                            <div className="bg-gray-100 dark:bg-gray-700 rounded-lg px-4 py-3">
+                              <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                            </div>
+                          </div>
+                        )}
+                        <div ref={chatEndRef} />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey && !chatStreaming) {
+                              e.preventDefault();
+                              handleTrendChatSubmit();
+                            }
+                          }}
+                          placeholder={t('tr.chatPlaceholder')}
+                          disabled={chatStreaming}
+                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 sm:px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-purple-500 disabled:bg-gray-50 dark:bg-gray-800 dark:text-white"
+                        />
+                        <button
+                          onClick={() => handleTrendChatSubmit()}
+                          disabled={chatStreaming || !chatInput.trim()}
+                          className="bg-purple-600 text-white rounded-lg px-3 sm:px-4 py-2 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {chatMessages.length > 0 && (
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="text-xs text-gray-400">{t('tr.chatRounds', { n: Math.floor(chatMessages.length / 2) })} | {t('tr.contextHint', { n: MAX_CONTEXT_MESSAGES })}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

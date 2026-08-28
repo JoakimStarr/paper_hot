@@ -312,6 +312,30 @@ async def backfill_embeddings(
     token: bool = Depends(verify_token),
 ):
     """后台补算缺失的论文摘要 embedding（分批，不阻塞请求）。"""
+    # 预检：用配置的 embedding model 测试连通性
+    from app.ai_service import ai_trend_service
+    from app.config import settings
+    embed_model = getattr(settings, "embedding_model", None)
+    if not embed_model:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 Embedding 模型。请在系统设置中设置 embedding_model（如 ollama/bge-m3）",
+        )
+    # 解析 provider 和模型名
+    provider, bare_model = ai_trend_service._resolve_model(embed_model)
+    if not provider or provider not in ai_trend_service.clients:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Embedding provider '{provider}' 未初始化，请检查 API Key 配置",
+        )
+    client = ai_trend_service.clients[provider]
+    try:
+        client.embeddings.create(model=bare_model, input=["test"])
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Embedding 服务 '{embed_model}' 连接失败：{e}",
+        )
     from app.main import spawn_background_task
     spawn_background_task(_run_backfill_background(batch_size=min(batch_size, 500)))
     return {"status": "started", "batch_size": min(batch_size, 500)}
@@ -660,11 +684,15 @@ async def _competition_map(db: AsyncSession, paper_ids: list) -> dict:
 class TopicProjectCreate(BaseModel):
     title: str
     source_gap: Optional[str] = None
+    source_type: Optional[str] = "manual"       # gap | keyword | idea | manual
+    source_ref: Optional[str] = None            # 来源引用（空白词对/热点词/一句话想法）
     source_paper_id: Optional[int] = None
     validation_report: Optional[str] = None
     novelty: Optional[int] = None
     crowding: Optional[str] = None
     feasibility: Optional[int] = None
+    research_questions: Optional[list] = None
+    current_step: Optional[int] = 1
 
 
 class TopicProjectUpdate(BaseModel):
@@ -673,17 +701,38 @@ class TopicProjectUpdate(BaseModel):
     novelty: Optional[int] = None
     crowding: Optional[str] = None
     feasibility: Optional[int] = None
+    research_questions: Optional[list] = None
+    current_step: Optional[int] = None
+    generated_topics: Optional[list] = None
+    overview: Optional[str] = None
+    data_insights: Optional[dict] = None
+    literature_review: Optional[str] = None
+    proposal: Optional[str] = None
+    journal_advice: Optional[str] = None
 
 
 class TopicProjectOut(BaseModel):
     id: int
     title: str
     source_gap: Optional[str] = None
+    source_type: Optional[str] = "manual"
+    source_ref: Optional[str] = None
     source_paper_id: Optional[int] = None
     novelty: Optional[int] = None
     crowding: Optional[str] = None
     feasibility: Optional[int] = None
     status: str
+    validation_report: Optional[str] = None   # 验证报告 markdown（选题库回看决策依据）
+    research_questions: Optional[list] = None
+    current_step: Optional[int] = 1
+    generated_topics: Optional[list] = None
+    overview: Optional[str] = None
+    data_insights: Optional[dict] = None
+    literature_review: Optional[str] = None
+    proposal: Optional[str] = None
+    journal_advice: Optional[str] = None
+    ai_pending: Optional[str] = None
+    ai_error: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -697,11 +746,23 @@ def _project_out(p: TopicProject) -> dict:
         "id": p.id,
         "title": p.title,
         "source_gap": p.source_gap,
+        "source_type": p.source_type or "manual",
+        "source_ref": p.source_ref,
         "source_paper_id": p.source_paper_id,
         "novelty": p.novelty,
         "crowding": p.crowding,
         "feasibility": p.feasibility,
         "status": p.status,
+        "validation_report": p.validation_report,
+        "research_questions": p.research_questions or [],
+        "current_step": p.current_step or 1,
+        "generated_topics": p.generated_topics or [],
+        "overview": p.overview,
+        "data_insights": p.data_insights,
+        "literature_review": p.literature_review,
+        "proposal": p.proposal,
+        "journal_advice": p.journal_advice,
+        "ai_pending": p.ai_pending,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -730,23 +791,46 @@ async def create_topic_project(
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
-    """保存一个选题到选题库（从验证器/空白页沉淀）。"""
+    """创建研究项目（从验证器/空白页/热点/一句话想法沉淀）。
+
+    创建后自动用 embedding 召回与选题最相关的论文作为初始文献集（失败不阻塞创建）。
+    """
     if not (body.title or "").strip():
         raise HTTPException(status_code=400, detail="Title is required")
     p = TopicProject(
         user_id=_uid_from(request),
         title=body.title.strip(),
         source_gap=body.source_gap,
+        source_type=(body.source_type or "manual"),
+        source_ref=body.source_ref,
         source_paper_id=body.source_paper_id,
         validation_report=body.validation_report,
         novelty=body.novelty,
         crowding=body.crowding,
         feasibility=body.feasibility,
+        research_questions=body.research_questions,
+        current_step=body.current_step or 1,
         status="validated",
     )
     db.add(p)
     await db.commit()
     await db.refresh(p)
+
+    # 初始文献集：embedding 召回 top-10 写入 project_papers（失败静默，不阻塞创建）
+    from app.models import ProjectPaper
+    try:
+        query = p.title
+        briefs, _mode = await _retrieve_similar_papers(db, query, k=10)
+        for b in briefs:
+            db.add(ProjectPaper(
+                user_id=p.user_id, project_id=p.id,
+                paper_id=str(b["id"]), similarity=b.get("similarity"),
+            ))
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"auto recall initial papers failed for project {p.id}: {e}")
+        await db.rollback()
+
     return _project_out(p)
 
 
@@ -767,7 +851,12 @@ async def update_topic_project(
         if body.status not in allowed_status:
             raise HTTPException(status_code=400, detail=f"Invalid status, must be one of {sorted(allowed_status)}")
         p.status = body.status
-    for field in ("title", "novelty", "crowding", "feasibility"):
+    for field in (
+        "title", "novelty", "crowding", "feasibility",
+        "research_questions", "current_step", "generated_topics",
+        "overview", "data_insights", "literature_review",
+        "proposal", "journal_advice",
+    ):
         value = getattr(body, field, None)
         if value is not None:
             setattr(p, field, value)
@@ -901,21 +990,16 @@ class ProposalRequest(BaseModel):
     model: Optional[str] = None
 
 
-@router.post("/topic-validator/proposal")
-async def generate_proposal(
-    body: ProposalRequest,
-    db: AsyncSession = Depends(get_db),
-    token: bool = Depends(verify_token),
-):
-    """选题立项书（P2-12a）：验证通过后一键/自动生成一页立项书。
+async def _generate_proposal_content(
+    db: AsyncSession, topic: str,
+    validation_report: Optional[str] = None,
+    model: Optional[str] = None,
+) -> tuple:
+    """选题立项书生成核心（供 /topic-validator/proposal 与研究工作台复用）。
 
-    包含：研究问题、数据来源建议、可用数据、方法论、研究设计与预期贡献。
+    返回 (content, model_name)。模型未配置时抛 HTTPException(503)。
     """
     import asyncio as _asyncio
-
-    topic = (body.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="Topic is required")
 
     papers, _mode = await _retrieve_similar_papers(db, topic, k=15)
 
@@ -934,7 +1018,7 @@ async def generate_proposal(
 
 选题：{topic}
 
-{'验证报告摘要（供参考）：' + body.validation_report[:1500] if body.validation_report else ''}
+{'验证报告摘要（供参考）：' + validation_report[:1500] if validation_report else ''}
 {'竞争情报——活跃作者: ' + ', '.join(a['name'] for a in competition['top_authors']) + '；主要发表期刊: ' + ', '.join(j['journal'] for j in competition['journal_distribution']) if competition['top_authors'] else ''}
 
 库内最相关论文：
@@ -961,24 +1045,39 @@ async def generate_proposal(
         {"role": "user", "content": f"请为选题「{topic}」生成立项书。"},
     ]
 
-    try:
-        provider, bare_model = _resolve_model_provider(body.model)
-        client, provider = _get_ai_client(provider)
-        if not bare_model:
-            from app.routers.deps import _get_default_model
-            bare_model = _get_default_model(provider)
-    except HTTPException:
-        raise HTTPException(status_code=503, detail="AI API key not configured")
+    provider, bare_model = _resolve_model_provider(model)
+    client, provider = _get_ai_client(provider)
+    if not bare_model:
+        from app.routers.deps import _get_default_model
+        bare_model = _get_default_model(provider)
 
+    response = await _asyncio.to_thread(
+        client.chat.completions.create,
+        model=bare_model,
+        messages=messages,
+        max_tokens=3072,
+        temperature=0.4,
+    )
+    return (response.choices[0].message.content or "").strip(), f"{provider}/{bare_model}"
+
+
+@router.post("/topic-validator/proposal")
+async def generate_proposal(
+    body: ProposalRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """选题立项书（P2-12a）：验证通过后一键/自动生成一页立项书。
+
+    包含：研究问题、数据来源建议、可用数据、方法论、研究设计与预期贡献。
+    """
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
     try:
-        response = await _asyncio.to_thread(
-            client.chat.completions.create,
-            model=bare_model,
-            messages=messages,
-            max_tokens=3072,
-            temperature=0.4,
-        )
-        content = (response.choices[0].message.content or "").strip()
-        return {"topic": topic, "proposal": content, "model": bare_model}
+        content, model_name = await _generate_proposal_content(db, topic, body.validation_report, body.model)
+        return {"topic": topic, "proposal": content, "model": model_name}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Proposal generation failed: {str(e)}")

@@ -97,16 +97,39 @@ async def test_model_link(body: TestModelRequest, token: bool = Depends(verify_t
                 "message": f"连接失败：{e}"}
 
 
+class PortConfig(BaseModel):
+    backend_port: int
+    frontend_port: int
+
+
+class CustomProviderConfig(BaseModel):
+    name: str
+    base_url: str
+    api_key: str = ""
+    models: List[str] = []
+    # 编辑改名时携带原名，后端按原名回退继承已存的 API Key
+    previous_name: Optional[str] = None
+
+
 class UpdateSettingsRequest(BaseModel):
     api_keys: Optional[dict] = None
     model_priority: Optional[List[str]] = None
     default_model: Optional[str] = None
     embedding_model: Optional[str] = None
-    ports: Optional[dict] = None
+    ports: Optional[PortConfig] = None
     app_name: Optional[str] = None
-    custom_providers: Optional[List[dict]] = None
+    custom_providers: Optional[List[CustomProviderConfig]] = None
     cnki_url_prefix: Optional[str] = None
     agent_enabled: Optional[bool] = None
+    # 模型单价（每百万 tokens），用于 AI 用量成本估算：{model: price}
+    ai_model_prices: Optional[dict] = None
+
+
+BUILTIN_PROVIDER_NAMES = {"zhipu", "openai", "siliconflow"}
+
+
+def _is_valid_url(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://")
 
 
 def _mask_api_key(key: Optional[str]) -> str:
@@ -154,6 +177,13 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
             "models": cp.get("models", []),
         })
 
+    try:
+        model_prices = json.loads(settings.ai_model_prices or "{}")
+        if not isinstance(model_prices, dict):
+            model_prices = {}
+    except (json.JSONDecodeError, TypeError):
+        model_prices = {}
+
     return {
         "api_keys": api_keys,
         "models": models,
@@ -166,10 +196,43 @@ async def get_settings_endpoint(token: bool = Depends(verify_token)):
         "app_name": settings.app_name,
         "app_version": settings.app_version,
         "custom_providers": custom_providers_status,
-        "default_model": settings.default_model,
-        "embedding_model": settings.embedding_model,
+        "default_model": settings.default_model or None,
+        "embedding_model": settings.embedding_model or None,
         "cnki_url_prefix": settings.cnki_url_prefix,
         "agent_enabled": settings.agent_enabled,
+        "ai_model_prices": model_prices,
+    }
+
+
+@router.get("/settings/export")
+async def export_settings_endpoint(token: bool = Depends(verify_token)):
+    """导出全部用户配置（含明文 API Key，仅本地单用户工具使用，注意保管导出文件）。"""
+    try:
+        model_prices = json.loads(settings.ai_model_prices or "{}")
+        if not isinstance(model_prices, dict):
+            model_prices = {}
+    except (json.JSONDecodeError, TypeError):
+        model_prices = {}
+
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "app_version": settings.app_version,
+        "api_keys": {
+            "zhipu": settings.zhipu_api_key or "",
+            "openai": settings.openai_api_key or "",
+            "siliconflow": settings.siliconflow_api_key or "",
+        },
+        "custom_providers": settings.get_custom_providers(),
+        "ports": {
+            "backend_port": settings.backend_port,
+            "frontend_port": settings.frontend_port,
+        },
+        "default_model": settings.default_model or None,
+        "embedding_model": settings.embedding_model or None,
+        "app_name": settings.app_name,
+        "cnki_url_prefix": settings.cnki_url_prefix,
+        "agent_enabled": settings.agent_enabled,
+        "ai_model_prices": model_prices,
     }
 
 
@@ -220,44 +283,64 @@ async def update_settings_endpoint(
         ai_trend_service.update_models(body.model_priority)
         models_changed = True
 
-    if body.ports:
-        for port_key, port_value in body.ports.items():
-            if port_key in ("backend_port", "frontend_port"):
-                await save_override(db, port_key, str(port_value))
+    if body.ports is not None:
+        bp, fp = body.ports.backend_port, body.ports.frontend_port
+        if not (1 <= bp <= 65535 and 1 <= fp <= 65535):
+            raise HTTPException(status_code=400, detail="端口需在 1-65535 范围内")
+        if bp == fp:
+            raise HTTPException(status_code=400, detail="前后端端口不能相同")
+        await save_override(db, "backend_port", str(bp))
+        await save_override(db, "frontend_port", str(fp))
 
     if body.app_name is not None:
-        await save_override(db, "app_name", body.app_name)
+        await save_override(db, "app_name", body.app_name.strip() or settings.app_name)
 
     if body.cnki_url_prefix is not None:
-        await save_override(db, "cnki_url_prefix", body.cnki_url_prefix.strip())
+        prefix = body.cnki_url_prefix.strip()
+        if prefix and not _is_valid_url(prefix):
+            raise HTTPException(status_code=400, detail="CNKI 域名头需以 http(s):// 开头，或留空使用默认")
+        await save_override(db, "cnki_url_prefix", prefix)
 
+    # 空字符串表示清除该设置（与"未传字段"区分开）
     if body.default_model is not None:
-        await save_override(db, "default_model", body.default_model)
+        await save_override(db, "default_model", body.default_model.strip())
 
     if body.embedding_model is not None:
-        await save_override(db, "embedding_model", body.embedding_model)
+        await save_override(db, "embedding_model", body.embedding_model.strip())
         keys_changed = True  # 触发 reload 以加载 embedding 对应的 provider 客户端
+
+    if body.ai_model_prices is not None:
+        try:
+            prices = {str(k): float(v) for k, v in body.ai_model_prices.items() if float(v) >= 0}
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="模型单价格式错误：需为 {模型名: 数字}")
+        await save_override(db, "ai_model_prices", dumps_json(prices))
 
     if body.agent_enabled is not None:
         await save_override(db, "agent_enabled", str(body.agent_enabled))
         settings.agent_enabled = body.agent_enabled  # 立即生效，无需重启
 
     if body.custom_providers is not None:
-        # 保存自定义 provider：api_key 为空时继承已有同名 provider 的 key（支持编辑时保留原 key）
+        # 保存自定义 provider：api_key 为空时继承已有同名（或改名前的原名）provider 的 key
         current = {p.get("name"): p for p in settings.get_custom_providers()}
         seen = set()
         valid_providers = []
         for p in body.custom_providers:
-            name = (p.get("name") or "").strip()
-            base_url = (p.get("base_url") or "").strip()
+            name = p.name.strip()
+            base_url = p.base_url.strip()
             if not name or not base_url or name in seen:
                 continue
-            api_key = p.get("api_key") or ""
+            if name in BUILTIN_PROVIDER_NAMES:
+                raise HTTPException(status_code=400, detail=f"Provider 名称 '{name}' 与内置服务冲突，请换个名字")
+            if not _is_valid_url(base_url):
+                raise HTTPException(status_code=400, detail=f"Provider '{name}' 的 Base URL 需以 http(s):// 开头")
+            api_key = p.api_key or ""
             if not api_key:
-                api_key = current.get(name, {}).get("api_key", "")
+                source = current.get(name) or current.get(p.previous_name or "", {})
+                api_key = source.get("api_key", "")
             if not api_key:
                 continue  # 新增且未提供 key → 丢弃
-            models = [m for m in (p.get("models") or []) if isinstance(m, str) and m.strip()]
+            models = [m for m in p.models if isinstance(m, str) and m.strip()]
             seen.add(name)
             valid_providers.append({"name": name, "base_url": base_url, "api_key": api_key, "models": models})
         await save_override(db, "custom_providers", dumps_json(valid_providers))

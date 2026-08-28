@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import '../styles/globals.css';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
-import { AiAnalysisModalProvider } from '@/components/AiAnalysisModalContext';
 import ToastProvider from '@/components/Toast';
 
 export const metadata: Metadata = {
@@ -28,11 +27,9 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <LanguageProvider>
-            <AiAnalysisModalProvider>
-              <ToastProvider>
-                {children}
-              </ToastProvider>
-            </AiAnalysisModalProvider>
+            <ToastProvider>
+              {children}
+            </ToastProvider>
           </LanguageProvider>
         </ThemeProvider>
       </body>

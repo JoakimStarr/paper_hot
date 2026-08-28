@@ -22,7 +22,15 @@ export function openAssistant(opts: OpenAssistantOptions = {}) {
 }
 
 /** 页面内部子 tab 切换时上报（如工作台/选题中心的 tab），浮窗据此切换上下文与预设问题。 */
-export function reportPageContext(context: { tab?: string }) {
+export interface PageContext {
+  tab?: string;
+  /** 研究工作台项目标题（注入助手上下文，让助手能基于当前项目回答） */
+  projectTitle?: string;
+  /** 研究工作台当前步骤 */
+  projectStep?: number;
+}
+
+export function reportPageContext(context: PageContext = {}) {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(PAGE_CONTEXT_EVENT, { detail: context }));
 }

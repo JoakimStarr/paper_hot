@@ -77,6 +77,9 @@ function DashboardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 关注变更版本号：SuggestionBar/FollowSubfields/FollowKeywords 变化时触发子组件重取
+  const [followVersion, setFollowVersion] = useState(0);
+
   // 页内 Link 跳转到 /dashboard?tab=xxx 时同步激活页签
   useEffect(() => {
     const p = searchParams.get('tab');
@@ -166,7 +169,9 @@ function DashboardInner() {
           {activeTab === 'stack' && <MyStack data={data} />}
           {activeTab === 'prefs' && (
             <>
-              <FollowSubfields />
+              <SuggestionBar onFollowChanged={() => setFollowVersion((v) => v + 1)} />
+              <FollowSubfields version={followVersion} />
+              <FollowKeywords version={followVersion} />
               <PreferencesPanel />
             </>
           )}
@@ -198,7 +203,7 @@ function TodayRead({ data, reloading }: { data: DashboardData; reloading: boolea
       )}
       <div className="grid grid-cols-1 gap-4 sm:gap-6">
         {data.today_read.map((p) => (
-          <PaperCard key={p.id} paper={p} />
+          <PaperCard key={p.id} paper={p} surface="dashboard_today_read" />
         ))}
         {data.today_read.length === 0 && (
           <p className="text-sm text-gray-400">暂无推荐论文</p>
@@ -324,7 +329,7 @@ function MyStack({ data }: { data: DashboardData }) {
             <ul className="space-y-1.5">
               {data.mine.topic_projects.map((tp) => (
                 <li key={tp.id}>
-                  <Link href="/topics?tab=library" className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                  <Link href={`/topics?project=${tp.id}`} className="text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
                     {tp.title}
                   </Link>
                 </li>
@@ -341,7 +346,7 @@ function MyStack({ data }: { data: DashboardData }) {
             <BookMarked className="w-4 h-4 text-purple-500" /> 最近文献综述
           </h3>
           <Link
-            href="/topics?tab=producer"
+            href="/topics"
             className="flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
           >
             {t('dash.viewAll')}
@@ -351,15 +356,15 @@ function MyStack({ data }: { data: DashboardData }) {
         {data.mine.reviews.length === 0 ? (
           <p className="text-xs text-gray-400">
             还没有生成过综述，去
-            <Link href="/topics?tab=producer" className="text-primary-600 mx-0.5 hover:underline">产出工作台</Link>
-            输入选题生成一份吧
+            <Link href="/topics" className="text-primary-600 mx-0.5 hover:underline">研究工作台</Link>
+            创建一个项目并生成综述吧
           </p>
         ) : (
           <ul className="space-y-1.5">
             {data.mine.reviews.slice(0, 5).map((r) => (
               <li key={r.id}>
                 <Link
-                  href={`/topics?tab=producer&review=${r.id}`}
+                  href="/topics"
                   className="block text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600"
                 >
                   <span className="line-clamp-1">{r.topic}</span>
@@ -424,11 +429,13 @@ function RecentReading() {
   );
 }
 
-function FollowSubfields() {
+function FollowSubfields({ version = 0 }: { version?: number }) {
+  const { t } = useLanguage();
   const [subfields, setSubfields] = useState<string[]>([]);
-  const [allOptions, setAllOptions] = useState<string[]>([]);
+  const [distribution, setDistribution] = useState<Array<{ subfield: string; count: number }>>([]);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -439,11 +446,11 @@ function FollowSubfields() {
           papersApi.getSubfieldDistribution(),
         ]);
         setSubfields(me.subfields);
-        setAllOptions(stats.distribution.map((d) => d.subfield));
+        setDistribution(stats.distribution);
       } catch { /* ignore */ }
       setLoaded(true);
     })();
-  }, []);
+  }, [version]);
 
   const toggle = async (sf: string) => {
     const next = subfields.includes(sf) ? subfields.filter((s) => s !== sf) : [...subfields, sf];
@@ -456,33 +463,227 @@ function FollowSubfields() {
     setSaving(false);
   };
 
+  const sorted = distribution
+    .filter((d) => !filter || d.subfield.toLowerCase().includes(filter.toLowerCase()))
+    .sort((a, b) => b.count - a.count);
+
   if (!loaded) return null;
 
   return (
-    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="follow">
+    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="follow-subfield">
       <div className="flex items-center gap-2 mb-3">
         <TrendingUp className="w-5 h-5 text-purple-500" />
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">关注子领域</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('follow.titleSubfield')}</h2>
         {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
-        <span className="text-xs text-gray-400">选择后驱动「今日值得读」个性化推荐</span>
+        <span className="text-xs text-gray-400">{t('follow.subtitle')}</span>
       </div>
+      {distribution.length > 10 && (
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('follow.searchPlaceholder')}
+          className="mb-3 w-full sm:w-64 px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-2 focus:ring-purple-400"
+        />
+      )}
       <div className="flex flex-wrap gap-2">
-        {allOptions.map((sf) => {
-          const active = subfields.includes(sf);
+        {sorted.map((d) => {
+          const active = subfields.includes(d.subfield);
           return (
             <button
-              key={sf}
-              onClick={() => toggle(sf)}
+              key={d.subfield}
+              onClick={() => toggle(d.subfield)}
               className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
                 active
                   ? 'bg-primary-600 text-white border-primary-600'
                   : 'bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-primary-300'
               }`}
             >
-              {sf}
+              {d.subfield}
+              <span className={`ml-1 text-[10px] ${active ? 'text-primary-200' : 'text-gray-400'}`}>
+                {d.count}
+              </span>
             </button>
           );
         })}
+        {sorted.length === 0 && (
+          <p className="text-sm text-gray-400">{t('follow.empty')}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function FollowKeywords({ version = 0 }: { version?: number }) {
+  const { t } = useLanguage();
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [distribution, setDistribution] = useState<Array<{ keyword: string; count: number }>>([]);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { personalApi, papersApi } = await import('@/lib/api');
+        const [me, stats] = await Promise.all([
+          personalApi.getKeywords(),
+          papersApi.getKeywordDistribution(),
+        ]);
+        setKeywords(me.keywords);
+        setDistribution(stats.distribution);
+      } catch { /* ignore */ }
+      setLoaded(true);
+    })();
+  }, [version]);
+
+  const toggle = async (kw: string) => {
+    const next = keywords.includes(kw) ? keywords.filter((k) => k !== kw) : [...keywords, kw];
+    setKeywords(next);
+    setSaving(true);
+    try {
+      const { personalApi } = await import('@/lib/api');
+      await personalApi.setKeywords(next);
+    } catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const sorted = distribution
+    .filter((d) => !filter || d.keyword.toLowerCase().includes(filter.toLowerCase()))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 80);
+
+  if (!loaded) return null;
+
+  return (
+    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="follow-keyword">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles className="w-5 h-5 text-amber-500" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('follow.titleKeyword')}</h2>
+        {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+        <span className="text-xs text-gray-400">{t('follow.subtitle')}</span>
+      </div>
+      {distribution.length > 15 && (
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('follow.searchPlaceholder')}
+          className="mb-3 w-full sm:w-64 px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-2 focus:ring-amber-400"
+        />
+      )}
+      <div className="flex flex-wrap gap-2">
+        {sorted.map((d) => {
+          const active = keywords.includes(d.keyword);
+          return (
+            <button
+              key={d.keyword}
+              onClick={() => toggle(d.keyword)}
+              className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
+                active
+                  ? 'bg-amber-500 text-white border-amber-500'
+                  : 'bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-amber-300'
+              }`}
+            >
+              {d.keyword}
+              <span className={`ml-1 text-[10px] ${active ? 'text-amber-200' : 'text-gray-400'}`}>
+                {d.count}
+              </span>
+            </button>
+          );
+        })}
+        {sorted.length === 0 && (
+          <p className="text-sm text-gray-400">{t('follow.empty')}</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SuggestionBar({ onFollowChanged }: { onFollowChanged?: () => void }) {
+  const { t } = useLanguage();
+  const { toast } = useToast();
+  const [subfields, setSubfields] = useState<string[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<{ subfields: Array<{ name: string; reason: string; paper_count: number }>; keywords: Array<{ name: string; reason: string; paper_count: number }> } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [followed, setFollowed] = useState<Set<string>>(new Set());
+
+  const fetchAll = async () => {
+    try {
+      const { personalApi } = await import('@/lib/api');
+      const [me, kw, sug] = await Promise.all([
+        personalApi.getSubfields(),
+        personalApi.getKeywords(),
+        personalApi.getSuggestions(),
+      ]);
+      setSubfields(me.subfields);
+      setKeywords(kw.keywords);
+      setSuggestions(sug);
+    } catch { /* ignore */ }
+    setLoaded(true);
+  };
+
+  useEffect(() => { fetchAll(); }, []);
+
+  const handleFollowSubfield = async (name: string) => {
+    const next = [...subfields, name];
+    setSubfields(next);
+    setFollowed((prev) => new Set(prev).add(`sf:${name}`));
+    try {
+      const { personalApi } = await import('@/lib/api');
+      await personalApi.setSubfields(next);
+      toast(t('follow.titleSubfield') + ': ' + name, 'success');
+      onFollowChanged?.();
+    } catch { /* ignore */ }
+  };
+
+  const handleFollowKeyword = async (name: string) => {
+    const next = [...keywords, name];
+    setKeywords(next);
+    setFollowed((prev) => new Set(prev).add(`kw:${name}`));
+    try {
+      const { personalApi } = await import('@/lib/api');
+      await personalApi.setKeywords(next);
+      toast(t('follow.titleKeyword') + ': ' + name, 'success');
+      onFollowChanged?.();
+    } catch { /* ignore */ }
+  };
+
+  if (!loaded || !suggestions) return null;
+
+  const items = [
+    ...suggestions.subfields
+      .filter((s) => !subfields.includes(s.name) && !followed.has(`sf:${s.name}`))
+      .map((s) => ({ ...s, type: 'subfield' as const })),
+    ...suggestions.keywords
+      .filter((s) => !keywords.includes(s.name) && !followed.has(`kw:${s.name}`))
+      .map((s) => ({ ...s, type: 'keyword' as const })),
+  ];
+  if (items.length === 0) return null;
+
+  return (
+    <section className="bg-gradient-to-r from-purple-50 to-amber-50 dark:from-purple-900/20 dark:to-amber-900/20 rounded-lg border border-purple-200 dark:border-purple-800 p-4 sm:p-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles className="w-5 h-5 text-purple-500" />
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('follow.suggestions')}</h2>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <button
+            key={`${item.type}:${item.name}`}
+            onClick={() => item.type === 'subfield' ? handleFollowSubfield(item.name) : handleFollowKeyword(item.name)}
+            className={`group px-3 py-1.5 rounded-full text-xs border transition-all cursor-pointer ${
+              item.type === 'subfield'
+                ? 'bg-white dark:bg-gray-800 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/40 hover:shadow-sm'
+                : 'bg-white dark:bg-gray-800 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/40 hover:shadow-sm'
+            }`}
+          >
+            <Plus className="w-3 h-3 inline-block mr-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+            {item.name}
+            <span className="ml-1 text-[10px] text-gray-400">
+              {item.type === 'subfield' ? t('follow.paperCount', { count: item.paper_count }) : item.reason}
+            </span>
+          </button>
+        ))}
       </div>
     </section>
   );

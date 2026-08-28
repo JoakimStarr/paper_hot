@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Header
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select as sa_select
 from pydantic import BaseModel
@@ -22,7 +22,7 @@ from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc, _paper_to_card,
     _compute_cache_key, _get_ai_client, _resolve_model_provider,
-    _get_default_model, _stream_agent_chat_response,
+    _get_default_model, _stream_agent_chat_response, _stream_llm_content,
 )
 from app.schemas import (
     PaperResponse, PaperCardListResponse, PaperDetailResponse, SimilarPaper,
@@ -390,35 +390,65 @@ async def analyze_paper(
     return {"analysis": None, "status": "pending", "message": "分析已提交，进行中", "model": model}
 
 
-async def _run_single_analyze_background(analysis_id: int, paper_id: str, model: Optional[str]):
-    """单篇论文 AI 分析后台任务：检索论文 -> LLM 生成结构化分析 -> 回写记录。
+@router.post("/papers/{paper_id}/analyze/stream")
+async def analyze_paper_stream(
+    paper_id: str,
+    body: Optional[AnalyzePaperRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """单篇论文 AI 分析——SSE 流式版（AI 分析悬浮窗用）。
 
-    与批量分析同形：在事件循环内自建会话（AsyncSessionLocal）。失败不抛 HTTP 异常，
-    而是把记录标记为 failed（内容带原因），前端据此渲染重试按钮。
+    与 /analyze 的差异：不走后台任务 + 轮询，而是在本请求内直接流式生成，
+    正文以 data: {"content": "<delta>"} 逐 token 转发，结束持久化 success；
+    流中出错/客户端断开则落库 failed，重开弹窗可重试。
+    若该论文已有新鲜 pending（例如详情页后台分析正在跑），返回 JSON pending 供前端退回轮询。
     """
-    from app.database import AsyncSessionLocal
-    from app.crud import PaperAnalysisCRUD
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    pending = await PaperAnalysisCRUD.get_latest_pending(db, paper_id)
+    if pending is not None:
+        # 陈旧 pending 视为悬挂失败，允许重新提交（与启动清理互补）
+        created = getattr(pending, "created_at", None)
+        if created is not None:
+            created_aware = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - created_aware).total_seconds() <= PENDING_ANALYSIS_TTL_SECONDS:
+                return {"analysis": None, "status": "pending", "message": "分析正在进行中"}
+        logger.warning(f"Stale pending analysis #{pending.id} for {paper_id}: re-submitting")
 
     try:
-        client, _ = _get_ai_client()
-        async with AsyncSessionLocal() as db:
-            paper = await PaperCRUD.get_paper_by_id(db, paper_id)
-            if not paper:
-                await PaperAnalysisCRUD.update_analysis(db, analysis_id, "分析失败: 论文不存在", "failed")
-                await db.commit()
-                return
+        if body and body.model:
+            context_provider, bare_model = _resolve_model_provider(body.model)
+            client, context_provider = _get_ai_client(context_provider)
+            model = bare_model
+        else:
+            client, context_provider = _get_ai_client()
+            model = _get_default_model(context_provider)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
 
-            authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
-            keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
-            journal = paper.journal_name or "未知"
-            journal_issue = paper.journal_issue or ""
-            subfield = paper.economics_subfield or "未知"
+    analysis_id = await PaperAnalysisCRUD.create_pending(db, paper_id, model=model)
+    await db.commit()
 
-            system_prompt = (
-                "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
-                "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
-            )
-            prompt = f"""请从学术角度分析以下论文：
+    messages = _build_single_analysis_messages(paper)
+    return _stream_single_analysis_response(analysis_id, paper_id, client, model, messages)
+
+
+def _build_single_analysis_messages(paper) -> list[dict]:
+    """单篇论文结构化分析的 prompt（悬浮窗流式接口与后台任务共用，避免双份漂移）。"""
+    authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
+    keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
+    journal = paper.journal_name or "未知"
+    journal_issue = paper.journal_issue or ""
+    subfield = paper.economics_subfield or "未知"
+
+    system_prompt = (
+        "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
+        "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
+    )
+    prompt = f"""请从学术角度分析以下论文：
 
 - 标题：{paper.title}
 - 作者：{authors}
@@ -437,13 +467,94 @@ async def _run_single_analyze_background(analysis_id: int, paper_id: str, model:
 
 要求：结构清晰，观点明确；基于给出的论文信息作答，不要臆造未提供的内容。"""
 
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _stream_single_analysis_response(analysis_id: int, paper_id: str, client, model: str, messages: list):
+    """单篇论文 AI 分析的 SSE 流式响应：实时转发正文 delta，结束后按结果持久化。
+
+    - 正常结束：累积正文落库 success；
+    - 流中出错：错误帧已转发给前端，记录标记 failed；
+    - 客户端断开（关窗/切换）：记录标记 failed（"分析被中断"），避免 pending 卡死论文再次分析。
+    """
+    async def event_generator():
+        from app.database import AsyncSessionLocal
+
+        collected: list[str] = []
+        failed_reason: Optional[str] = None
+
+        def _collect(ev: dict):
+            nonlocal failed_reason
+            if ev.get("content"):
+                collected.append(ev["content"])
+            elif ev.get("error"):
+                failed_reason = str(ev["error"])
+
+        async def _persist(status: str, text: str):
+            try:
+                async with AsyncSessionLocal() as db:
+                    await PaperAnalysisCRUD.update_analysis(db, analysis_id, text, status)
+                    await db.commit()
+            except Exception:
+                logger.exception("Failed persisting single analysis %s", analysis_id)
+
+        try:
+            # temperature/max_tokens 与后台任务保持一致
+            async for frame in _stream_llm_content(client, model, messages, on_event=_collect,
+                                                    temperature=0.4, max_tokens=2048):
+                yield frame
+            if failed_reason:
+                await _persist("failed", f"分析失败: {failed_reason}")
+            else:
+                await _persist("success", "".join(collected))
+        except asyncio.CancelledError:
+            # 客户端断开（uvicorn cancel scope）：本任务内后续 await 会立即再次被取消，
+            # 直接 await _persist 不可靠；改派独立任务落库（脱离 cancel scope），避免 pending 卡死。
+            try:
+                asyncio.get_running_loop().create_task(_persist("failed", "分析被中断"))
+            except Exception:
+                logger.exception("Failed dispatching interrupted-persist for analysis %s", analysis_id)
+            raise
+        except GeneratorExit:
+            # 流被 aclose()（如 Starlette 清理）：任务未取消，可直接 await 落库
+            await _persist("failed", "分析被中断")
+            raise
+        except Exception as e:
+            logger.error(f"Single analyze stream {paper_id} failed: {e}")
+            await _persist("failed", f"分析失败: {str(e)}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _run_single_analyze_background(analysis_id: int, paper_id: str, model: Optional[str]):
+    """单篇论文 AI 分析后台任务：检索论文 -> LLM 生成结构化分析 -> 回写记录。
+
+    与批量分析同形：在事件循环内自建会话（AsyncSessionLocal）。失败不抛 HTTP 异常，
+    而是把记录标记为 failed（内容带原因），前端据此渲染重试按钮。
+    """
+    from app.database import AsyncSessionLocal
+    from app.crud import PaperAnalysisCRUD
+
+    try:
+        client, _ = _get_ai_client()
+        async with AsyncSessionLocal() as db:
+            paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+            if not paper:
+                await PaperAnalysisCRUD.update_analysis(db, analysis_id, "分析失败: 论文不存在", "failed")
+                await db.commit()
+                return
+
+            messages = _build_single_analysis_messages(paper)
             response = await asyncio.to_thread(
                 client.chat.completions.create,
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
                 max_tokens=2048,
                 temperature=0.4,
             )
@@ -801,6 +912,14 @@ async def save_chat_messages(paper_id: str, body: ChatSaveRequest, db: AsyncSess
     return {"status": "saved", "count": len(messages)}
 
 
+@router.delete("/papers/{paper_id}/chats")
+async def clear_chat_messages(paper_id: str, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+    """清空该论文的追问对话（悬浮窗"清空"按钮）。"""
+    await PaperChatCRUD.clear_chats(db, paper_id)
+    await db.commit()
+    return {"status": "cleared"}
+
+
 @router.post("/papers/{paper_id}/recompute-similarities")
 async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
@@ -1028,6 +1147,29 @@ async def get_subfield_distribution(
     distribution = [
         {"subfield": row[0], "count": row[1]}
         for row in result
+    ]
+    return {"distribution": distribution}
+
+
+@router.get("/keyword-distribution")
+async def get_keyword_distribution(
+    db: AsyncSession = Depends(get_db)
+):
+    """关键词论文数分布（json_each 展开 keywords_cn 统计）。"""
+    from sqlalchemy import text as sa_text
+
+    result = await db.execute(
+        sa_text(
+            "SELECT json_each.value AS kw, COUNT(*) AS cnt "
+            "FROM papers, json_each(papers.keywords_cn) "
+            "WHERE papers.keywords_cn IS NOT NULL "
+            "GROUP BY json_each.value "
+            "ORDER BY cnt DESC"
+        )
+    )
+    distribution = [
+        {"keyword": row[0], "count": row[1]}
+        for row in result.fetchall()
     ]
     return {"distribution": distribution}
 

@@ -254,16 +254,14 @@ class JournalRequest(BaseModel):
     model: Optional[str] = None
 
 
-@router.post("/producer/journal")
-async def suggest_journal(
-    body: JournalRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """期刊适配建议：依据论文库期刊分布 + 内置期刊画像 + LLM 推荐 2-3 个投稿目标。"""
-    topic = (body.topic or "").strip()
-    if not topic:
-        raise HTTPException(status_code=400, detail="topic is required")
+async def _suggest_journal_content(
+    db: AsyncSession, topic: str,
+    abstract: Optional[str] = None, model: Optional[str] = None,
+) -> tuple:
+    """期刊适配建议核心（供 /producer/journal 与研究工作台复用）。
 
+    返回 (recommendations_text, suggestions, ai_used)；AI 不可用/失败时降级规则推荐。
+    """
     # 论文库该方向的期刊分布（检索相关论文统计期刊频次）
     papers = await _retrieve_papers(db, topic, limit=30)
     journal_counts: dict = {}
@@ -287,10 +285,10 @@ async def suggest_journal(
     recommendation_block = _render_recommendation(fallback[0] if fallback else None)
 
     if not ai_trend_service.is_available():
-        return {"topic": topic, "recommendations": recommendation_block, "suggestions": fallback, "ai_used": False}
+        return recommendation_block, fallback, False
 
     try:
-        provider, bare_model = _resolve_model_provider(body.model)
+        provider, bare_model = _resolve_model_provider(model)
         client, provider = _get_ai_client(provider)
         if not bare_model:
             bare_model = _get_default_model(provider)
@@ -303,7 +301,7 @@ async def suggest_journal(
 {dist_text}
 
 选题：{topic}
-{'摘要：' + body.abstract if body.abstract else ''}
+{'摘要：' + abstract if abstract else ''}
 
 请用 markdown 输出，每个推荐期刊一个小节：
 ## 推荐期刊名
@@ -319,10 +317,26 @@ async def suggest_journal(
             ], model=bare_model, max_tokens=2048, temperature=0.3,
         )
         text = (response.choices[0].message.content or "").strip()
-        return {"topic": topic, "recommendations": text, "suggestions": fallback, "ai_used": True}
+        return text, fallback, True
     except Exception as e:
         logger.warning(f"Journal suggestion LLM failed, using rule fallback: {e}")
-        return {"topic": topic, "recommendations": recommendation_block, "suggestions": fallback, "ai_used": False}
+        return recommendation_block, fallback, False
+
+
+@router.post("/producer/journal")
+async def suggest_journal(
+    body: JournalRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """期刊适配建议：依据论文库期刊分布 + 内置期刊画像 + LLM 推荐 2-3 个投稿目标。"""
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="topic is required")
+
+    recommendations, fallback, ai_used = await _suggest_journal_content(
+        db, topic, body.abstract, body.model
+    )
+    return {"topic": topic, "recommendations": recommendations, "suggestions": fallback, "ai_used": ai_used}
 
 
 def _rule_journal_suggestion(topic: str, journal_dist) -> list:

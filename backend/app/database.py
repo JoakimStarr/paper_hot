@@ -99,3 +99,28 @@ async def init_db():
             await conn.execute(text("ALTER TABLE crawl_logs ADD COLUMN log_detail TEXT"))
         if "rerun_params" not in existing:
             await conn.execute(text("ALTER TABLE crawl_logs ADD COLUMN rerun_params TEXT"))
+        # assistant_messages.reasoning：助手消息的思考过程持久化（旧库补列）
+        am_rows = (await conn.execute(text("PRAGMA table_info(assistant_messages)"))).fetchall()
+        am_cols = {r[1] for r in am_rows}
+        if "reasoning" not in am_cols:
+            await conn.execute(text("ALTER TABLE assistant_messages ADD COLUMN reasoning TEXT"))
+        # 研究工作台：topic_projects 补列（保留历史数据），project_papers 表由 create_all 自动建
+        tp_rows = (await conn.execute(text("PRAGMA table_info(topic_projects)"))).fetchall()
+        tp_cols = {r[1] for r in tp_rows}
+        _tp_new_cols = [
+            ("source_type", "VARCHAR(20) DEFAULT 'manual'"),
+            ("source_ref", "VARCHAR(200)"),
+            ("research_questions", "TEXT"),
+            ("current_step", "INTEGER DEFAULT 1"),
+            ("generated_topics", "TEXT"),
+            ("overview", "TEXT"),
+            ("data_insights", "TEXT"),
+            ("literature_review", "TEXT"),
+            ("proposal", "TEXT"),
+            ("journal_advice", "TEXT"),
+            ("ai_pending", "VARCHAR(50)"),
+            ("ai_error", "TEXT"),
+        ]
+        for col, ddl in _tp_new_cols:
+            if col not in tp_cols:
+                await conn.execute(text(f"ALTER TABLE topic_projects ADD COLUMN {col} {ddl}"))

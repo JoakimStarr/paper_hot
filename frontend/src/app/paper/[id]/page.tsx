@@ -6,13 +6,17 @@ import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi, producerApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
 import { PaperDetailResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, Award, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check, Bookmark, Pin, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
 });
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors, downloadTextFile } from '@/lib/utils';
+import { useBookmarks } from '@/lib/useBookmarks';
+import { usePins } from '@/lib/usePins';
+import { useToast } from '@/components/Toast';
+import { openAssistant } from '@/lib/assistantBus';
 
 export default function PaperDetailPage() {
   const { t } = useLanguage();
@@ -37,10 +41,27 @@ export default function PaperDetailPage() {
 
   const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // —— 阅读进度条 ——
+  const [readProgress, setReadProgress] = useState(0);
+  useEffect(() => {
+    const onScroll = () => {
+      const el = document.documentElement;
+      const total = el.scrollHeight - el.clientHeight;
+      setReadProgress(total > 0 ? Math.min((el.scrollTop / total) * 100, 100) : 0);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   // —— 模型选择（OpenAI 兼容）——
   const [availableModels, setAvailableModels] = useState<Array<{ id: string; label: string; available: boolean }>>([]);
   const [analysisModel, setAnalysisModel] = useState('');
   const [showAnalysisModelSelect, setShowAnalysisModelSelect] = useState(false);
+
+  // —— 收藏/置顶 ——
+  const { has: isBookmarkedNow, toggle: toggleBookmarkState } = useBookmarks();
+  const { has: isPinnedNow, toggle: togglePinState } = usePins();
+  const { toast } = useToast();
 
   const providerLabel = (provider?: string) => {
     if (provider === 'zhipu') return '智谱';
@@ -214,6 +235,35 @@ export default function PaperDetailPage() {
     setCitationBusy(false);
   };
 
+  const handleToggleBookmark = async () => {
+    if (!paper) return;
+    try {
+      const res = await toggleBookmarkState(paper.id);
+      toast(t(res ? 'paper.bookmarkMsg' : 'paper.unbookmarkMsg'), 'success');
+    } catch {
+      toast(t('paper.bookmarkFailed'), 'error');
+    }
+  };
+
+  const handleTogglePin = async () => {
+    if (!paper) return;
+    try {
+      const res = await togglePinState(paper.id);
+      if (res.limited) {
+        toast(t('paper.pinLimit'), 'warning');
+      } else {
+        toast(t(res.pinned ? 'paper.pinnedMsg' : 'paper.unpinnedMsg'), 'success');
+      }
+    } catch {
+      toast(t('paper.pinFailed'), 'error');
+    }
+  };
+
+  const handleAskAi = () => {
+    if (!paper) return;
+    openAssistant({ paperId: paper.id, contextText: paper.title, autoPrompt: '请帮我深入分析这篇论文的贡献与不足' });
+  };
+
   const analyzePaper = async () => {
     if (!params.id) return;
     setAiAnalyzing(true);
@@ -311,10 +361,17 @@ export default function PaperDetailPage() {
   }
 
   const score = paper.scores?.final_score || 0;
-  const shouldReadScore = paper.should_read_score || score;
 
   return (
     <Layout>
+      {/* 阅读进度条 */}
+      <div className="fixed top-0 left-0 right-0 z-50 h-1 bg-gray-200/50 dark:bg-gray-700/50">
+        <div
+          className="h-full bg-primary-500 transition-[width] duration-150 ease-out"
+          style={{ width: `${readProgress}%` }}
+        />
+      </div>
+
       <div className="mb-4 sm:mb-6">
         <Link href="/" className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-primary-600 transition-colors">
           <ArrowLeft className="w-5 h-5" />
@@ -328,6 +385,31 @@ export default function PaperDetailPage() {
             {paper.title}
           </h1>
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* 收藏 */}
+            <button
+              onClick={handleToggleBookmark}
+              className={`p-1.5 rounded transition-colors ${paper && isBookmarkedNow(paper.id) ? 'text-yellow-500 hover:text-yellow-600' : 'text-gray-400 hover:text-yellow-500'}`}
+              title={paper && isBookmarkedNow(paper.id) ? t('paper.unbookmarkMsg') : t('paper.bookmarkMsg')}
+            >
+              <Bookmark className="w-4.5 h-4.5 sm:w-5 sm:h-5" fill={paper && isBookmarkedNow(paper.id) ? 'currentColor' : 'none'} />
+            </button>
+            {/* 置顶 */}
+            <button
+              onClick={handleTogglePin}
+              className={`p-1.5 rounded transition-colors ${paper && isPinnedNow(paper.id) ? 'text-blue-500 hover:text-blue-600' : 'text-gray-400 hover:text-blue-500'}`}
+              title={paper && isPinnedNow(paper.id) ? t('paper.unpinnedMsg') : t('paper.pinnedMsg')}
+            >
+              <Pin className="w-4.5 h-4.5 sm:w-5 sm:h-5" fill={paper && isPinnedNow(paper.id) ? 'currentColor' : 'none'} />
+            </button>
+            {/* AI 追问 */}
+            <button
+              onClick={handleAskAi}
+              className="flex items-center gap-1 text-xs px-2 py-1.5 rounded bg-primary-50 dark:bg-primary-900/30 text-primary-600 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors"
+              title="向 AI 助手追问此论文"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">追问</span>
+            </button>
             {/* P2-11a：引用导出 */}
             <button
               onClick={() => handleCopyCitation('bibtex')}
@@ -364,15 +446,11 @@ export default function PaperDetailPage() {
               {paper.features.topic}
             </span>
           )}
-          {paper.keywords_cn?.slice(0, 5).map((keyword, index) => (
-            <button
-              key={index}
-              onClick={() => router.push(`/search?search=${encodeURIComponent(keyword)}&search_field=keyword`)}
-              className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded hover:bg-primary-100 hover:text-primary-700 transition-colors cursor-pointer"
-            >
-              {keyword}
-            </button>
-          ))}
+          {paper.economics_subfield && (
+            <span className="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded">
+              {paper.economics_subfield}
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-6 text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-4 sm:mb-6">
@@ -383,6 +461,11 @@ export default function PaperDetailPage() {
           {paper.discipline && (
             <span className="bg-purple-50 dark:bg-purple-900/30 text-purple-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded">
               {paper.discipline}
+            </span>
+          )}
+          {paper.economics_subfield && (
+            <span className="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded hidden sm:inline">
+              {paper.economics_subfield}
             </span>
           )}
           <span className="bg-gray-100 dark:bg-gray-700 px-2 sm:px-3 py-0.5 sm:py-1 rounded">
@@ -420,9 +503,13 @@ export default function PaperDetailPage() {
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white mb-1.5 sm:mb-2">{t('paper.authors')}</h2>
             <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {paper.authors.map((author, index) => (
-                <span key={index} className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded">
+                <Link
+                  key={index}
+                  href={`/author/${encodeURIComponent(author)}`}
+                  className="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs sm:text-sm px-2 sm:px-3 py-0.5 sm:py-1 rounded hover:bg-primary-100 hover:text-primary-700 dark:hover:bg-primary-900/30 dark:hover:text-primary-300 transition-colors"
+                >
                   {author}
-                </span>
+                </Link>
               ))}
             </div>
           </div>
@@ -474,23 +561,6 @@ export default function PaperDetailPage() {
             </div>
           </div>
 
-          {paper.should_read_score && (
-            <div className="mt-3 sm:mt-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 p-3 sm:p-4 rounded-lg">
-              <div className="flex items-center gap-2">
-                <Award className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-700" />
-                <span className="font-semibold text-yellow-900 text-sm sm:text-base">
-                  {t('paper.shouldReadScore')}: {(shouldReadScore * 100).toFixed(0)}%
-                </span>
-              </div>
-              <p className="text-xs sm:text-sm text-yellow-800 mt-1">
-                {shouldReadScore >= 0.7
-                  ? t('paper.highlyRecommended')
-                  : shouldReadScore >= 0.5
-                  ? t('paper.worthReading')
-                  : t('paper.considerReading')}
-              </p>
-            </div>
-          )}
         </div>
       </div>
 

@@ -156,7 +156,11 @@ def _build_advanced_search_condition(search: str):
 class PaperCRUD:
     @staticmethod
     async def create_paper(db: AsyncSession, paper_data: PaperCreate) -> Paper:
-        db_paper = Paper(**paper_data.model_dump())
+        data = paper_data.model_dump()
+        # 若未指定子领域，尝试从期刊名映射
+        if not data.get("economics_subfield") and data.get("journal_name"):
+            data["economics_subfield"] = PaperCRUD.JOURNAL_SUBFIELD_MAP.get(data["journal_name"])
+        db_paper = Paper(**data)
         db.add(db_paper)
         await db.flush()
         await db.refresh(db_paper)
@@ -672,6 +676,7 @@ class PaperCRUD:
         '经济研究': '宏观经济学',
         '南开管理评论': '微观经济学',
         '中国工业经济': '产业经济学',
+        '世界经济': '国际经济学',
         '改革': '宏观经济学',
         '管理世界': '微观经济学',
         '数量经济技术经济研究': '计量经济学',

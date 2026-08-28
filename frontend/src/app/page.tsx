@@ -11,7 +11,7 @@ import SkeletonCard from '@/components/SkeletonCard';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
 });
-import { Loader2, X, Sparkles, FileDown, Clock } from 'lucide-react';
+import { Loader2, X, Sparkles, FileDown, Clock, ArrowUp } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
@@ -23,6 +23,7 @@ import { downloadTextFile } from '@/lib/utils';
 
 /** 首页「今日速览条」：今日/近一个月新发表/关注子领域统计；点击仅刷新数据。 */
 function TodayBriefBar() {
+  const { t } = useLanguage();
   const [brief, setBrief] = useState<TodayBrief | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -46,25 +47,22 @@ function TodayBriefBar() {
   return (
     <button
       onClick={load}
-      title="点击刷新"
+      title={t('home.clickRefresh')}
       className="w-full mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-left bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-200 dark:border-gray-700 hover:border-primary-400 dark:hover:border-primary-500 px-4 py-3 transition-colors"
     >
       <Clock className="w-4 h-4 text-primary-600 dark:text-primary-400 shrink-0" />
       <span className="text-sm text-gray-500 dark:text-gray-400">
-        今日新发表{' '}
-        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.today_count}</strong> 篇
+        {t('home.todayCount').replace('{n}', String(brief.today_count))}
       </span>
       <span className="text-gray-300 dark:text-gray-600">·</span>
       <span className="text-sm text-gray-500 dark:text-gray-400">
-        近一个月{' '}
-        <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.month_count}</strong> 篇
+        {t('home.monthCount').replace('{n}', String(brief.month_count))}
       </span>
       {brief.watch_subfield_count !== null && brief.watch_subfield_count !== undefined && (
         <>
           <span className="text-gray-300 dark:text-gray-600">·</span>
           <span className="text-sm text-gray-500 dark:text-gray-400">
-            关注子领域{' '}
-            <strong className="font-bold text-primary-700 dark:text-primary-300">{brief.watch_subfield_count}</strong> 篇
+            {t('home.watchCount').replace('{n}', String(brief.watch_subfield_count))}
           </span>
         </>
       )}
@@ -161,6 +159,35 @@ function HomePageInner() {
 
   const selectedPapers = papers.filter((p) => selectedIds.has(p.id));
 
+  // 收藏过滤：切换到「仅看收藏」时加载全量论文并筛选，避免只看到当前页的收藏
+  const [allPapersForBookmarks, setAllPapersForBookmarks] = useState<PaperCardType[]>([]);
+  const [bookmarksLoading, setBookmarksLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showBookmarksOnly) { setAllPapersForBookmarks([]); return; }
+    let cancelled = false;
+    setBookmarksLoading(true);
+    // 并发加载所有页（上限 20 页 = 400 篇 @pageSize=20）
+    const maxPages = Math.min(totalPages, 20);
+    Promise.all(
+      Array.from({ length: maxPages }, (_, i) =>
+        papersApi.getPapers(buildParams(i + 1, pageSize))
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      const merged = results.flatMap((r) => r.papers);
+      setAllPapersForBookmarks(merged);
+      setBookmarksLoading(false);
+    }).catch(() => {
+      if (!cancelled) setBookmarksLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [showBookmarksOnly, buildParams, pageSize, totalPages]);
+
+  const displayedPapers = showBookmarksOnly
+    ? allPapersForBookmarks.filter(p => getBookmarks().includes(p.id))
+    : papers;
+
   // 命中数提示：仅在真实影响服务端命中的筛选/搜索激活时显示（不含纯客户端「仅看收藏」）
   const hasActiveFilter = minScore !== null || selectedSubfield.length > 0 || selectedCnkiSubject.length > 0 || selectedJournal.length > 0 || searchQuery.trim() !== '';
 
@@ -220,13 +247,7 @@ function HomePageInner() {
     }
   };
 
-  // 收藏过滤：仅对当前页内存中的论文筛选（分页基于服务端 total，书签视图为本地子集）
-  const displayedPapers = showBookmarksOnly
-    ? papers.filter(p => getBookmarks().includes(p.id))
-    : papers;
-  const displayedTotalPages = showBookmarksOnly
-    ? Math.max(1, Math.ceil(displayedPapers.length / pageSize))
-    : totalPages;
+
 
   return (
     <Layout>
@@ -297,21 +318,39 @@ function HomePageInner() {
             ))}
           </div>
 
-          {papers.length === 0 && (
+          {papers.length === 0 && !showBookmarksOnly && (
             <div className="text-center py-12">
               <p className="text-gray-600 dark:text-gray-400">{t('home.noPapers')}</p>
             </div>
           )}
 
-          {total > 0 && (
+          {showBookmarksOnly && !bookmarksLoading && displayedPapers.length === 0 && (
+            <div className="text-center py-12">
+              <p className="text-gray-600 dark:text-gray-400">{t('home.noPapers')}</p>
+            </div>
+          )}
+
+          {showBookmarksOnly && bookmarksLoading && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-primary-600" />
+            </div>
+          )}
+
+          {total > 0 && !showBookmarksOnly && (
             <Pagination
               currentPage={page}
-              totalPages={displayedTotalPages}
-              totalItems={displayedPapers.length}
+              totalPages={totalPages}
+              totalItems={total}
               pageSize={pageSize}
               onPageChange={handlePageChange}
               onPageSizeChange={handlePageSizeChange}
             />
+          )}
+
+          {showBookmarksOnly && displayedPapers.length > 0 && (
+            <div className="text-center text-sm text-gray-500 dark:text-gray-400 py-4">
+              共 {displayedPapers.length} 篇收藏
+            </div>
           )}
         </>
       )}
@@ -381,7 +420,33 @@ function HomePageInner() {
           </div>
         </div>
       )}
+      {/* 回到顶部 */}
+      <BackToTop />
     </Layout>
+  );
+}
+
+/** 回到顶部浮动按钮：滚动超过 400px 后显示。 */
+function BackToTop() {
+  const { t } = useLanguage();
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setShow(window.scrollY > 400);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  if (!show) return null;
+
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      className="fixed bottom-20 right-5 z-40 p-2.5 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:text-primary-600 hover:border-primary-400 transition-colors"
+      title={t('home.backToTop')}
+    >
+      <ArrowUp className="w-5 h-5" />
+    </button>
   );
 }
 

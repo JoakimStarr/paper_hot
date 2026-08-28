@@ -61,6 +61,7 @@ class ChatRequest(BaseModel):
     session_id: int
     messages: List[dict] = []                 # 本轮新增消息（通常只有一条 user）
     agent_enabled: Optional[bool] = None      # 请求级"数据库检索"开关；None 跟随全局 settings.agent_enabled
+    model: Optional[str] = None               # 请求级模型（provider/model 或裸模型名）；None 用默认模型
 
 
 class MessagesIn(BaseModel):
@@ -83,6 +84,18 @@ class SessionDetailOut(SessionOut):
 
 def _uid(x_user_id: Optional[str]) -> str:
     return (x_user_id or "").strip() or "local"
+
+
+def _make_title(text: str, max_len: int = 24) -> str:
+    """把首条用户消息加工成会话标题：压空白、按句边界截断。"""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return ""
+    for sep in ("。", "？", "！", "；", "？", "！", ". ", "? ", "! "):
+        idx = t.find(sep)
+        if 0 < idx < max_len:
+            return t[:idx].strip()[:max_len]
+    return t[:max_len]
 
 
 def _build_system_prompt(page: str, paper, context_text: Optional[str]) -> str:
@@ -117,12 +130,26 @@ async def _load_session(db: AsyncSession, session_id: int, uid: str) -> Assistan
 
 
 async def _load_messages(db: AsyncSession, session_id: int) -> List[dict]:
+    """加载会话历史（仅 role/content，用于拼 LLM 上下文，不含思考过程）。"""
     rows = await db.execute(
         sa_select(AssistantMessage.role, AssistantMessage.content)
         .where(AssistantMessage.session_id == session_id)
         .order_by(AssistantMessage.id)
     )
     return [{"role": r[0], "content": r[1]} for r in rows.all()]
+
+
+async def _load_session_messages(db: AsyncSession, session_id: int) -> List[dict]:
+    """加载会话消息（含 reasoning，供前端展示「查看思考过程」）。"""
+    rows = await db.execute(
+        sa_select(AssistantMessage.role, AssistantMessage.content, AssistantMessage.reasoning)
+        .where(AssistantMessage.session_id == session_id)
+        .order_by(AssistantMessage.id)
+    )
+    return [
+        {"role": r[0], "content": r[1], "reasoning": r[2] or None}
+        for r in rows.all()
+    ]
 
 
 def _session_to_out(s: AssistantSession, count: int) -> SessionOut:
@@ -187,7 +214,7 @@ async def get_session(
 ):
     uid = _uid(x_user_id)
     session = await _load_session(db, session_id, uid)
-    messages = await _load_messages(db, session_id)
+    messages = await _load_session_messages(db, session_id)
     out = _session_to_out(session, len(messages)).model_dump()
     out["messages"] = messages
     return SessionDetailOut(**out)
@@ -225,10 +252,11 @@ async def save_messages(
         content = str(m.get("content") or "").strip()
         if not role or not content:
             continue
-        db.add(AssistantMessage(session_id=session_id, role=role, content=content))
+        reasoning = str(m.get("reasoning") or "").strip() or None
+        db.add(AssistantMessage(session_id=session_id, role=role, content=content, reasoning=reasoning))
         # 用首条用户消息生成会话标题
         if role == "user" and not session.title:
-            session.title = content[:50]
+            session.title = _make_title(content)
     await db.commit()
     return {"ok": True, "count": len(msgs)}
 
@@ -257,24 +285,27 @@ async def assistant_chat(
     system_prompt = _build_system_prompt(session.page, paper, session.context_text)
     enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
     if enabled:
+        # 工具行为规则保持精简：工具细节由 JSON schema 提供，提示词只约束行为，避免指令稀释
         system_prompt += (
-            "\n\n## 工具使用规则（强制）\n"
-            "只要问题涉及论文库数据——热点/趋势/相关论文/研究现状/文献数量/某个方向进展/作者，"
-            "**必须先调用工具检索论文库，再基于检索结果回答，禁止用常识编造库内统计数字**。\n"
-            "- `trending_topics`：热点/热门趋势/升温方向（返回论文库真实统计，保持其排序）\n"
-            "- `search_papers`：按关键词/期刊/年份检索（返回标题/期刊/关键词/评分）\n"
-            "- `retrieve_context`：语义召回最相关的论文（返回标题/摘要/[编号]，适合「研究到哪了」）\n"
-            "- `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文；"
-            "`keyword_gaps`：研究空白组合；`subfield_distribution`：子领域分布\n\n"
-            "引用具体论文时用 [编号] 标注（如 [1][3]）。检索结果为空或与问题无关时如实说明；"
-            "严禁未检索就给出「XX方向是热点」之类的断言。"
+            "\n\n## 工具使用规则\n"
+            "1. 涉及论文库数据的问题（热点/趋势/相关论文/研究现状/数量/进展/作者），第一步必须调用工具检索后再回答，禁止用常识编造库内数字。\n"
+            "2. 热点用 trending_topics，推荐/相关文献用 retrieve_context 或 search_papers，其余按需调用。\n"
+            "3. 未调用工具就不要说「我查看了论文库/我检索了」。不检索就直接回答。\n"
+            "4. 引用检索到的论文用 [编号] 标注（如 [1]）。\n"
+            "5. 检索结果为空或无关时如实说明，不要编造。"
         )
     history = await _load_messages(db, session.id)
+    # 长会话上下文压缩：只保留最近 _MAX_CTX 条，更早的以提示代替（避免撑爆模型上下文窗口）
+    _MAX_CTX = 20
+    if len(history) > _MAX_CTX:
+        dropped = len(history) - _MAX_CTX
+        history = history[-_MAX_CTX:]
+        system_prompt += f"\n\n（注意：该会话早期有 {dropped} 条消息因过长被截断，仅保留最近 {_MAX_CTX} 条作为上下文）"
     new_msgs = [m for m in (body.messages or []) if str(m.get("role") or "") and str(m.get("content") or "").strip()]
     messages = [{"role": "system", "content": system_prompt}] + history + new_msgs
 
     try:
-        provider, bare_model = _resolve_model_provider(None)
+        provider, bare_model = _resolve_model_provider(body.model)
         client, provider = _get_ai_client(provider)
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
