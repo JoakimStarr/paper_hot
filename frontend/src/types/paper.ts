@@ -52,6 +52,8 @@ export interface PaperCard {
   trend_score: number;
   final_score: number;
   created_at: string;
+  /** 工作台「今日值得读」专用：推荐理由（profile/subfield/keyword/top） */
+  reason?: { type: string; label: string } | null;
 }
 
 export interface PaperCardListResponse {
@@ -198,6 +200,8 @@ export interface CNKISearchInfo {
   message: string | null;
   progress?: CNKISearchProgress | null;
   last_log?: string[];
+  /** 断点摘要（.cache/search_checkpoint.json）：同关键词启动将自动从上次进度续跑 */
+  checkpoint?: { keyword: string; phase: string; page: number; papers: number; saved_at?: string } | null;
 }
 
 export interface NetworkNode {
@@ -459,4 +463,65 @@ export interface ProjectSearchPaper {
   keywords: string[];
   similarity: number | null;
   in_project: boolean;
+}
+
+/** 相关文献推荐（recommend-papers 返回）：基于文献集相似论文，供用户决定是否加入引用。 */
+export interface ProjectRecommendedPaper extends ProjectSearchPaper {
+  /** 由哪篇项目文献引出（用于展示推荐理由） */
+  via_title: string | null;
+}
+
+// ============ 选题灵感向导（一句话想法 → 偏好 → AI 候选选题） ============
+
+export interface TopicIdeaPreferences {
+  identity?: 'bachelor' | 'master' | 'phd' | 'faculty';
+  paper_type?: 'empirical' | 'review' | 'case' | 'theory';
+  subfields?: string[];
+  methods?: string[];
+  data?: string[];
+  venue?: 'cn_top' | 'cn_regular' | 'en_top' | 'any';
+  prefer_novelty?: number;
+  focus_china?: boolean;
+  extra?: string;
+}
+
+export interface TopicIdeaReference {
+  id: string;
+  title: string;
+  journal: string | null;
+  published_at: string | null;
+  similarity: number | null;
+}
+
+export interface TopicIdeaCandidate {
+  id: string;
+  title: string;
+  research_questions: string[];
+  hypothesis: string;
+  why: string;
+  angle: string;
+  methods: string[];
+  data: string[];
+  subfield: string;
+  /** 检索关键词：选题拆分，供验证步知网爬虫 / 文献检索使用 */
+  keywords: string[];
+  assessment: {
+    novelty: number;
+    feasibility: number;
+    literature_support: number;
+    comment: string;
+  };
+  references: TopicIdeaReference[];
+}
+
+export interface TopicIdeaGenerateRequest {
+  idea: string;
+  preferences?: TopicIdeaPreferences;
+  feedback?: string | null;
+  previous_candidates?: Array<{ title: string; research_questions: string[] }>;
+}
+
+export interface TopicIdeaGenerateResponse {
+  round: number;
+  candidates: TopicIdeaCandidate[];
 }

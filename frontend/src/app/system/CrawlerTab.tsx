@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Settings, Activity, Play, Pause, Square, ChevronDown, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
-  ToggleRight, ToggleLeft, Search,
+  ToggleRight, ToggleLeft, Search, History as HistoryIcon,
 } from 'lucide-react';
 import { CrawlLog, SchedulerJob, CNKISearchInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -51,7 +51,7 @@ interface CrawlerTabProps {
   onTriggerJob: (jobId: string) => void;
   crawlLogs: CrawlLog[];
   onRefresh: () => void;
-  onRerunTask: (logId: number) => void;
+  onRerunTask: (log: CrawlLog) => void;
   rerunningLogId: number | null;
   kwInfo: CNKISearchInfo | null;
   kwStarting: boolean;
@@ -97,12 +97,19 @@ export default function CrawlerTab({
     const map: Record<string, string> = {
       starting: t('sys.kwPhaseStarting'),
       collecting: t('sys.kwPhaseCollecting'),
+      collecting_check: t('sys.kwPhaseCollecting'),
       details: t('sys.kwPhaseDetails'),
+      detail: t('sys.kwPhaseDetails'),
+      collect: t('sys.kwPhaseCollecting'),
       done: t('sys.kwPhaseDone'),
       stopped: t('sys.kwPhaseStopped'),
     };
     return phase ? (map[phase] || phase) : '';
   };
+
+  // 断点信息：非运行状态下展示上次进度；关键词与表单一致时启动按钮变为「从断点继续」
+  const ckpt = kwInfo?.checkpoint;
+  const resumable = !kwInfo?.running && !!ckpt && ckpt.keyword === kwForm.keyword.trim();
 
   const formatTime = (dateStr: string | null) => {
     if (!dateStr) return '-';
@@ -170,6 +177,17 @@ export default function CrawlerTab({
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('sys.cnkiKeywordTitle')}</h2>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('sys.cnkiKeywordDesc')}</p>
+
+          {/* 断点提示条：上次任务被停止/中断后，同关键词启动自动从断点续跑 */}
+          {!kwInfo?.running && ckpt && (
+            <div className="mb-3 flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300">
+              <HistoryIcon className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                {t('sys.kwCheckpointHint', { keyword: ckpt.keyword, page: ckpt.page, papers: ckpt.papers, phase: phaseText(ckpt.phase) })}
+                {ckpt.saved_at ? ` (${ckpt.saved_at.replace('T', ' ')})` : ''}
+              </span>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div>
@@ -248,10 +266,12 @@ export default function CrawlerTab({
             <button
               onClick={onStartKeywordCrawl}
               disabled={kwStarting || !!kwInfo?.running || !kwForm.keyword.trim()}
-              className="flex items-center gap-2 w-full justify-center px-4 py-2.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className={`flex items-center gap-2 w-full justify-center px-4 py-2.5 text-white text-sm rounded-lg disabled:opacity-50 transition-colors ${
+                resumable ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'
+              }`}
             >
               {kwStarting || kwInfo?.running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              {kwStarting || kwInfo?.running ? t('sys.kwRunning') : t('sys.kwRun')}
+              {kwStarting || kwInfo?.running ? t('sys.kwRunning') : (resumable ? t('sys.kwResumeRun') : t('sys.kwRun'))}
             </button>
             {kwInfo && (kwInfo.running || kwInfo.keyword || kwInfo.message) && (
               <div className="mt-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-gray-700 dark:text-gray-200 space-y-1">
@@ -463,7 +483,7 @@ export default function CrawlerTab({
                           {log.status}
                         </span>
                         <button
-                          onClick={(e) => { e.stopPropagation(); onRerunTask(log.id); }}
+                          onClick={(e) => { e.stopPropagation(); onRerunTask(log); }}
                           disabled={rerunningLogId === log.id || log.status === 'running'}
                           className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-md hover:bg-primary-100 disabled:opacity-50 transition-colors"
                           title={t('sys.taskRerun')}

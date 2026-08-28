@@ -347,6 +347,9 @@ export const translations = {
       rerunKw: '已重新启动关键词爬取：{name}',
       rerunCrawl: '已重新启动期刊爬取：{name}',
       rerunFailed: '任务重跑失败',
+      kwCheckpointHint: '检测到上次进度：关键词「{keyword}」{phase}，已收集至第 {page} 页 / 待处理 {papers} 篇。相同关键词启动将自动续跑，也可修改参数后启动。',
+      kwResumeRun: '从断点继续',
+      kwParamsRestored: '已回填「{name}」的上次参数到检索表单，可修改后启动（同关键词启动将自动从断点续跑）',
     },
 
     // 趋势页
@@ -1072,6 +1075,9 @@ export const translations = {
       rerunKw: 'Keyword crawl restarted: {name}',
       rerunCrawl: 'Journal crawl restarted: {name}',
       rerunFailed: 'Task re-run failed',
+      kwCheckpointHint: 'Previous progress found: keyword "{keyword}", {phase}, collected up to page {page} / {papers} papers pending. Starting with the same keyword will auto-resume; you may adjust parameters first.',
+      kwResumeRun: 'Resume from Checkpoint',
+      kwParamsRestored: 'Restored last-run parameters of "{name}" into the search form. Adjust and start; the same keyword will auto-resume from the checkpoint.',
     },
 
     // Trends page

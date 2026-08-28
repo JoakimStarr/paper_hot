@@ -83,6 +83,8 @@ class PaperAnalysis(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     paper_id = Column(String(36), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 多用户预留：谁触发的分析。默认 "local"，与收藏/阅读历史等个人表一致。
+    user_id = Column(String(50), default="local", index=True)
     analysis = Column(Text, nullable=True)
     model = Column(String(50), nullable=True)
     status = Column(String(20), default="success", index=True)
@@ -168,12 +170,6 @@ class CrawlLog(Base):
     log_detail = Column(Text, nullable=True)
     rerun_params = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    # 任务类型：journal（期刊/arxiv 调度爬取）| keyword（关键词检索爬取）| cnki_top50 | cnki_navi
-    task_type = Column(String(20), default="journal", index=True)
-    # 爬取日志尾部（任务展开查看，由父进程在子进程结束后写入，上限 ~60 行）
-    log_detail = Column(Text, nullable=True)
-    # 重跑参数（JSON 字符串，keyword 任务存 search_field/years/max_pages/detail_workers/show_browser）
-    rerun_params = Column(Text, nullable=True)
 
 
 class TrendChat(Base):

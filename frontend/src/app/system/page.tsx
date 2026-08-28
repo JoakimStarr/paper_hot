@@ -81,36 +81,41 @@ export default function SystemPage() {
   }), []);
   const okMsg = useCallback((text: string): Msg => ({ ok: true, text }), []);
 
-  const loadKwStatus = async () => {
+  const loadKwStatus = async (): Promise<CNKISearchInfo | null> => {
     try {
       const info = await papersApi.getCNKISearchStatus();
       setKwInfo(info);
-    } catch { /* ignore */ }
+      return info;
+    } catch { /* ignore */ return null; }
   };
 
-  // 关键词爬取状态轮询（启动/重跑共用）；上限 200 次（约 10 分钟），超时停止自动刷新
+  // 关键词爬取状态轮询（启动/恢复/页面挂载共用）：递归 setTimeout，
+  // 轮询 100 次（约 5 分钟）后降频到 30s（长任务/暂停不丢状态），总计约 1 小时后停止
   const startKwStatusPoll = () => {
-    if (kwPollRef.current) clearInterval(kwPollRef.current);
+    if (kwPollRef.current) { clearTimeout(kwPollRef.current); kwPollRef.current = null; }
     let kwAttempts = 0;
-    kwPollRef.current = setInterval(async () => {
+    const tick = async () => {
       kwAttempts += 1;
       const info = await papersApi.getCNKISearchStatus().catch(() => null);
-      if (!info) return;
-      setKwInfo(info);
-      if (!info.running && kwPollRef.current) {
-        clearInterval(kwPollRef.current);
+      if (info) setKwInfo(info);
+      if (!info || !info.running) {
         kwPollRef.current = null;
         setKwStarting(false);
-      } else if (kwAttempts > 200 && kwPollRef.current) {
-        clearInterval(kwPollRef.current);
+        return;
+      }
+      if (kwAttempts > 600) {
         kwPollRef.current = null;
         setKwStarting(false);
         setMessage({ ok: true, text: t('sys.kwPollTimeout') });
+        return;
       }
-    }, 3000);
+      const delay = kwAttempts <= 100 ? 3000 : 30000;
+      kwPollRef.current = setTimeout(tick, delay);
+    };
+    kwPollRef.current = setTimeout(tick, 3000);
   };
 
-  useEffect(() => () => { if (kwPollRef.current) clearInterval(kwPollRef.current); }, []);
+  useEffect(() => () => { if (kwPollRef.current) { clearTimeout(kwPollRef.current); kwPollRef.current = null; } }, []);
 
   const handleStartKeywordCrawl = async () => {
     const keyword = kwForm.keyword.trim();
@@ -147,6 +152,8 @@ export default function SystemPage() {
     try {
       await papersApi.resumeCNKISearch();
       setMessage(okMsg(t('sys.kwResumed')));
+      // 恢复后重启轮询（暂停超过旧轮询上限时进度显示会冻结，这里兜底）
+      startKwStatusPoll();
     } catch (error: unknown) {
       setMessage(errMsg(error, t('sys.kwResumeFailed')));
     }
@@ -185,6 +192,28 @@ export default function SystemPage() {
       setRerunningLogId(null);
       fetchData();
     }
+  };
+
+  // 关键词任务「恢复参数」：把上次运行参数回填到检索表单（可修改），启动时同关键词自动从断点续跑
+  const handleRestoreKwParams = (log: CrawlLog) => {
+    let params: Partial<KeywordCrawlForm> = {};
+    try {
+      const raw = log.rerun_params ? JSON.parse(log.rerun_params) : {};
+      params = {
+        search_field: raw.search_field,
+        years: raw.years != null ? String(raw.years) : '',
+        max_pages: raw.max_pages != null ? String(raw.max_pages) : '',
+        detail_workers: raw.detail_workers != null ? String(raw.detail_workers) : '3',
+        show_browser: !!raw.show_browser,
+      };
+    } catch { /* 旧记录无参数则保留当前表单 */ }
+    setKwForm(prev => ({
+      ...prev,
+      keyword: log.journal_name || prev.keyword,
+      ...Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null)),
+    }));
+    setActiveTab('crawler');
+    setMessage(okMsg(t('sys.kwParamsRestored', { name: log.journal_name })));
   };
 
   const [ports, setPorts] = useState({ backend: 8000, frontend: 3000 });
@@ -255,6 +284,11 @@ export default function SystemPage() {
     fetchData();
     // 设置页所有页签都依赖 settings（CNKI 前缀、应用名、端口、模型等），进入即加载
     fetchSettings();
+    // 恢复关键词爬取任务的可见性：页面刷新/重进后，运行中的任务自动接续轮询
+    (async () => {
+      const info = await loadKwStatus();
+      if (info?.running) startKwStatusPoll();
+    })();
   }, []);
 
   // 挂载后从 URL ?tab= 恢复页签：不在 useState 初始化器里读 URL，
@@ -873,7 +907,7 @@ export default function SystemPage() {
             onTriggerJob={handleTriggerJob}
             crawlLogs={crawlLogs}
             onRefresh={fetchData}
-            onRerunTask={handleRerunTask}
+            onRerunTask={(log) => log.task_type === 'keyword' ? handleRestoreKwParams(log) : handleRerunTask(log.id)}
             rerunningLogId={rerunningLogId}
             kwInfo={kwInfo}
             kwStarting={kwStarting}

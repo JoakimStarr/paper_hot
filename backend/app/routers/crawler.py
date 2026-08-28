@@ -153,6 +153,16 @@ _cnki_search_proc: Optional[asyncio.subprocess.Process] = None
 # 最近日志行数上限：状态里只保留尾部一小段，避免长期爬取把内存撑大
 _MAX_STATUS_LOG_LINES = 30
 
+# 关键词检索断点文件（由 cnki_paper_captcha.py 在翻页/详情阶段写入，脚本同级的 .cache/ 下）
+_SEARCH_CHECKPOINT_FILE = BASE_DIR.parent / ".cache" / "search_checkpoint.json"
+
+
+def _read_search_checkpoint() -> Optional[dict]:
+    try:
+        return json.loads(_SEARCH_CHECKPOINT_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
 
 def _empty_cnki_progress() -> dict:
     return {
@@ -204,12 +214,13 @@ def _parse_cnki_progress(line: str, prog: dict) -> dict:
 
 async def _run_cnki_search_background(keyword: str, search_field: str, years: Optional[str],
                                       max_pages: Optional[int], detail_workers: int,
-                                      show_browser: bool = False):
+                                      show_browser: bool = False, resume: bool = False):
     """以后端子进程方式复用 cnki_paper_captcha.py --search 检索模式抓取并入库。
 
     该脚本内置通过 app.crud 写入 paperpulse.db 并记录 CrawlLog（详见其 main / run_search），
     这里只负责用当前 venv 的 python 拉起子进程，等待其结束后记录简要结果。
     show_browser=True 时以 --show-browser 打开浏览器窗口，遇验证码可人工处理。
+    resume=True 且存在同关键词断点时，脚本从上次进度续跑（跳过已收集页 / 已入库论文）。
     """
     import asyncio
     global _cnki_search_proc
@@ -234,6 +245,9 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
         cmd += ["--years", years]
     if max_pages:
         cmd += ["--max-pages", str(max(int(max_pages), 1))]
+    if resume:
+        cmd += ["--resume"]
+        _cnki_search_state["message"] = "检测到上次进度，从断点续跑…"
 
     # 建 keyword 类型爬取任务记录：任务面板展示 + 一键重跑需要 rerun_params
     crawl_log_id: Optional[int] = None
@@ -334,6 +348,9 @@ async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verif
     search_field = (body.search_field or "主题").strip() or "主题"
     if search_field not in CNKI_SEARCH_FIELDS:
         raise HTTPException(status_code=400, detail=f"不支持的检索字段: {search_field}，可选: {' / '.join(CNKI_SEARCH_FIELDS)}")
+    # 断点自动检测：同关键词存在断点则续跑（跳过已收集页 / 已入库论文），否则从头执行
+    ckpt = _read_search_checkpoint()
+    resume = bool(ckpt and ckpt.get("keyword") == keyword)
     from app.main import spawn_background_task
     spawn_background_task(_run_cnki_search_background(
         keyword=keyword,
@@ -342,14 +359,24 @@ async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verif
         max_pages=body.max_pages,
         detail_workers=body.detail_workers,
         show_browser=body.show_browser,
+        resume=resume,
     ))
-    return {"status": "started", "keyword": keyword}
+    return {"status": "started", "keyword": keyword, "resumed": resume}
 
 
 @router.get("/crawl/cnki/search/status")
 async def cnki_search_status(token: bool = Depends(verify_token)):
-    """关键词爬取任务状态（运行中 / 暂停 / 最近结果）。"""
-    return dict(_cnki_search_state)
+    """关键词爬取任务状态（运行中 / 暂停 / 最近结果 / 断点摘要）。"""
+    state = dict(_cnki_search_state)
+    ckpt = _read_search_checkpoint()
+    state["checkpoint"] = ({
+        "keyword": ckpt.get("keyword"),
+        "phase": ckpt.get("phase"),
+        "page": ckpt.get("page"),
+        "papers": len(ckpt.get("papers") or []),
+        "saved_at": ckpt.get("saved_at"),
+    } if ckpt else None)
+    return state
 
 
 def _cnki_search_signal(sig: signal.Signals):
@@ -440,6 +467,9 @@ async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db
         except Exception:
             params = {}
         from app.main import spawn_background_task
+        # 断点自动检测：同关键词存在断点则从上次进度续跑
+        ckpt = _read_search_checkpoint()
+        resume = bool(ckpt and ckpt.get("keyword") == log.journal_name)
         spawn_background_task(_run_cnki_search_background(
             keyword=log.journal_name,
             search_field=params.get("search_field") or "主题",
@@ -447,8 +477,9 @@ async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db
             max_pages=params.get("max_pages"),
             detail_workers=int(params.get("detail_workers") or 3),
             show_browser=bool(params.get("show_browser", False)),
+            resume=resume,
         ))
-        return {"status": "started", "task_type": "keyword", "name": log.journal_name}
+        return {"status": "started", "task_type": "keyword", "name": log.journal_name, "resumed": resume}
     # journal 类型：调度器按期刊重跑
     from app.main import scheduler
     try:

@@ -136,6 +136,37 @@ def _report_captcha(tag: str = ""):
 CACHE_DIR = Path(__file__).resolve().parent / '.cache'
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# —— 关键词检索断点：停止/中断后可从上次进度续跑（collect=翻页收集中 / detail=详情入库中）——
+# 注意：详情阶段本身逐篇入库即持久化，恢复时靠 URL 去重跳过已入库论文
+SEARCH_CHECKPOINT_FILE = CACHE_DIR / 'search_checkpoint.json'
+
+
+def _load_search_checkpoint():
+    try:
+        import json
+        return json.loads(SEARCH_CHECKPOINT_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _save_search_checkpoint(data: dict):
+    try:
+        import json
+        from datetime import datetime as _dt
+        data = dict(data)
+        data['saved_at'] = _dt.now().isoformat(timespec='seconds')
+        SEARCH_CHECKPOINT_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    except Exception as e:
+        print(f"  [checkpoint] 写入断点失败: {e}")
+
+
+def _clear_search_checkpoint():
+    try:
+        SEARCH_CHECKPOINT_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 # CNKI 检索字段全集（取值即知网站点字段名，前端下拉与 --search-field 均基于此，见 demo.py）
 CNKI_SEARCH_FIELDS = [
     "主题", "篇关摘", "关键词", "篇名", "全文", "作者", "第一作者", "通讯作者",
@@ -2353,7 +2384,8 @@ class KeywordSearchCrawler(JournalCrawler):
     def __init__(self, headless=True, keyword="", search_field="主题", max_pages=None,
                  min_year=None, max_year=None, state_file=None, thread_id=0,
                  urls_only=False, urls_file=None, debug_html=None,
-                 search_url=None, search_url_file=None, detail_workers=3):
+                 search_url=None, search_url_file=None, detail_workers=3,
+                 resume=False):
         super().__init__(headless=headless, thread_id=thread_id)
         self.keyword = keyword
         self.search_field = search_field
@@ -2361,6 +2393,8 @@ class KeywordSearchCrawler(JournalCrawler):
         self.min_year = min_year
         self.max_year = max_year
         self.state_file = Path(state_file) if state_file else None
+        # 断点续跑：同关键词存在断点时从上次进度继续（详情阶段靠 URL 去重跳过已入库）
+        self.resume = resume
         # 只收集 URL 模式（不抓详情入库），并保存到 urls_file
         self.urls_only = urls_only
         self.urls_file = Path(urls_file) if urls_file else CACHE_DIR / 'urls.txt'
@@ -2396,6 +2430,48 @@ class KeywordSearchCrawler(JournalCrawler):
         """)
         self.page = await self.context.new_page()
         print(f"  [关键词#{self.thread_id}] 浏览器已启动 (headless={self.headless})")
+
+    async def _fast_forward(self, target_page: int) -> int:
+        """断点恢复：从结果页第 1 页连续点「下一页」直达 target_page，返回实际到达的页码。
+
+        知网结果页翻页为 AJAX（URL 不变），只能逐页点击前进；站点结构变化导致
+        无法到达目标页时提前停在上 reach 到的页（重复收集的论文由入库去重兜底）。
+        """
+        cur = await self._current_page_num() or 1
+        while cur < target_page:
+            if not await self._next_page_exists():
+                print(f"  [关键词#{self.thread_id}] 快进翻页时已是末页（第 {cur} 页），停止快进")
+                break
+            await self._wait_loading_gone()
+            await _pacing_wait()
+            prev = cur
+            try:
+                await self.page.locator(self.NEXT_PAGE_SELECTOR).first.evaluate('el => el.click()')
+            except Exception:
+                try:
+                    await self.page.locator(self.NEXT_PAGE_SELECTOR).first.click(force=True, timeout=10000)
+                except Exception:
+                    pass
+            await self._ensure_no_captcha(timeout=120)
+            advanced = False
+            deadline = asyncio.get_event_loop().time() + 20
+            while asyncio.get_event_loop().time() < deadline:
+                await self._wait_loading_gone(timeout=5000)
+                try:
+                    await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(state='visible', timeout=3000)
+                except Exception:
+                    continue
+                new_cur = await self._current_page_num()
+                if new_cur is not None and new_cur > prev:
+                    cur = new_cur
+                    advanced = True
+                    break
+                if not await self._next_page_exists():
+                    break
+                await asyncio.sleep(0.5)
+            if not advanced:
+                break
+        return cur
 
     async def _captcha_popup_visible(self) -> bool:
         """检测不改变 URL 的验证码弹窗/遮罩。"""
@@ -2684,6 +2760,22 @@ class KeywordSearchCrawler(JournalCrawler):
 
         await self.init_browser()
         try:
+            # —— 断点恢复：--resume 且断点属于同一关键词时，从上次进度继续 ——
+            cp = _load_search_checkpoint() if self.resume else None
+            if cp and cp.get('keyword') != self.keyword:
+                print(f"{tag} 断点属于其他关键词（{cp.get('keyword')}），忽略并从头执行")
+                cp = None
+            if not cp:
+                _clear_search_checkpoint()
+            resumed_papers: list = list(cp.get('papers') or []) if cp else []
+            resume_page = int(cp.get('page') or 0) if cp else 0
+            resume_phase = cp.get('phase') if cp else None
+            resume_url = cp.get('search_url') if cp else None
+            if cp:
+                print(f"{tag} 检测到断点：phase={resume_phase}，已收集 {len(resumed_papers)} 篇（第 {resume_page} 页，存档 {cp.get('saved_at')}）")
+                if resume_url:
+                    self.search_url = resume_url  # 复用断点里的检索结果页 URL，跳过首页检索
+
             if self.search_url:
                 # 复用已保存的检索结果页 URL，跳过首页检索/主题/类型筛选
                 print(f"{tag} 直接打开已保存的检索结果页: {self.search_url}")
@@ -2792,9 +2884,18 @@ class KeywordSearchCrawler(JournalCrawler):
                     print(f"{tag} 保存检索 URL 失败: {e}")
 
             # 5. 翻页收集论文
-            all_papers = []
+            all_papers: list = list(resumed_papers)
+            # phase=detail：上次在详情入库阶段被中断，收集已完成，直接跳过翻页
+            skip_collect = bool(cp and resume_phase == 'detail')
             page_no = 1
-            while True:
+            if cp and resume_phase == 'collect' and resume_page > 0:
+                # 快进到断点页的下一页（第 1..resume_page 页已收集过）
+                reached = await self._fast_forward(resume_page + 1)
+                print(f"{tag} 断点快进完成：当前第 {reached} 页")
+                page_no = max(1, reached)
+            if skip_collect:
+                print(f"{tag} 断点恢复：跳过翻页收集，直接进入详情入库（{len(all_papers)} 篇待处理）")
+            while not skip_collect:
                 await self._ensure_no_captcha(timeout=120)
                 try:
                     await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(state='visible', timeout=30000)
@@ -2804,6 +2905,12 @@ class KeywordSearchCrawler(JournalCrawler):
                 page_papers = [p for p in page_papers if self._within_year_range(p.get('year'))]
                 all_papers.extend(page_papers)
                 print(f"{tag} 第 {page_no} 页获取 {len(page_papers)} 条，累计 {len(all_papers)} 条")
+                # 每页收集完写断点：停止/崩溃后可从下一页续跑
+                _save_search_checkpoint({
+                    'keyword': self.keyword, 'search_field': self.search_field,
+                    'search_url': self.page.url, 'phase': 'collect',
+                    'page': page_no, 'papers': all_papers,
+                })
                 # 首页无内容时 dump 页面 HTML 便于核对真实结构
                 if not page_papers and page_no == 1:
                     await self._dump_page_html()
@@ -2878,6 +2985,12 @@ class KeywordSearchCrawler(JournalCrawler):
             # 并发获取详情并入库（含去重，见 crawl_paper_detail）：
             # 翻页收集必须串行（同一结果页），详情抓取用 detail_workers 个 tab 并行
             # 先批量预取库中已有 URL，跳过已入库论文（逐篇检查仍保留作安全网）
+            # 详情阶段断点：中断后恢复时跳过翻页收集，直接对本列表续抓（已入库 URL 会被跳过）
+            _save_search_checkpoint({
+                'keyword': self.keyword, 'search_field': self.search_field,
+                'search_url': self.page.url, 'phase': 'detail',
+                'page': page_no, 'papers': all_papers,
+            })
             existing_urls = await self._db_existing_urls()
             queue = asyncio.Queue()
             skipped = 0
@@ -2929,6 +3042,8 @@ class KeywordSearchCrawler(JournalCrawler):
 
             print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
                   f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+            _clear_search_checkpoint()
+            print(f"{tag} 断点已清除")
         except Exception as e:
             print(f"{tag} 检索流程异常: {e}")
             import traceback
@@ -2961,6 +3076,8 @@ async def main():
                         help='检索结果页 URL 保存路径（默认 .cache/search_url.txt）')
     parser.add_argument('--detail-workers', type=int, default=3,
                         help='详情页并发抓取 tab 数（默认3；期刊模式与检索模式均有效，翻页/收集仍按各自并发模型）')
+    parser.add_argument('--resume', action='store_true',
+                        help='断点续跑：存在同关键词断点（.cache/search_checkpoint.json）时从上次进度继续')
     args = parser.parse_args()
 
     if args.search:
@@ -2995,6 +3112,7 @@ async def main():
             search_url=search_url,
             search_url_file=args.save_url_file,
             detail_workers=args.detail_workers,
+            resume=args.resume,
         )
         await crawler.run_search()
         return
