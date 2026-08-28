@@ -61,11 +61,13 @@ export default function DataTab({
   // —— 数据健康中心独立状态 ——
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
   const [koKeywords, setKoKeywords] = useState<NetworkNode[]>([]);
-  // 动作态
+  // 动作态（各板块独立反馈，避免「趋势已刷新」错位显示在向量覆盖卡片）
   const [backfilling, setBackfilling] = useState(false);
   const [refreshingTrend, setRefreshingTrend] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
-  const [actionMessage, setActionMessage] = useState<string>('');
+  const [backfillMsg, setBackfillMsg] = useState<Msg>(null);
+  const [trendMsg, setTrendMsg] = useState<Msg>(null);
+  const [simMsg, setSimMsg] = useState<Msg>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // AI 成本估算：单价编辑态
@@ -123,11 +125,11 @@ export default function DataTab({
         if (res && res.embedding.missing <= 0) {
           backfillRef.current = false;
           setBackfilling(false);
-          setActionMessage(tRef.current('sys.bfDone'));
+          setBackfillMsg({ ok: true, text: tRef.current('sys.bfDone') });
         } else if (attempts > POLL_ATTEMPTS_LIMIT) {
           backfillRef.current = false;
           setBackfilling(false);
-          setActionMessage(tRef.current('sys.bfPollTimeout'));
+          setBackfillMsg({ ok: true, text: tRef.current('sys.bfPollTimeout') });
         }
       }
     }, 15000);
@@ -136,41 +138,41 @@ export default function DataTab({
 
   // 补齐向量：只负责启动后台任务，进度由上面的常驻轮询实时更新
   const handleBackfill = async () => {
-    setActionMessage('');
+    setBackfillMsg(null);
     setBackfilling(true);
     backfillRef.current = true;
     try {
       await topicsApi.backfillEmbeddings(100);
-      setActionMessage(t('sys.bfStarted'));
+      setBackfillMsg({ ok: true, text: t('sys.bfStarted') });
     } catch (e: any) {
       setBackfilling(false);
       backfillRef.current = false;
       const msg = e?.detail || e?.message || t('sys.bfFailed');
-      setActionMessage(msg);
+      setBackfillMsg({ ok: false, text: msg });
     }
   };
 
   // 刷新趋势
   const handleRefreshTrend = async () => {
-    setActionMessage('');
+    setTrendMsg(null);
     setRefreshingTrend(true);
     try {
       await papersApi.triggerTrendUpdate();
-      setActionMessage(t('sys.trendRefreshed'));
+      setTrendMsg({ ok: true, text: t('sys.trendRefreshed') });
       setTimeout(() => { loadHealth(); setRefreshingTrend(false); }, 2500);
     } catch {
       setRefreshingTrend(false);
-      setActionMessage(t('sys.trendFailed'));
+      setTrendMsg({ ok: false, text: t('sys.trendFailed') });
     }
   };
 
   // 重算相似度：触发后轮询 running 直到结束
   const handleRecompute = async () => {
-    setActionMessage('');
+    setSimMsg(null);
     setRecomputing(true);
     try {
       await papersApi.triggerRecomputeSimilarities();
-      setActionMessage(t('sys.simStarted'));
+      setSimMsg({ ok: true, text: t('sys.simStarted') });
       stopPoll();
       let attempts = 0;
       pollRef.current = setInterval(async () => {
@@ -179,7 +181,7 @@ export default function DataTab({
           stopPoll();
           setRecomputing(false);
           loadHealth();
-          setActionMessage(tRef.current('sys.simPollTimeout'));
+          setSimMsg({ ok: true, text: tRef.current('sys.simPollTimeout') });
           return;
         }
         const st = await papersApi.getSimilaritiesStatus().catch(() => null);
@@ -187,12 +189,12 @@ export default function DataTab({
           stopPoll();
           setRecomputing(false);
           loadHealth();
-          setActionMessage(t('sys.simDone'));
+          setSimMsg({ ok: true, text: t('sys.simDone') });
         }
       }, 4000);
     } catch {
       setRecomputing(false);
-      setActionMessage(t('sys.simFailed'));
+      setSimMsg({ ok: false, text: t('sys.simFailed') });
     }
   };
 
@@ -448,9 +450,13 @@ export default function DataTab({
             </p>
           </>
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
-        {actionMessage && (
-          <div className="mt-3 p-3 rounded-lg text-sm text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-            {actionMessage}
+        {backfillMsg && (
+          <div className={`mt-3 p-3 rounded-lg text-sm border ${
+            backfillMsg.ok
+              ? 'text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+              : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800'
+          }`}>
+            {backfillMsg.text}
           </div>
         )}
       </div>
@@ -485,6 +491,15 @@ export default function DataTab({
             </div>
           </div>
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
+        {trendMsg && (
+          <div className={`mt-3 p-3 rounded-lg text-sm border ${
+            trendMsg.ok
+              ? 'text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+              : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800'
+          }`}>
+            {trendMsg.text}
+          </div>
+        )}
       </div>
 
       {/* 相关性 */}
@@ -539,6 +554,15 @@ export default function DataTab({
             </div>
           </>
         ) : <p className="text-sm text-gray-400">{t('sys.noData')}</p>}
+        {simMsg && (
+          <div className={`mt-3 p-3 rounded-lg text-sm border ${
+            simMsg.ok
+              ? 'text-gray-700 dark:text-gray-200 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+              : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800'
+          }`}>
+            {simMsg.text}
+          </div>
+        )}
       </div>
 
       {/* 清理维护（保留原样） */}
