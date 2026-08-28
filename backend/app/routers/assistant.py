@@ -258,15 +258,16 @@ async def assistant_chat(
     enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
     if enabled:
         system_prompt += (
-            "\n\n## 工具使用规则（重要）\n"
-            "当用户问题涉及论文库内信息时（如「还有哪些相关论文」「这个方向研究到哪了/结论/方法」、"
-            "「谁在研究」「相关文献数量/趋势」），**必须**先调用工具检索论文库，再基于结果回答：\n"
+            "\n\n## 工具使用规则（强制）\n"
+            "只要问题涉及论文库数据——热点/趋势/相关论文/研究现状/文献数量/某个方向进展/作者，"
+            "**必须先调用工具检索论文库，再基于检索结果回答，禁止用常识编造库内统计数字**。\n"
+            "- `trending_topics`：热点/热门趋势/升温方向（返回论文库真实统计，保持其排序）\n"
             "- `search_papers`：按关键词/期刊/年份检索（返回标题/期刊/关键词/评分）\n"
             "- `retrieve_context`：语义召回最相关的论文（返回标题/摘要/[编号]，适合「研究到哪了」）\n"
             "- `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文；"
             "`keyword_gaps`：研究空白组合；`subfield_distribution`：子领域分布\n\n"
-            "引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；"
-            "检索结果为空或与问题无关时如实说明。"
+            "引用具体论文时用 [编号] 标注（如 [1][3]）。检索结果为空或与问题无关时如实说明；"
+            "严禁未检索就给出「XX方向是热点」之类的断言。"
         )
     history = await _load_messages(db, session.id)
     new_msgs = [m for m in (body.messages or []) if str(m.get("role") or "") and str(m.get("content") or "").strip()]

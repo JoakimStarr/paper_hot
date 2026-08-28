@@ -135,10 +135,11 @@ async def _t_subfield_distribution(db: AsyncSession, args: dict) -> dict:
 
 
 async def _t_trending_topics(db: AsyncSession, args: dict) -> dict:
-    """当前热门话题 Top10（当年发文热度 + 同比动量），供"最近有什么热点/热门趋势"类问题。
+    """当前热门话题 Top10（当年发文热度为主，同比增速为辅），供"最近有什么热点/热门趋势"类问题。
 
-    与 /trending-topics 同一口径：TopicTrend 为「年」粒度，按当年计数排序，
-    辅以同比增速；过滤全历史累计 <3 次的作者自造长尾词。
+    与 /trending-topics 同一口径：TopicTrend 为「年」粒度，过滤全历史累计 <3 次的作者自造长尾词。
+    返回按「当年发文量」降序——发文量是主流热度的可靠度量；同比增速仅供趋势参考，
+    发文基数小的高增速词不代表主流热度（如 5 篇→60 篇增速 1100%，但远不如 500 篇的领域热）。
     """
     from datetime import datetime
     rows = (
@@ -164,9 +165,20 @@ async def _t_trending_topics(db: AsyncSession, args: dict) -> dict:
         prev = years.get(prev_year, 0)
         cur_annual = round(cur * 12 / months_elapsed)
         growth_rate = round(cur_annual / prev - 1, 3) if prev > 0 else (1.0 if cur else 0.0)
-        out.append({"topic": topic, "paper_count": cur, "growth_rate": growth_rate})
+        out.append({
+            "topic": topic,
+            "paper_count": cur,        # 当年累计发文量（主流热度）
+            "prev_year_count": prev,   # 上年发文量
+            "growth_rate": growth_rate,  # 同比增速（年化修正，仅供参考）
+        })
     out.sort(key=lambda x: (-x["paper_count"], -x["growth_rate"]))
-    return {"latest_year": latest_year, "topics": out[:10]}
+    return {
+        "latest_year": latest_year,
+        "note": "已按当年发文量降序排列（发文量越大越主流）。同比增速仅作趋势参考，"
+                "发文基数小的高增速词不代表主流热度；回答热点问题时请保持此排序，"
+                "除非用户明确要求按增速排序。",
+        "topics": out[:10],
+    }
 
 
 async def _t_author_papers(db: AsyncSession, args: dict) -> dict:
@@ -275,7 +287,7 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
                 {"top_n": {"type": "integer"}}, []),
-        _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速），回答“最近有什么热点/热门趋势/什么方向在升温”时使用",
+        _schema("trending_topics", "获取论文库当前热门话题 Top10（已按当年发文量降序，含同比增速参考）。回答“最近有什么热点/热门趋势/哪些领域在升温”时使用，保持其排序",
                 {}, []),
         _schema("subfield_distribution", "获取经济学子领域论文分布",
                 {}, []),
