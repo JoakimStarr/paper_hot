@@ -134,6 +134,41 @@ async def _t_subfield_distribution(db: AsyncSession, args: dict) -> dict:
     return {"distribution": [{"subfield": s or "未知", "count": c} for s, c in rows]}
 
 
+async def _t_trending_topics(db: AsyncSession, args: dict) -> dict:
+    """当前热门话题 Top10（当年发文热度 + 同比动量），供"最近有什么热点/热门趋势"类问题。
+
+    与 /trending-topics 同一口径：TopicTrend 为「年」粒度，按当年计数排序，
+    辅以同比增速；过滤全历史累计 <3 次的作者自造长尾词。
+    """
+    from datetime import datetime
+    rows = (
+        await db.execute(
+            sa_select(TopicTrend.topic, TopicTrend.week_start, TopicTrend.paper_count)
+        )
+    ).fetchall()
+    now = datetime.now()
+    latest_year = max((r[1].year for r in rows), default=now.year)
+    prev_year = latest_year - 1
+    per_topic: dict[str, dict[int, int]] = {}
+    for topic, ws, cnt in rows:
+        y = ws.year if ws is not None else latest_year
+        per_topic.setdefault(topic, {})[y] = per_topic.get(topic, {}).get(y, 0) + (cnt or 0)
+
+    months_elapsed = max(now.month, 1)
+    out = []
+    for topic, years in per_topic.items():
+        total = sum(years.values())
+        if total < 3:  # 作者自造长尾词，无趋势意义
+            continue
+        cur = years.get(latest_year, 0)
+        prev = years.get(prev_year, 0)
+        cur_annual = round(cur * 12 / months_elapsed)
+        growth_rate = round(cur_annual / prev - 1, 3) if prev > 0 else (1.0 if cur else 0.0)
+        out.append({"topic": topic, "paper_count": cur, "growth_rate": growth_rate})
+    out.sort(key=lambda x: (-x["paper_count"], -x["growth_rate"]))
+    return {"latest_year": latest_year, "topics": out[:10]}
+
+
 async def _t_author_papers(db: AsyncSession, args: dict) -> dict:
     """按作者名查其论文列表。"""
     author = str(args.get("author") or "").strip()
@@ -224,6 +259,7 @@ TOOL_HANDLERS = {
     "subfield_distribution": _t_subfield_distribution,
     "author_papers": _t_author_papers,
     "retrieve_context": _t_retrieve_context,
+    "trending_topics": _t_trending_topics,
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
@@ -239,6 +275,8 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
                 {"top_n": {"type": "integer"}}, []),
+        _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速），回答“最近有什么热点/热门趋势/什么方向在升温”时使用",
+                {}, []),
         _schema("subfield_distribution", "获取经济学子领域论文分布",
                 {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
@@ -256,6 +294,8 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
                 {"top_n": {"type": "integer"}}, []),
+        _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速），回答“最近有什么热点/热门趋势”时使用",
+                {}, []),
         _schema("subfield_distribution", "获取经济学子领域论文分布",
                 {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
@@ -271,6 +311,8 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
         _schema("paper_trend", "查询某关键词的逐年发文量趋势",
                 {"keyword": {"type": "string"}}, ["keyword"]),
+        _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速），回答“最近有什么热点/热门趋势”时使用",
+                {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
     ],

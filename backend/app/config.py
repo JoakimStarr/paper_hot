@@ -70,7 +70,8 @@ class Settings(BaseSettings):
 
     # 追问 Agent（工具检索）开关：开启后 AI 追问可调用工具检索论文库；
     # 关闭则退化为普通对话（不调用任何工具、不检索）。
-    agent_enabled: bool = False
+    # 默认开启（悬浮助手/追问默认查库）；系统设置页与悬浮助手内均可关闭。
+    agent_enabled: bool = True
 
     cors_origins: Union[list[str], str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003"]
 

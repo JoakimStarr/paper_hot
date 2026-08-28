@@ -180,6 +180,8 @@ export default function AIAssistant() {
   const [toolTrail, setToolTrail] = useState<ChatToolsEvent[]>([]);
   // "检索数据库"（Agent 工具）开关：默认跟随全局 agent_enabled，可逐会话切换
   const [agentOn, setAgentOn] = useState(false);
+  // 首页/趋势页注入的论文库热门趋势（agent 关闭时也能用真实数据回答"热门趋势"）
+  const [pageTrending, setPageTrending] = useState<string | null>(null);
   // 打开后待自动发送的问题（如 AI 分析按钮触发）
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
@@ -212,6 +214,30 @@ export default function AIAssistant() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  // 首页/趋势页：拉取论文库真实热门趋势注入会话上下文，agent 关闭时也能数据化回答
+  useEffect(() => {
+    let cancelled = false;
+    if (ctx.page !== 'home' && ctx.page !== 'trends') {
+      setPageTrending(null);
+      return;
+    }
+    papersApi.getTrendingTopics()
+      .then((res) => {
+        if (cancelled) return;
+        const list = (res.topics || []).slice(0, 8);
+        if (list.length === 0) {
+          setPageTrending(null);
+          return;
+        }
+        const lines = list.map((t) =>
+          `- ${t.topic}：当年 ${t.paper_count} 篇，同比 ${t.growth_rate > 0 ? `上升 ${(t.growth_rate * 100).toFixed(0)}%` : '平稳'}`
+        ).join('\n');
+        setPageTrending(`当前论文库热门趋势 Top${list.length}：\n${lines}\n\n（以上为论文库真实统计，回答热点问题时请优先引用）`);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [ctx.key, ctx.page]);
 
   // 监听外部「打开悬浮助手」事件（论文卡片 AI 分析按钮等）
   useEffect(() => {
@@ -266,9 +292,10 @@ export default function AIAssistant() {
     let sid = sessionId;
     try {
       if (sid === null) {
+        const contextPieces = [ctx.contextText, pageTrending].filter(Boolean).join('\n\n');
         const created = await assistantApi.createSession(ctx.page, {
           ...(ctx.paperId ? { paper_id: ctx.paperId } : {}),
-          ...(ctx.contextText ? { context_text: ctx.contextText } : {}),
+          ...(contextPieces ? { context_text: contextPieces } : {}),
         });
         sid = created.id;
         setSessionId(sid);
