@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaGenerateResponse } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -271,6 +271,13 @@ export const papersApi = {
     request('/crawl/cnki/search/resume', { method: 'POST' }),
   stopCNKISearch: async (): Promise<{ status: string }> =>
     request('/crawl/cnki/search/stop', { method: 'POST' }),
+
+  startReferencesCrawl: async (opts: { paper_url?: string; paper_title?: string; max_items?: number }): Promise<{ status: string }> =>
+    request('/crawl/references/start', { method: 'POST', body: opts }),
+  getReferencesStatus: async (): Promise<ReferencesCrawlInfo> =>
+    request('/crawl/references/status'),
+  stopReferencesCrawl: async (): Promise<{ status: string }> =>
+    request('/crawl/references/stop', { method: 'POST' }),
   sendFeedback: async (body: { surface: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
     request('/ai/feedback', { method: 'POST', body }),
 
@@ -590,6 +597,14 @@ export const workbenchApi = {
       body: { limit, ...(paperId ? { paper_id: paperId } : {}) },
     }),
 
+  /** 轻量项目状态（AI 任务轮询用，不含大文本字段）。 */
+  getProjectStatus: async (id: number): Promise<{ id: number; status: string; ai_pending: string | null; ai_error: string | null; updated_at: string | null }> =>
+    request(`/topic-projects/${id}/status`),
+
+  /** 按选题标题 embedding 召回 Top-10 相似论文进文献集（去重），返回新增数量。 */
+  recallProjectPapers: async (id: number): Promise<{ recalled: number }> =>
+    request(`/topic-projects/${id}/recall-papers`, { method: 'POST' }),
+
   // —— 统一 AI 操作（后台任务，轮询项目详情等待完成）——
   aiAction: async (id: number, action: string, ideaText?: string): Promise<{ status: string; action: string }> =>
     request(`/topic-projects/${id}/ai`, {
@@ -613,10 +628,15 @@ export const workbenchApi = {
     request('/topic-projects/recommend', { method: 'POST' }),
 };
 
-/** 选题灵感向导：一句话想法 + 偏好 → AI 候选选题（方向 + 检索关键词 + 库内参考文献）。 */
+/** 选题灵感向导：一句话想法 + 偏好 → AI 候选选题（后台任务 + 轮询，避开代理 30s 超时）。 */
 export const topicIdeasApi = {
-  generate: async (payload: TopicIdeaGenerateRequest): Promise<TopicIdeaGenerateResponse> =>
+  /** 提交生成任务，立即返回 task_id（生成耗时可能 1 分钟+）。 */
+  generate: async (payload: TopicIdeaGenerateRequest): Promise<{ task_id: string; status: string }> =>
     request('/topic-ideas/generate', { method: 'POST', body: payload }),
+
+  /** 轮询任务结果：pending → 继续等；done → 返回候选；error → 携带原因。 */
+  getGenerateResult: async (taskId: string): Promise<{ status: string; round?: number; candidates?: TopicIdeaCandidate[]; error?: string }> =>
+    request(`/topic-ideas/generate/${taskId}`),
 };
 
 /** 选题验证器（SSE 流式，带 token）。 */

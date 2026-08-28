@@ -3052,6 +3052,176 @@ class KeywordSearchCrawler(JournalCrawler):
             await self.close_browser()
 
 
+class ReferenceCrawler(KeywordSearchCrawler):
+    """参考文献爬取：给定论文详情页链接或论文标题，进入详情页抓取参考文献列表条目。
+
+    页面结构（需求调研确认）：参考文献条目在 //ul[@class="ebBd"] 下，条目内 <a>
+    为可点击的参考文献链接；翻页按钮 <a class="next">下一页</a>，按钮消失即末页。
+    仅抓列表条目（文本+链接），不递归打开参考文献自身的详情页。
+    结果按 paper_url 覆盖式写入 paper_references 表。
+
+    用法:
+        python cnki_paper_captcha.py --ref-paper-url "https://kns.cnki.net/..." 
+        python cnki_paper_captcha.py --ref-title "论文标题" --ref-max-items 100
+    """
+
+    REF_LIST_SELECTOR = 'ul.ebBd'
+    REF_NEXT_SELECTOR = 'a.next'
+    REF_TAB_SELECTOR = 'li a:has-text("参考文献"), a:has-text("参考文献")'
+
+    def __init__(self, headless=True, thread_id=0, state_file=None,
+                 paper_url=None, paper_title=None, max_items=None):
+        super().__init__(headless=headless, thread_id=thread_id, state_file=state_file)
+        self.paper_url = paper_url
+        self.paper_title = (paper_title or '').strip()
+        self.max_items = max_items
+
+    async def run(self):
+        tag = f"[参考文献#{self.thread_id}]"
+        print("=" * 60)
+        print(f"{tag} 参考文献爬取: {self.paper_url or self.paper_title}")
+        print("=" * 60)
+
+        await self.init_browser()
+        try:
+            paper_url = self.paper_url
+            paper_title = self.paper_title
+
+            # —— 定位论文详情页 ——
+            if not paper_url:
+                located = await self._locate_paper_by_title(tag)
+                if not located:
+                    print(f"{tag} 未能在检索结果中定位到论文，退出")
+                    return
+                paper_url, paper_title = located
+            else:
+                print(f"{tag} 直接打开论文详情页: {paper_url}")
+
+            await _pacing_wait()
+            await self.page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
+            if not await self.wait_for_page_stable(paper_url):
+                print(f"{tag} ✗ 详情页遇到安全验证且未通过，退出")
+                return
+            await self._ensure_no_captcha(timeout=120)
+
+            # URL 入口时从详情页提取标题（标题入口在检索阶段已拿到）
+            if not paper_title:
+                try:
+                    paper_title = (await self.page.locator('div.doc h1, h1').first.inner_text(timeout=8000)).strip()
+                except Exception:
+                    paper_title = ''
+
+            refs = await self._crawl_references(tag)
+            if not refs:
+                print(f"{tag} 未抓到参考文献（详情页可能没有参考文献区块），退出")
+                return
+            if self.max_items and len(refs) > self.max_items:
+                print(f"{tag} 超过上限 {self.max_items} 条，截断")
+                refs = refs[:self.max_items]
+
+            print(f"{tag} 完成：共抓取参考文献 {len(refs)} 条")
+            await self._save_references(paper_url, paper_title, refs)
+        except Exception as e:
+            print(f"{tag} 参考文献爬取异常: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            await self.close_browser()
+
+    async def _locate_paper_by_title(self, tag: str):
+        """按论文标题搜索知网并定位详情页：默认取第一条结果，其余候选打印到日志供人工核对。"""
+        print(f"{tag} 按标题检索: {self.paper_title}")
+        await _pacing_wait()
+        await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+        for _ in range(90):
+            if 'cnki.net' in self.page.url:
+                break
+            await asyncio.sleep(2)
+        box = self.page.locator(self.SEARCH_SELECTOR).first
+        await box.wait_for(state='visible', timeout=60000)
+        await self.random_scroll()
+        await box.click()
+        await box.fill(self.paper_title)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await box.press('Enter')
+        await self._ensure_no_captcha(timeout=180)
+        if await self._search_navigation_failed(timeout=20):
+            print(f"{tag} 检索被风控拦截，退出")
+            return None
+        await asyncio.sleep(random.uniform(2, 4))
+
+        candidates = await self._collect_papers_from_rows()
+        if not candidates:
+            print(f"{tag} 检索结果为空")
+            return None
+        print(f"{tag} 检索到 {len(candidates)} 条候选，前 5 条：")
+        for i, c in enumerate(candidates[:5]):
+            print(f"{tag}   [{i + 1}] {c['title'][:60]} ({c.get('journal', '')} {c.get('year') or ''})")
+        first = candidates[0]
+        print(f"{tag} 默认取第 1 条: {first['title'][:60]}")
+        return first['url'], first['title']
+
+    async def _crawl_references(self, tag: str) -> list:
+        """抓取参考文献条目：ul.ebBd 下每页 li，a.next 翻页，按钮消失即末页。"""
+        refs: list = []
+        page_no = 1
+        while True:
+            # 部分详情页参考文献需要点击页签切换后才渲染
+            if page_no == 1 and await self.page.locator(self.REF_LIST_SELECTOR).count() == 0:
+                try:
+                    tab = self.page.locator(self.REF_TAB_SELECTOR).first
+                    await tab.click(timeout=5000)
+                    await asyncio.sleep(random.uniform(1.5, 3))
+                except Exception:
+                    pass
+            loc = self.page.locator(self.REF_LIST_SELECTOR)
+            if await loc.count() == 0:
+                print(f"{tag} 第 {page_no} 页未找到参考文献容器 ul.ebBd")
+                break
+            items = await loc.locator('xpath=./li').evaluate_all(
+                """(lis) => lis.map((li) => {
+                    const a = li.querySelector('a[href]');
+                    const text = (li.innerText || '').replace(/\\s+/g, ' ').trim();
+                    return { text, url: a ? a.href : null };
+                }).filter((x) => x.text)"""
+            )
+            refs.extend(items)
+            print(f"{tag} 参考文献 第 {page_no} 页获取 {len(items)} 条，累计 {len(refs)} 条")
+            if self.max_items and len(refs) >= self.max_items:
+                print(f"{tag} 已达上限 {self.max_items} 条，停止翻页")
+                break
+            nxt = self.page.locator(self.REF_NEXT_SELECTOR).first
+            if await nxt.count() == 0:
+                print(f"{tag} 「下一页」按钮已消失，参考文献抓取完成")
+                break
+            try:
+                await nxt.click(timeout=8000)
+            except Exception as e:
+                print(f"{tag} 点击下一页失败: {e}")
+                break
+            await asyncio.sleep(random.uniform(1.5, 3))
+            page_no += 1
+        return refs
+
+    async def _save_references(self, paper_url: str, paper_title: str, refs: list):
+        """覆盖式写入 paper_references 表（先删该论文旧参考文献再插入，含序号）。"""
+        if not hasattr(self, "_db_lock"):
+            self._db_lock = asyncio.Lock()
+        async with self._db_lock:
+            try:
+                await self._ensure_db()
+                from app.crud import PaperReferenceCRUD
+                from app.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    n = await PaperReferenceCRUD.replace_paper_references(db, paper_url, paper_title, refs)
+                    await db.commit()
+                    print(f"    [线程{self.thread_id}] ✓ 参考文献已入库 {n} 条 -> {(paper_title or paper_url)[:60]}")
+            except Exception as e:
+                print(f"    [线程{self.thread_id}] ✗ 参考文献入库失败: {e}")
+                import traceback
+                traceback.print_exc()
+
+
 async def main():
     parser = argparse.ArgumentParser(description='知网爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索）')
     parser.add_argument('--show-browser', action='store_true', help='显示浏览器窗口（默认不显示）')
@@ -3078,7 +3248,25 @@ async def main():
                         help='详情页并发抓取 tab 数（默认3；期刊模式与检索模式均有效，翻页/收集仍按各自并发模型）')
     parser.add_argument('--resume', action='store_true',
                         help='断点续跑：存在同关键词断点（.cache/search_checkpoint.json）时从上次进度继续')
+    parser.add_argument('--ref-paper-url', type=str, default=None,
+                        help='参考文献模式：论文详情页链接（直接打开抓取其参考文献列表）')
+    parser.add_argument('--ref-title', type=str, default=None,
+                        help='参考文献模式：论文标题（检索后取第一条结果进详情页抓参考文献）')
+    parser.add_argument('--ref-max-items', type=int, default=None,
+                        help='参考文献条数上限（默认不限）')
     args = parser.parse_args()
+
+    if args.ref_paper_url or args.ref_title:
+        state_file = None if args.no_login_state else str(CACHE_DIR / 'cnki_state.json')
+        ref_crawler = ReferenceCrawler(
+            headless=not args.show_browser,
+            state_file=state_file,
+            paper_url=args.ref_paper_url,
+            paper_title=args.ref_title,
+            max_items=args.ref_max_items,
+        )
+        await ref_crawler.run()
+        return
 
     if args.search:
         # 校验检索字段，未知值回退到默认「主题」

@@ -69,6 +69,8 @@ export interface TrendingTopic {
   paper_count: number;
   growth_rate: number;
   trend: 'rising' | 'stable' | 'declining';
+  /** 工作台「领域快讯」专用：逐年篇数序列（年份桶对齐，供迷你柱状图展示） */
+  series?: Array<{ year: string; count: number }>;
 }
 
 export interface TrendingTopicsResponse {
@@ -202,6 +204,19 @@ export interface CNKISearchInfo {
   last_log?: string[];
   /** 断点摘要（.cache/search_checkpoint.json）：同关键词启动将自动从上次进度续跑 */
   checkpoint?: { keyword: string; phase: string; page: number; papers: number; saved_at?: string } | null;
+}
+
+/** 参考文献爬取任务状态 */
+export interface ReferencesCrawlInfo {
+  running: boolean;
+  paper_url: string | null;
+  paper_title: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  message: string | null;
+  stopped_by_user?: boolean;
+  progress?: CNKISearchProgress | null;
+  last_log?: string[];
 }
 
 export interface NetworkNode {
@@ -442,6 +457,10 @@ export interface GeneratedTopic {
   research_questions: string[];
   hypothesis: string;
   why: string;
+  /** 检索关键词（选题拆分，供验证步知网爬虫 / 文献检索使用）。 */
+  keywords?: string[];
+  methods?: string[];
+  data?: string[];
 }
 
 /** Step4 数据与方法线索。 */

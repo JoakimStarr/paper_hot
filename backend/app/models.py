@@ -78,6 +78,28 @@ class Paper(Base):
     scores = relationship("PaperScore", back_populates="paper", uselist=False, cascade="all, delete-orphan")
 
 
+class PaperReference(Base):
+    """论文参考文献条目（由参考文献爬取任务写入，按 paper_url 覆盖式更新）。
+
+    ref_url 为条目可点击链接（知网部分条目无链接则为空）；
+    (paper_url, ref_index) 唯一，支持后续「某文献被哪些论文引用」的反向查询。
+    """
+    __tablename__ = "paper_references"
+
+    id = get_uuid_column()
+    paper_url = Column(String(500), nullable=False, index=True)
+    paper_title = Column(String(500), nullable=True)
+    ref_index = Column(Integer, nullable=False)
+    raw_text = Column(Text, nullable=True)
+    ref_url = Column(String(500), nullable=True)
+    task_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint('paper_url', 'ref_index', name='uq_paper_ref_idx'),
+    )
+
+
 class PaperAnalysis(Base):
     __tablename__ = "paper_analyses"
 

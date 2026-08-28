@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).parent.parent
 
 class Settings(BaseSettings):
     app_name: str = "PaperPulse"
-    app_version: str = "2.19.0"
+    app_version: str = "2.20.0"
 
     database_url: str = f"sqlite+aiosqlite:///{BASE_DIR}/data/paperpulse.db"
 
