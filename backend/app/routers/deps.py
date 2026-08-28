@@ -162,30 +162,38 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
                 yield frame
             return
 
-        progress_q: asyncio.Queue = asyncio.Queue()
-        box: dict = {"messages": messages, "trace": []}
+        out_q: asyncio.Queue = asyncio.Queue()
+        box: dict = {"messages": messages, "trace": [], "content_streamed": False}
 
         async def _run_agent():
             try:
-                msgs, trace = await run_agent_chat(
+                msgs, trace, content_streamed = await run_agent_chat(
                     messages, client, model, surface=surface,
-                    on_progress=progress_q.put_nowait,
+                    on_progress=out_q.put_nowait,   # {"tool","args"}
+                    on_delta=out_q.put_nowait,      # {"content"|"reasoning", ...}
                 )
                 box["messages"] = msgs
                 box["trace"] = trace
+                box["content_streamed"] = content_streamed
             except Exception as e:
                 logger.warning(f"agent loop failed, fallback to plain chat: {e}")
             finally:
                 # 结束哨兵（put_nowait：任务被取消时也能安全退出循环）
-                progress_q.put_nowait(None)
+                out_q.put_nowait(None)
 
         task = asyncio.create_task(_run_agent())
         try:
             while True:
-                ev = await progress_q.get()
+                ev = await out_q.get()
                 if ev is None:
                     break
-                yield f"data: {json.dumps({'tool_progress': ev})}\n\n"
+                # Agent 工具调用进度 / LLM 思考与正文 delta 原样转发为 SSE
+                if "tool" in ev:
+                    yield f"data: {json.dumps({'tool_progress': ev})}\n\n"
+                elif "content" in ev:
+                    yield f"data: {json.dumps({'content': ev['content']})}\n\n"
+                elif "reasoning" in ev:
+                    yield f"data: {json.dumps({'reasoning': ev['reasoning']})}\n\n"
             await task
         finally:
             if not task.done():
@@ -193,8 +201,12 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
 
         if box["trace"]:
             yield f"data: {json.dumps({'tools': _compact_agent_trace(box['trace'])})}\n\n"
-        async for frame in _stream_llm_content(client, model, box["messages"]):
-            yield frame
+        # 正文已由 agent 循环流式推送时无需重放；否则（降级路径）补一次普通流式
+        if not box["content_streamed"]:
+            async for frame in _stream_llm_content(client, model, box["messages"]):
+                yield frame
+        else:
+            yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

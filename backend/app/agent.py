@@ -340,6 +340,87 @@ def _clip(obj: Any) -> str:
 
 # ---------------------------------------------------------------- 执行循环
 
+def _consume_stream(resp, collected: dict, on_delta: Any = None):
+    """消费一个流式响应，累积 content/reasoning/tool_calls 并实时转发 delta。
+
+    on_delta：每次收到增量时调用 on_delta({"content"|"reasoning": 增量文本})，
+    供上层原样转发为 SSE——这是"流式输出"的关键（含 agent 循环各轮的思考）。
+    """
+    for chunk in resp:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        c = getattr(delta, "content", None)
+        if c:
+            collected["content"] += c
+            if on_delta:
+                on_delta({"content": c})
+        r = getattr(delta, "reasoning_content", None)
+        if r:
+            collected["reasoning"] += r
+            if on_delta:
+                on_delta({"reasoning": r})
+        tc = getattr(delta, "tool_calls", None)
+        if tc:
+            for t in tc:
+                entry = collected["tool_calls_map"].setdefault(
+                    t.index, {"id": "", "function": {"name": "", "arguments": ""}}
+                )
+                if getattr(t, "id", None):
+                    entry["id"] += t.id
+                fn = getattr(t, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        entry["function"]["name"] += fn.name
+                    if getattr(fn, "arguments", None):
+                        entry["function"]["arguments"] += fn.arguments
+
+
+def _build_tool_calls(collected: dict):
+    """把累积的 tool_calls delta 转成 OpenAI 兼容的 tool_calls 列表；无则返回 None。"""
+    if not collected["tool_calls_map"]:
+        return None
+    calls = []
+    for idx in sorted(collected["tool_calls_map"]):
+        e = collected["tool_calls_map"][idx]
+        calls.append({
+            "id": e["id"],
+            "type": "function",
+            "function": {"name": e["function"]["name"], "arguments": e["function"]["arguments"]},
+        })
+    return calls or None
+
+
+async def _stream_model_round(client: Any, model: str, convo: list, schemas: list, on_delta: Any) -> dict:
+    """流式调用一次 LLM：实时转发 thinking/正文 delta，返回 {"content", "tool_calls"}。
+
+    sync 客户端经 to_thread 下放线程池；瞬时故障重试一次。
+    """
+    collected: dict = {"content": "", "reasoning": "", "tool_calls_map": {}}
+    loop = asyncio.get_running_loop()
+
+    def _forward(ev):
+        # 从工作线程回到事件循环线程再回调（on_delta 通常是 asyncio.Queue.put_nowait）
+        if on_delta:
+            loop.call_soon_threadsafe(on_delta, ev)
+
+    def run():
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=convo, tools=schemas or None, stream=True,
+            )
+            _consume_stream(resp, collected, _forward)
+        except Exception as e:
+            logger.warning(f"agent round stream failed, retrying once: {e}")
+            resp = client.chat.completions.create(
+                model=model, messages=convo, tools=schemas or None, stream=True,
+            )
+            _consume_stream(resp, collected, _forward)
+
+    await asyncio.to_thread(run)
+    return {"content": collected["content"], "tool_calls": _build_tool_calls(collected)}
+
+
 async def run_agent_chat(
     messages: list[dict],
     client: Any,
@@ -348,19 +429,24 @@ async def run_agent_chat(
     max_rounds: int = MAX_ROUND_TRIPS,
     outer_db: AsyncSession | None = None,
     on_progress: Any = None,
-) -> tuple[list[dict], list[dict]]:
-    """带工具调用循环的对话。
+    on_delta: Any = None,
+) -> tuple[list[dict], list[dict], bool]:
+    """带工具调用循环的对话（全流式）。
 
-    返回 (messages, tool_trace)：messages 为补全了助手/工具轮次的完整消息，
-    可直接交给流式接口做最终回答；tool_trace 供日志/调试。
-    若模型未发起任何工具调用，messages 原样返回（普通对话降级）。
+    每轮 LLM 调用均走 stream=True，thinking/正文增量经 on_delta 实时转发；
+    返回 (messages, tool_trace, content_streamed)：
+    - messages：补全了助手/工具轮次的完整消息
+    - tool_trace：工具调用轨迹（日志/调试）
+    - content_streamed：最终正文是否已通过 on_delta 流式推送（为 True 时外层无需重放）
+    若模型未发起任何工具调用，直接流式回答并结束（普通对话降级）。
 
-    on_progress：可选回调，每次执行工具前调用 on_progress({"tool": name, "args": args})，
-    供上层实时推送工具调用进度（SSE 到前端）。
+    on_progress：每次执行工具前调用 on_progress({"tool": name, "args": args})。
+    on_delta：每次收到 LLM 增量时调用 on_delta({"content"|"reasoning": 增量文本})。
     """
     schemas = TOOL_SCHEMAS_BY_SURFACE.get(surface, [])
     convo = [dict(m) for m in messages]
     trace: list[dict] = []
+    content_streamed = False
 
     # 跨工具统一编号：所有返回论文的工具（含 search_papers/author_papers）都会被编号，
     # 保证回答中的 [n] 引用能映射到唯一论文，且一轮内多次工具调用不产生 n 冲突。
@@ -368,54 +454,37 @@ async def run_agent_chat(
 
     for _round in range(max_rounds):
         try:
-            # 注意：client 是 sync OpenAI 客户端（deps.get_ai_client 返回值），
-            # 直接 await 其 create() 会抛 TypeError 并被下面的 except 吞掉，
-            # 导致 Agent 永远「降级为纯对话」。必须经 to_thread 下放线程池。
-            try:
-                resp = await asyncio.to_thread(
-                    client.chat.completions.create,
-                    model=model,
-                    messages=convo,
-                    tools=schemas or None,
-                )
-            except Exception as e:
-                # 瞬时故障重试一次（如限流/连接中断），避免误降级为纯对话
-                logger.warning(f"agent round {_round}: model call failed, retrying once: {e}")
-                resp = await asyncio.to_thread(
-                    client.chat.completions.create,
-                    model=model,
-                    messages=convo,
-                    tools=schemas or None,
-                )
+            round_result = await _stream_model_round(client, model, convo, schemas, on_delta)
         except Exception as e:
             logger.warning(f"agent round {_round}: model call failed after retry: {e}")
-            return messages, trace
+            return messages, trace, False
 
-        msg = resp.choices[0].message if resp.choices else None
-        tool_calls = getattr(msg, "tool_calls", None) if msg else None
+        round_content = round_result["content"]
+        tool_calls = round_result["tool_calls"]
+
         if not tool_calls:
-            # 无工具意图：把助手的普通回答并入并结束（由外层决定是否流式重述）
-            content = getattr(msg, "content", None) if msg else None
-            if content:
-                convo.append({"role": "assistant", "content": content})
+            # 无工具意图：正文已流式推送，并入消息后结束
+            if round_content:
+                convo.append({"role": "assistant", "content": round_content})
+                content_streamed = True
             logger.info(f"agent surface={surface}: model chose not to call tools, answered directly")
-            return convo, trace
+            return convo, trace, content_streamed
 
         # 记录助手请求工具的消息
         convo.append({
             "role": "assistant",
-            "content": getattr(msg, "content", None) or "",
+            "content": round_content or "",
             "tool_calls": [
-                {"id": tc.id, "type": "function",
-                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                {"id": tc["id"], "type": "function",
+                 "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}
                 for tc in tool_calls
             ],
         })
 
         for tc in tool_calls:
-            name = tc.function.name
+            name = tc["function"]["name"]
             try:
-                args = json.loads(tc.function.arguments or "{}")
+                args = json.loads(tc["function"]["arguments"] or "{}")
             except Exception:
                 args = {}
             if on_progress:
@@ -450,9 +519,9 @@ async def run_agent_chat(
             trace.append({"tool": name, "args": args, "result": result})
             convo.append({
                 "role": "tool",
-                "tool_call_id": tc.id,
+                "tool_call_id": tc["id"],
                 "content": _clip(result),
             })
 
     logger.warning("agent reached max rounds; falling back to plain answer")
-    return messages, trace
+    return messages, trace, False
