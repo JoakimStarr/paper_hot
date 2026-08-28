@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.config import settings
+from app.config import settings, BASE_DIR
 from app.ai_service import ai_trend_service
 from app.routers.deps import verify_token
 
@@ -23,6 +24,34 @@ router = APIRouter()
 @router.get("/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/system/restart")
+async def restart_services_endpoint(token: bool = Depends(verify_token)):
+    """前端触发服务重启：以脱离会话的方式执行 start.sh restart（前后端一起重启）。
+
+    延迟 1 秒执行，确保本次 HTTP 响应先送达前端；start_new_session 让脚本
+    脱离当前进程树，旧后端被 stop_services 终止后脚本仍能继续拉起新服务。
+    仅适用于 start.sh 裸机/宿主机部署；容器部署由编排层负责重启。
+    """
+    script = BASE_DIR.parent / "start.sh"
+    if not script.exists():
+        raise HTTPException(status_code=400, detail="未找到 start.sh，当前部署方式不支持页面重启，请在宿主机手动执行 ./start.sh restart")
+    root_dir = BASE_DIR.parent
+    try:
+        with open(root_dir / "restart.log", "ab") as log:
+            subprocess.Popen(
+                ["bash", "-c", "sleep 1 && bash start.sh restart >> restart.log 2>&1"],
+                cwd=root_dir,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except Exception as e:
+        logger.error(f"Failed to trigger service restart: {e}")
+        raise HTTPException(status_code=500, detail=f"触发重启失败：{e}")
+    return {"status": "restarting", "message": "重启已触发，服务将在数秒后重启"}
 
 
 class TestModelRequest(BaseModel):

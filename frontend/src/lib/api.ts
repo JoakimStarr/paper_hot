@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ExportedSettings } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaGenerateResponse } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -331,6 +331,9 @@ export const papersApi = {
   exportSettings: async (): Promise<ExportedSettings> =>
     request('/settings/export'),
 
+  restartServices: async (): Promise<{ status: string; message: string }> =>
+    request('/system/restart', { method: 'POST' }),
+
   testModelLink: async (model: string): Promise<ModelLinkTestResult> =>
     request('/settings/test-model', { method: 'POST', body: { model } }),
 
@@ -441,7 +444,8 @@ export interface TodayBrief {
 }
 
 export const dashboardApi = {
-  getDashboard: async (): Promise<DashboardData> => request<DashboardData>('/dashboard'),
+  getDashboard: async (seed = 0): Promise<DashboardData> =>
+    request<DashboardData>(seed ? `/dashboard?seed=${seed}` : '/dashboard'),
 
   getTodayBrief: async (): Promise<TodayBrief> => request<TodayBrief>('/dashboard/today-brief'),
 };
@@ -537,7 +541,7 @@ export const topicsApi = {
 
   updateTopicProject: async (
     id: number,
-    payload: Partial<Pick<TopicProject, 'title' | 'status' | 'novelty' | 'crowding' | 'feasibility'>>,
+    payload: Partial<Pick<TopicProject, 'title' | 'status' | 'novelty' | 'crowding' | 'feasibility' | 'research_questions' | 'current_step' | 'generated_topics'>>,
   ): Promise<TopicProject> =>
     request<TopicProject>(`/topic-projects/${id}`, { method: 'PATCH', body: payload }),
 
@@ -579,6 +583,13 @@ export const workbenchApi = {
   searchProjectPapers: async (id: number, query: string, limit = 12): Promise<{ mode: string; count: number; papers: ProjectSearchPaper[] }> =>
     request(`/topic-projects/${id}/search-papers`, { method: 'POST', body: { query, limit } }),
 
+  /** 相关文献推荐：基于文献集相似论文（PaperSimilarity），排除已在文献集的。 */
+  recommendProjectPapers: async (id: number, limit = 10, paperId?: string): Promise<{ mode: string; count: number; papers: ProjectRecommendedPaper[] }> =>
+    request(`/topic-projects/${id}/recommend-papers`, {
+      method: 'POST',
+      body: { limit, ...(paperId ? { paper_id: paperId } : {}) },
+    }),
+
   // —— 统一 AI 操作（后台任务，轮询项目详情等待完成）——
   aiAction: async (id: number, action: string, ideaText?: string): Promise<{ status: string; action: string }> =>
     request(`/topic-projects/${id}/ai`, {
@@ -600,6 +611,12 @@ export const workbenchApi = {
   /** 个性化选题灵感推荐（基于关注/阅读/空白，结果缓存 10 分钟）。 */
   recommendTopics: async (): Promise<{ recommendations: Array<{ title: string; why: string; angle?: string }>; cached: boolean }> =>
     request('/topic-projects/recommend', { method: 'POST' }),
+};
+
+/** 选题灵感向导：一句话想法 + 偏好 → AI 候选选题（方向 + 检索关键词 + 库内参考文献）。 */
+export const topicIdeasApi = {
+  generate: async (payload: TopicIdeaGenerateRequest): Promise<TopicIdeaGenerateResponse> =>
+    request('/topic-ideas/generate', { method: 'POST', body: payload }),
 };
 
 /** 选题验证器（SSE 流式，带 token）。 */

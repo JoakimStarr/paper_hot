@@ -60,9 +60,11 @@ export default function SystemPage() {
     | { type: 'cleanup' }
     | { type: 'deleteProvider'; name: string }
     | { type: 'import'; data: ExportedSettings }
+    | { type: 'restart' }
     | null;
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [importing, setImporting] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   // 关键词检索爬取
   const [kwInfo, setKwInfo] = useState<CNKISearchInfo | null>(null);
@@ -513,6 +515,36 @@ export default function SystemPage() {
     }
   };
 
+  // 一键重启：触发后端执行 start.sh restart（前后端一起重启），轮询 /health 恢复后自动刷新页面
+  const handleRestartService = async () => {
+    setRestarting(true);
+    setConfirm(null);
+    setPortMessage(null);
+    try {
+      await papersApi.restartServices();
+    } catch {
+      // 网络中断（进程已被杀）也视为已触发
+    }
+    setPortMessage({ ok: true, text: t('sys.restartTriggered') });
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch('/health');
+        if (res.ok) {
+          clearInterval(timer);
+          setPortMessage({ ok: true, text: t('sys.restartDone') });
+          setTimeout(() => window.location.reload(), 800);
+          return;
+        }
+      } catch { /* 服务重启中 */ }
+      if (Date.now() - started > 120000) {
+        clearInterval(timer);
+        setRestarting(false);
+        setPortMessage({ ok: false, text: t('sys.restartTimeout') });
+      }
+    }, 2000);
+  };
+
   const handleSaveAppName = async () => {
     if (!appInfo.name.trim()) {
       setAppNameMessage({ ok: false, text: t('sys.appNameLabel') });
@@ -917,6 +949,7 @@ export default function SystemPage() {
             onFetchModels={handleFetchModels}
             onExportConfig={handleExportConfig}
             onImportConfig={handleImportConfigFile}
+            onRestartService={() => setConfirm({ type: 'restart' })}
           />
         );
       case 'logs':
@@ -986,6 +1019,15 @@ export default function SystemPage() {
         danger
         confirming={importing}
         onConfirm={() => confirm?.type === 'import' && applyImportConfig(confirm.data)}
+        onCancel={() => setConfirm(null)}
+      />
+      <ConfirmModal
+        open={confirm?.type === 'restart'}
+        title={t('sys.restartConfirm')}
+        description={t('sys.restartConfirmDesc')}
+        danger
+        confirming={restarting}
+        onConfirm={handleRestartService}
         onCancel={() => setConfirm(null)}
       />
     </Layout>

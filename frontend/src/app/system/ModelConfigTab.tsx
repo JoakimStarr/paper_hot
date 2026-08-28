@@ -1,7 +1,7 @@
 'use client';
 
 import type { Dispatch, SetStateAction } from 'react';
-import { Settings, Loader2 } from 'lucide-react';
+import { Settings, Loader2, RotateCcw } from 'lucide-react';
 import { SettingsInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 import ApiConfigPanel, { NewProviderInput } from './ApiConfigPanel';
@@ -57,6 +57,7 @@ interface ModelConfigTabProps {
   onFetchModels: () => void;
   onExportConfig: () => void;
   onImportConfig: (file: File) => void;
+  onRestartService: () => void;
 }
 
 export default function ModelConfigTab({
@@ -108,6 +109,7 @@ export default function ModelConfigTab({
   onFetchModels,
   onExportConfig,
   onImportConfig,
+  onRestartService,
 }: ModelConfigTabProps) {
   const { t } = useLanguage();
 
@@ -199,7 +201,7 @@ export default function ModelConfigTab({
         onTestModelLink={onTestModelLink}
       />
 
-      {/* 系统参数：服务端口 */}
+      {/* 系统参数：端口配置 + 服务操作 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border">
         <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
           <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -208,55 +210,71 @@ export default function ModelConfigTab({
             <p className="text-xs text-gray-400 mt-0.5">{t('sys.systemParamsDesc')}</p>
           </div>
         </div>
-        <div className="p-6">
-          <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('sys.portConfig')}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-            <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.backendPort')}</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={ports.backend}
-                onChange={e => {
-                  const v = parseInt(e.target.value);
-                  setPorts(prev => ({ ...prev, backend: Number.isNaN(v) ? prev.backend : v }));
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
+        <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* 端口配置 */}
+          <div className="flex flex-col">
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.portConfig')}</div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.backendPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={ports.backend}
+                  onChange={e => {
+                    const v = parseInt(e.target.value);
+                    setPorts(prev => ({ ...prev, backend: Number.isNaN(v) ? prev.backend : v }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.frontendPort')}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={ports.frontend}
+                  onChange={e => {
+                    const v = parseInt(e.target.value);
+                    setPorts(prev => ({ ...prev, frontend: Number.isNaN(v) ? prev.frontend : v }));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('sys.frontendPort')}</label>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                value={ports.frontend}
-                onChange={e => {
-                  const v = parseInt(e.target.value);
-                  setPorts(prev => ({ ...prev, frontend: Number.isNaN(v) ? prev.frontend : v }));
-                }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              />
+            <div className="mt-3 flex items-center gap-3 flex-wrap">
+              <button
+                onClick={onUpdatePorts}
+                disabled={savingPorts}
+                className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              >
+                {savingPorts ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
+              </button>
+              {portMessage && (
+                <span className={`text-xs ${portMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
+                  {portMessage.text}
+                </span>
+              )}
             </div>
+            <p className="mt-auto pt-3 text-xs text-gray-400">{t('sys.portRestartHint')}：{t('sys.portRestartCmdHint')}</p>
+            <code className="mt-1 self-start px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-xs font-mono text-gray-700 dark:text-gray-200">./stop.sh &amp;&amp; ./start.sh</code>
           </div>
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
+
+          {/* 服务操作：一键重启 */}
+          <div className="flex flex-col lg:pl-6 lg:border-l border-gray-100 dark:border-gray-700">
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('sys.serviceOps')}</div>
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{t('sys.restartDesc')}</p>
             <button
-              onClick={onUpdatePorts}
-              disabled={savingPorts}
-              className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              onClick={onRestartService}
+              className="mt-3 self-start flex items-center gap-2 px-4 py-2 border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
             >
-              {savingPorts ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
+              <RotateCcw className="w-4 h-4" />
+              {t('sys.restartService')}
             </button>
-            {portMessage && (
-              <span className={`text-xs ${portMessage.ok ? 'text-green-600' : 'text-red-500'}`}>
-                {portMessage.text}
-              </span>
-            )}
+            <p className="mt-auto pt-3 text-xs text-gray-400">{t('sys.restartHint')}</p>
           </div>
-          <p className="mt-2 text-xs text-gray-400">{t('sys.portRestartHint')}</p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{t('sys.portRestartCmdHint')}</p>
-          <code className="inline-block mt-1 px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-xs font-mono text-gray-700 dark:text-gray-200">./stop.sh &amp;&amp; ./start.sh</code>
         </div>
       </div>
     </div>
