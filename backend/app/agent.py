@@ -51,7 +51,7 @@ async def _t_search_papers(db: AsyncSession, args: dict) -> dict:
     result = await db.execute(
         sa_select(
             Paper.id, Paper.title, Paper.journal_name, Paper.published_at,
-            Paper.keywords_cn, PaperScore.final_score,
+            Paper.keywords_cn, Paper.source, PaperScore.final_score,
         )
         .outerjoin(PaperScore, PaperScore.paper_id == Paper.id)
         .where(*conds)
@@ -59,15 +59,21 @@ async def _t_search_papers(db: AsyncSession, args: dict) -> dict:
         .limit(limit)
     )
     items = []
-    for pid, title, journal_name, pub, kws, score in result.fetchall():
+    for pid, title, journal_name, pub, kws, source, score in result.fetchall():
         items.append({
             "id": pid,
             "title": title,
             "journal": journal_name,
+            "source": source,
             "published_at": str(pub)[:10] if pub else None,
             "keywords": (kws or [])[:6],
             "score": round(float(score), 3) if score is not None else None,
         })
+
+    # 未显式指定期刊时,按受信期刊白名单去噪(过滤库内混入的无关期刊;全被过滤则保留原结果)
+    if not journal:
+        from app.journal_filter import filter_trusted_papers
+        items = filter_trusted_papers(items, journal_field="journal")
     return {"total_matched_shown": len(items), "papers": items}
 
 
@@ -165,6 +171,20 @@ async def _t_retrieve_context(db: AsyncSession, args: dict) -> dict:
         papers, mode = await _retrieve_similar_papers(db, query, k=k)
     except Exception as e:
         return {"error": f"retrieval failed: {type(e).__name__}"}
+
+    # 去噪: 补期刊名,按受信白名单过滤(全被过滤则保留原结果)
+    if papers:
+        ids = [p.get("id") for p in papers if p.get("id")]
+        if ids:
+            jrows = (await db.execute(
+                sa_select(Paper.id, Paper.journal_name).where(Paper.id.in_(ids))
+            )).all()
+            jmap = {r[0]: r[1] for r in jrows}
+            for p in papers:
+                p["journal_name"] = jmap.get(p.get("id"))
+        from app.journal_filter import filter_trusted_papers
+        papers = filter_trusted_papers(papers)
+
     items = []
     for i, p in enumerate(papers, start=1):
         items.append({

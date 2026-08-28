@@ -749,6 +749,8 @@ export const assistantApi = {
     request(`/assistant/sessions/${id}`, { method: 'DELETE' }),
   saveMessages: async (id: number, messages: Array<{ role: string; content: string }>): Promise<{ ok: boolean }> =>
     request(`/assistant/sessions/${id}/messages`, { method: 'POST', body: { messages } }),
+  submitFeedback: async (data: { surface?: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
+    request('/ai/feedback', { method: 'POST', body: data }),
 };
 
 /** 全局悬浮助手对话（SSE 流式）：基于某个会话继续，后端加载历史消息。 */

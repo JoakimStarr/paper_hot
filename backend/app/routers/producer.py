@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db, AsyncSessionLocal
-from app.models import Paper, PaperFeatures, ReviewReport
+from app.models import Paper, ReviewReport
 from app.ai_service import ai_trend_service
 from app.routers.deps import (
     verify_token, _get_ai_client, _resolve_model_provider, _get_default_model,
@@ -62,48 +62,33 @@ class ReviewResponse(BaseModel):
 
 
 async def _retrieve_papers(db: AsyncSession, topic: str, limit: int = 25) -> List[dict]:
-    """按选题关键词从论文库检索相关论文（标题/摘要/关键词命中 + 综合评分排序）。
+    """按选题从论文库检索相关论文（FAISS+rerank 两阶段，与选题验证器同一套检索）。
 
-    P0 遗留#9（性能）：不再把全库拉进内存做关键词匹配，而是用 SQL OR LIKE 在
-    数据库侧先筛掉无关论文，再取少量候选在 Python 侧按命中数排序。
+    输出结构兼容原实现（id/title/abstract/authors/journal_name/published_at/
+    keywords_cn/hits/final_score），并额外带 similarity；按受信期刊去噪，
+    过滤后为空则保留原结果（不中断功能）。
     """
-    kws = [k for k in _tokenize_query(topic)]
-    if not kws:
+    from app.routers.topic import _retrieve_similar_papers
+    from app.journal_filter import filter_trusted_papers
+
+    briefs, _mode = await _retrieve_similar_papers(db, topic, k=limit)
+    if not briefs:
         return []
 
-    # 数据库侧 OR 条件：标题/摘要包含任一词，或 keywords_cn 序列里命中任一词
-    from sqlalchemy import or_ as sa_or, and_ as sa_and
-    like_clauses = []
-    for k in kws:
-        like_clauses.append(Paper.title.ilike(f"%{k}%"))
-        like_clauses.append(Paper.abstract.ilike(f"%{k}%"))
-        # keywords_cn 是 JSON 文本，直接 LIKE 子串足够（中文关键词无歧义）
-        like_clauses.append(Paper.keywords_cn.cast(str).ilike(f"%{k}%"))
-    cond = sa_or(*like_clauses)
+    ids = [b["id"] for b in briefs if b.get("id")]
+    if not ids:
+        return []
 
     result = await db.execute(
-        sa_select(Paper)
-        .options(selectinload(Paper.scores))
-        .where(cond)
-        .order_by(sa_desc(Paper.published_at))
-        .limit(500)
+        sa_select(Paper).options(selectinload(Paper.scores)).where(Paper.id.in_(ids))
     )
-    scored = []
-    for p in result.scalars():
-        title = (p.title or "").lower()
-        abstract = (p.abstract or "").lower()
-        kws_cn = p.keywords_cn or []
-        hits = 0
-        for k in kws:
-            kk = k.lower()
-            if kk in title or kk in abstract or any(kk in (w or "") for w in kws_cn):
-                hits += 1
-        if hits:
-            score = p.scores.final_score if p.scores else 0.0
-            scored.append((hits, score, p))
-    scored.sort(key=lambda x: (-x[0], -x[1]))
+    by_id = {p.id: p for p in result.scalars()}
+
     out = []
-    for hits, score, p in scored[:limit]:
+    for b in briefs:
+        p = by_id.get(b["id"])
+        if not p:
+            continue
         out.append({
             "id": p.id,
             "title": p.title,
@@ -112,24 +97,13 @@ async def _retrieve_papers(db: AsyncSession, topic: str, limit: int = 25) -> Lis
             "journal_name": p.journal_name,
             "published_at": _isoformat_utc(p.published_at),
             "keywords_cn": p.keywords_cn or [],
-            "hits": hits,
-            "final_score": score,
+            "hits": 1,
+            "final_score": p.scores.final_score if p.scores else 0.0,
+            "similarity": b.get("similarity", 0.0),
         })
-    return out
 
-
-def _tokenize_query(topic: str) -> List[str]:
-    """简单切分选题为检索词：按分隔符拆，过滤单字与停用词。"""
-    import re
-    stops = {"的", "与", "和", "对", "在", "研究", "基于", "视角", "及其", "理论",
-             "影响", "机制", "作用", "关系", "路径", "我国", "中国", "分析"}
-    parts = re.split(r"[，。；、,.;\s·×/()（）\"']", topic)
-    words = []
-    for part in parts:
-        part = part.strip()
-        if len(part) >= 2 and part not in stops:
-            words.append(part)
-    return words
+    # 受信期刊去噪：过滤库内混入的无关期刊；全被过滤则保留原结果
+    return filter_trusted_papers(out)
 
 
 @router.post("/producer/review", response_model=ReviewResponse)

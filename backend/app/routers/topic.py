@@ -474,7 +474,7 @@ async def _embedding_recall(db: AsyncSession, query_vec: list, recall_k: int):
             if r:
                 papers.append(_paper_brief(r, score_map.get(pid, 0.0)))
         if papers:
-            return papers
+            return await _attach_journal_and_filter(db, papers)
 
     # ---- 降级：全量拉 embedding，内存暴力余弦 ----
     rows = (
@@ -499,7 +499,27 @@ async def _embedding_recall(db: AsyncSession, query_vec: list, recall_k: int):
     # 列序对齐 _paper_brief（[paper_id, keywords, title, abstract, source, published_at]）：
     # SELECT 里 embedding 列插在最前，这里归一化掉，避免 title/abstract/source 错位
     norm = [(r[0], r[2], r[3], r[4], r[5], r[6]) for r in picked]
-    return [_paper_brief(nr, score_map.get(nr[0], 0.0)) for nr in norm]
+    return await _attach_journal_and_filter(db, [_paper_brief(nr, score_map.get(nr[0], 0.0)) for nr in norm])
+
+
+async def _attach_journal_and_filter(db: AsyncSession, papers: list):
+    """给召回候选补 journal_name 并按受信期刊去噪。
+
+    库内混入大量非 TOP50 的无关期刊，会让召回/拥挤度统计把低质论文混进来。
+    过滤后若为空则保留原结果（兜底不中断功能）。
+    """
+    if not papers:
+        return papers
+    ids = [p["id"] for p in papers if p.get("id")]
+    if ids:
+        jrows = (await db.execute(
+            sa_select(Paper.id, Paper.journal_name).where(Paper.id.in_(ids))
+        )).all()
+        jmap = {r[0]: r[1] for r in jrows}
+        for p in papers:
+            p["journal_name"] = jmap.get(p.get("id"))
+    from app.journal_filter import filter_trusted_papers
+    return filter_trusted_papers(papers)
 
 
 async def _rerank_papers(topic: str, papers: list, k: int):

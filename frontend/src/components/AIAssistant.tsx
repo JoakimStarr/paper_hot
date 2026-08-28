@@ -12,6 +12,13 @@ import { MessageCircle, X, Maximize2, Minimize2, Send, Loader2, Sparkles, Histor
 import ChatMessageList, { ChatMessageItem, ChatToolsEvent, ChatToolProgress } from './ChatMessageList';
 import { streamAssistantChat, assistantApi, papersApi, AssistantSession } from '@/lib/api';
 
+// 简单内容哈希(djb2)→ hex,用于 AI 反馈按答案去重
+function hashString(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
 const PAGE_LABELS: Record<string, string> = {
   paper: '论文助手',
   trends: '趋势助手',
@@ -359,6 +366,16 @@ export default function AIAssistant() {
     setHistoryOpen(false);
   };
 
+  // 👍/👎 反馈：落到后端 ai_feedback 表（surface=assistant_chat, ref_id=会话 id, content_hash 用于按答案去重）
+  const handleFeedback = useCallback((msg: ChatMessageItem, rating: 1 | -1) => {
+    assistantApi.submitFeedback({
+      surface: 'assistant_chat',
+      ref_id: sessionId != null ? String(sessionId) : undefined,
+      content_hash: hashString(msg.content),
+      rating,
+    }).catch(() => {});
+  }, [sessionId]);
+
   // 关闭/页面切换时中断未完成流
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -481,6 +498,7 @@ export default function AIAssistant() {
                     citations={{}}
                     accent="bg-purple-600"
                     emptyText=""
+                    onFeedback={handleFeedback}
                   />
                 )}
               </div>
