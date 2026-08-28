@@ -1,15 +1,38 @@
-#!/usr/bin/env python3
 """
-知网期刊爬虫 - 验证码自动解决版本
+知网期刊爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索 / 参考文献抓取）
 基于 cnki_paper_threaded.py，集成 ddddocr 自动解决验证码
 支持滑块验证码（期刊页面）和文字点选验证码（论文详情页面）
 
+参考文献抓取（ReferenceCrawler）：进入论文详情页先点击「参考文献」页签
+<li data-id="references" onclick="changeRefTypeTag(this)">，列表渲染后条目在
+//ul[@class="ebBd"] 下（文本+链接），点击 <a class="next">下一页</a> 继续抓取，
+「下一页」按钮消失（或置灰）即末页；仅抓列表条目，不递归参考文献详情页。
+结果按 paper_url 覆盖式写入 paper_references 表（表由脚本自建，与 backend 模型解耦）。
+
+防风控：详情页导航与翻页请求均计节奏 —— 篇间隔默认 6s（随机上浮至 ~1.8 倍，
+--ref-interval 可调）、每次翻页前随机停 2~4.5s 并过全局导航闸；先滚动后点页签
+模拟真人。易触发验证码时：调大 --ref-interval（如 12），或 --show-browser 人工配合。
+
+合并抓取：--detail-refs 开启后，抓论文详情时在同一详情页顺带抓参考文献入库
+（期刊/关键词检索模式均生效），省去二次导航，总体请求数更少、更不易触发风控；
+参考文献失败只记日志，不影响已入库的论文详情。
+
 依赖安装:
     pip install ddddocr Pillow
+    # 验证码文字识别（可选；PaddleOCR 3.x 默认能力即含通用 OCR，无需单独装 paddlepaddle）:
+    python -m pip install paddleocr
+    # 需要文档解析、文档理解、文档翻译、关键信息抽取等全部可选能力时:
+    # python -m pip install "paddleocr[all]"
 
 使用方法:
     python cnki_paper_captcha.py --show-browser
     python cnki_paper_captcha.py --threads 3
+    # 关键词检索
+    python cnki_paper_captcha.py --search "新质生产力" --show-browser
+    # 参考文献抓取
+    python cnki_paper_captcha.py --ref-paper-url "https://kns.cnki.net/kcms2/article/abstract?..."
+    python cnki_paper_captcha.py --ref-urls-file .cache/urls.txt --ref-max-items 200
+    python cnki_paper_captcha.py --ref-title "论文标题"
 """
 
 import json
@@ -44,7 +67,8 @@ try:
 except ImportError:
     PADDLEOCR_AVAILABLE = False
     print("提示: paddleocr 未安装，将使用 ddddocr 进行文字识别")
-    print("建议运行: pip install paddlepaddle paddleocr")
+    print("建议运行: python -m pip install paddleocr")
+    print('       （PaddleOCR 3.x 默认能力即含通用 OCR；需文档解析/理解/翻译/信息抽取等全部能力: python -m pip install "paddleocr[all]"）')
 
 # OpenCV 用于图像预处理（提高识别准确率）
 try:
@@ -1273,9 +1297,13 @@ class HistoryManager:
 class JournalCrawler:
     """期刊/详情爬虫基类（单浏览器 + 多标签页并发模型）"""
 
-    def __init__(self, headless=True, thread_id=0, state_file=None):
+    def __init__(self, headless=True, thread_id=0, state_file=None,
+                 refs_with_details=False, ref_max_items=None):
         self.headless = headless
         self.thread_id = thread_id
+        # --detail-refs：详情入库后在同一页顺带抓参考文献（省二次导航，防风控）
+        self.refs_with_details = refs_with_details
+        self.max_items = ref_max_items
         self.page = None
         self.browser = None
         self.playwright = None
@@ -1906,6 +1934,9 @@ class JournalCrawler:
             if title:
                 print(f"    [线程{self.thread_id}] ✓ 成功获取: {title[:40]}...")
                 await self.save_to_database(result, journal_name, year, issue)
+                # --detail-refs：详情入库后顺带抓参考文献（失败只记日志，不回滚详情）
+                if self.refs_with_details:
+                    await self._fetch_refs_for_detail(paper_url, title)
                 return result
             else:
                 print(f"    [线程{self.thread_id}] ✗ 获取失败: 无标题")
@@ -2019,6 +2050,188 @@ class JournalCrawler:
                         print(f"    [线程{self.thread_id}] ✓ 已保存到数据库")
             except Exception as e:
                 print(f"    [线程{self.thread_id}] ✗ 保存到数据库失败: {e}")
+                import traceback
+                traceback.print_exc()
+
+    # —— 参考文献抓取（详情流程 --detail-refs 与独立参考文献模式共用）——
+    REF_LIST_SELECTOR = 'ul.ebBd'
+    REF_NEXT_SELECTOR = 'a.next'
+    # 「参考文献」页签：先点击（onclick=changeRefTypeTag）列表才渲染，按优先级逐个尝试
+    REF_TAB_SELECTORS = [
+        'li[data-id="references"]',
+        'li[onclick*="changeRefTypeTag"]',
+        'li:text-is("参考文献")',
+        'a:text-is("参考文献")',
+    ]
+    # 防风控节奏（参考文献抓取专用，默认偏保守）
+    REF_PAGE_INTERVAL = (2.0, 4.5)   # 每次翻页前的随机间隔（秒）
+    REF_TAB_WAIT = 15                # 点击页签后等待 ul.ebBd 渲染的超时（秒）
+
+    async def _fetch_refs_for_detail(self, paper_url: str, title: str):
+        """--detail-refs：详情入库后在同一页顺带抓参考文献；任何失败只记日志不回滚详情。"""
+        tag = f"[线程{self.thread_id}]"
+        try:
+            refs = await self._crawl_references(tag)
+            if not refs:
+                print(f"    {tag} 该详情页未抓到参考文献条目，跳过")
+                return
+            if self.max_items and len(refs) > self.max_items:
+                refs = refs[:self.max_items]
+            await self._save_references(paper_url, title, refs)
+            self._refs_done = getattr(self, '_refs_done', 0) + 1
+        except Exception as e:
+            print(f"    {tag} ✗ 参考文献抓取失败（不影响已入库详情）: {e}")
+            self._refs_failed = getattr(self, '_refs_failed', 0) + 1
+
+    async def _open_references_tab(self, tag: str):
+        """点击详情页「参考文献」页签（li[data-id="references"]，onclick=changeRefTypeTag）。
+
+        列表在点击页签后才异步渲染；按优先级逐个尝试选择器，普通点击失败时
+        用 JS click 兜底（onclick 绑定在 li 上，JS 触发同样生效），点击后等待
+        ul.ebBd 渲染出来再返回。
+        """
+        for sel in self.REF_TAB_SELECTORS:
+            loc = self.page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            try:
+                await loc.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            try:
+                await loc.click(timeout=5000)
+            except Exception:
+                try:
+                    await loc.evaluate('el => el.click()')
+                except Exception as e:
+                    print(f"{tag} 点击页签 {sel} 失败: {e}")
+                    continue
+            print(f"{tag} 已点击「参考文献」页签: {sel}")
+            try:
+                await self.page.locator(self.REF_LIST_SELECTOR).first.wait_for(
+                    state='visible', timeout=self.REF_TAB_WAIT * 1000)
+            except Exception:
+                print(f"{tag} 点击页签后 {self.REF_TAB_WAIT}s 内未见 ul.ebBd，继续尝试直接解析")
+            return True
+        print(f"{tag} 未找到「参考文献」页签，尝试直接解析列表")
+        return False
+
+    async def _crawl_references(self, tag: str) -> list:
+        """抓取参考文献条目：ul.ebBd 下每页 li，a.next 翻页，按钮消失即末页。"""
+        refs: list = []
+        seen = set()
+        page_no = 1
+        while True:
+            # 需求确认：先点击「参考文献」页签（changeRefTypeTag）列表才渲染，每篇开始必点
+            if page_no == 1:
+                await self._open_references_tab(tag)
+            loc = self.page.locator(self.REF_LIST_SELECTOR)
+            if await loc.count() == 0:
+                print(f"{tag} 第 {page_no} 页未找到参考文献容器 ul.ebBd（可加 --show-browser 人工核对页面）")
+                break
+            items = await loc.locator('xpath=./li').evaluate_all(
+                """(lis) => lis.map((li) => {
+                    const a = li.querySelector('a[href]');
+                    const text = (li.innerText || '').replace(/\\s+/g, ' ').trim();
+                    return { text, url: a ? a.href : null };
+                }).filter((x) => x.text)"""
+            )
+            # 跨页去重：翻页未生效时重复收集的同一页内容会被去重掉，不会重复入库
+            new_count = 0
+            for it in items:
+                key = (it.get('url') or '', it['text'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                refs.append(it)
+                new_count += 1
+            print(f"{tag} 参考文献 第 {page_no} 页获取 {len(items)} 条（新增 {new_count}），累计 {len(refs)} 条")
+            if self.max_items and len(refs) >= self.max_items:
+                print(f"{tag} 已达上限 {self.max_items} 条，停止翻页")
+                break
+            # 「下一页」按钮：不存在即末页（需求）；置灰(disable)同样视为末页
+            nxt = self.page.locator(self.REF_NEXT_SELECTOR).first
+            if await nxt.count() == 0:
+                print(f"{tag} 「下一页」按钮已消失，参考文献抓取完成")
+                break
+            cls = (await nxt.get_attribute('class')) or ''
+            if 'disable' in cls:
+                print(f"{tag} 「下一页」按钮已置灰，已是末页，参考文献抓取完成")
+                break
+            first_before = items[0]['text'][:60] if items else ''
+            # 翻页请求同样计入风控：先随机停顿，再过全局导航闸
+            await asyncio.sleep(random.uniform(*self.REF_PAGE_INTERVAL))
+            await _pacing_wait()
+            try:
+                await nxt.click(timeout=8000)
+            except Exception as e:
+                print(f"{tag} 点击下一页失败: {e}")
+                break
+            # 等翻页真正生效：列表重新可见且首条内容变化（最多约 20s），防点击未生效导致死循环
+            advanced = False
+            deadline = asyncio.get_event_loop().time() + 20
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    await self.page.locator(self.REF_LIST_SELECTOR).first.wait_for(state='visible', timeout=5000)
+                except Exception:
+                    pass
+                cur_first = await self._first_ref_text()
+                if cur_first and cur_first != first_before:
+                    advanced = True
+                    break
+                if await self.page.locator(self.REF_LIST_SELECTOR).count() == 0:
+                    break
+                await asyncio.sleep(0.8)
+            if not advanced:
+                print(f"{tag} 点击下一页后列表内容未变化，视为已到末页，停止")
+                break
+            page_no += 1
+        return refs
+
+    async def _first_ref_text(self) -> str:
+        """读取当前参考文献列表首条文本（用于判断翻页是否生效）。"""
+        try:
+            loc = self.page.locator(f'{self.REF_LIST_SELECTOR} > li').first
+            text = await loc.inner_text(timeout=3000)
+            return (text or '').replace('\n', ' ').strip()[:60]
+        except Exception:
+            return ''
+
+    async def _ensure_ref_table(self):
+        """确保 paper_references 表存在（脚本自管建表，与 backend 模型解耦）。"""
+        if getattr(self, '_ref_table_ready', False):
+            return
+        from app.database import engine
+        async with engine.begin() as conn:
+            await conn.run_sync(RefBase.metadata.create_all)
+        self._ref_table_ready = True
+
+    async def _save_references(self, paper_url: str, paper_title: str, refs: list):
+        """覆盖式写入 paper_references 表（先删该论文旧参考文献再插入，含序号）。"""
+        if not hasattr(self, "_db_lock"):
+            self._db_lock = asyncio.Lock()
+        async with self._db_lock:
+            try:
+                await self._ensure_db()
+                await self._ensure_ref_table()
+                from app.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    await db.execute(delete(PaperReference).where(PaperReference.paper_url == paper_url))
+                    rows = []
+                    for idx, ref in enumerate(refs, start=1):
+                        rows.append(PaperReference(
+                            paper_url=paper_url,
+                            paper_title=(paper_title or '')[:500] or None,
+                            ref_index=idx,
+                            raw_text=(ref.get('text') or '')[:2000] or None,
+                            ref_url=(ref.get('url') or None),
+                        ))
+                    if rows:
+                        db.add_all(rows)
+                    await db.commit()
+                    print(f"    [线程{self.thread_id}] ✓ 参考文献已入库 {len(rows)} 条 -> {(paper_title or paper_url)[:60]}")
+            except Exception as e:
+                print(f"    [线程{self.thread_id}] ✗ 参考文献入库失败: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -2225,6 +2438,9 @@ class JournalCrawler:
         print(f"\n{tag} {'=' * 60}")
         print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
               f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+        if getattr(self, '_refs_done', 0) or getattr(self, '_refs_failed', 0):
+            print(f"{tag} 参考文献（--detail-refs）：成功 {getattr(self, '_refs_done', 0)} 篇 | "
+                  f"失败 {getattr(self, '_refs_failed', 0)} 篇")
         print(f"{tag} {'=' * 60}")
 
         # 更新各期刊爬取日志
@@ -2283,10 +2499,13 @@ class MultiThreadedCrawler:
     两个阶段共享全局导航闸/熔断，避免聚合请求率过高触发验证码。
     """
 
-    def __init__(self, headless=True, max_workers=3, detail_workers=3):
+    def __init__(self, headless=True, max_workers=3, detail_workers=3,
+                 refs_with_details=False, ref_max_items=None):
         self.headless = headless
         self.max_workers = max(1, int(max_workers))
         self.detail_workers = max(1, int(detail_workers))
+        self.refs_with_details = refs_with_details
+        self.ref_max_items = ref_max_items
 
     async def run(self):
         """运行期刊爬虫（收集并行 -> 详情并发）。"""
@@ -2331,7 +2550,9 @@ class MultiThreadedCrawler:
         print(f"\n共收集 {len(collected_journals)} 个期刊的论文链接")
 
         # 阶段二：单浏览器 + M tab 并发抓详情入库（复用收集阶段保存的暖会话）
-        detail = JournalCrawler(headless=self.headless, thread_id=0, state_file=CNKI_STATE_FILE)
+        detail = JournalCrawler(headless=self.headless, thread_id=0, state_file=CNKI_STATE_FILE,
+                                refs_with_details=self.refs_with_details,
+                                ref_max_items=self.ref_max_items)
         await detail.init_browser()
         try:
             await detail._warmup()
@@ -2385,8 +2606,9 @@ class KeywordSearchCrawler(JournalCrawler):
                  min_year=None, max_year=None, state_file=None, thread_id=0,
                  urls_only=False, urls_file=None, debug_html=None,
                  search_url=None, search_url_file=None, detail_workers=3,
-                 resume=False):
-        super().__init__(headless=headless, thread_id=thread_id)
+                 resume=False, refs_with_details=False, ref_max_items=None):
+        super().__init__(headless=headless, thread_id=thread_id,
+                         refs_with_details=refs_with_details, ref_max_items=ref_max_items)
         self.keyword = keyword
         self.search_field = search_field
         self.max_pages = max_pages
@@ -3042,6 +3264,9 @@ class KeywordSearchCrawler(JournalCrawler):
 
             print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
                   f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+            if getattr(self, '_refs_done', 0) or getattr(self, '_refs_failed', 0):
+                print(f"{tag} 参考文献（--detail-refs）：成功 {getattr(self, '_refs_done', 0)} 篇 | "
+                      f"失败 {getattr(self, '_refs_failed', 0)} 篇")
             _clear_search_checkpoint()
             print(f"{tag} 断点已清除")
         except Exception as e:
@@ -3052,8 +3277,276 @@ class KeywordSearchCrawler(JournalCrawler):
             await self.close_browser()
 
 
+# —— 参考文献抓取（方法供详情流程与独立参考文献模式共用）——
+# paper_references 表模型：与 v2.20.0 曾引入的 backend 模型同构，但定义在本脚本内
+# （独立 Base），建表由脚本自管（表已存在则跳过），不依赖也不修改 backend。
+from datetime import timezone
+from uuid import uuid4
+from sqlalchemy import Column, String, Text, Integer, DateTime, UniqueConstraint, delete
+from sqlalchemy.orm import declarative_base
+
+RefBase = declarative_base()
+
+
+class PaperReference(RefBase):
+    """论文参考文献条目（按 paper_url 覆盖式更新，(paper_url, ref_index) 唯一）。"""
+    __tablename__ = "paper_references"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    paper_url = Column(String(500), nullable=False, index=True)
+    paper_title = Column(String(500), nullable=True)
+    ref_index = Column(Integer, nullable=False)
+    raw_text = Column(Text, nullable=True)
+    ref_url = Column(String(500), nullable=True)
+    task_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint('paper_url', 'ref_index', name='uq_paper_ref_idx'),
+    )
+
+
+class ReferenceCrawler(KeywordSearchCrawler):
+    """参考文献爬取：给定论文详情页链接（可批量）或论文标题，进入详情页抓取参考文献列表条目。
+
+    抓取/翻页/入库复用 JournalCrawler 上的共享实现（_open_references_tab /
+    _crawl_references / _save_references 等，页面结构与防风控节奏见其 REF_* 常量）。
+    仅抓列表条目（文本+链接），不递归打开参考文献自身的详情页；结果按 paper_url
+    覆盖式写入 paper_references 表。
+
+    防风控：详情页导航与翻页请求都计入节奏——篇间隔默认 6s（随机上浮，--ref-interval
+    可调）；触发验证码多时调大 --ref-interval 或 --show-browser 人工配合。
+
+    用法:
+        python cnki_paper_captcha.py --ref-paper-url "https://kns.cnki.net/..."
+        python cnki_paper_captcha.py --ref-urls-file .cache/urls.txt
+        python cnki_paper_captcha.py --ref-title "论文标题" --ref-max-items 100
+    """
+
+
+    def __init__(self, headless=True, thread_id=0, state_file=None,
+                 paper_urls=None, paper_title=None, max_items=None, interval=6.0):
+        super().__init__(headless=headless, thread_id=thread_id, state_file=state_file)
+        self.paper_urls = list(paper_urls or [])
+        self.paper_title = (paper_title or '').strip()
+        self.max_items = max_items
+        self.ref_interval = max(1.0, float(interval))
+
+    async def run(self):
+        tag = f"[参考文献#{self.thread_id}]"
+        print("=" * 60)
+        print(f"{tag} 参考文献爬取: {len(self.paper_urls)} 个链接"
+              + (f" + 标题「{self.paper_title}」" if self.paper_title else "")
+              + f" | 篇间隔 {self.ref_interval}s（防风控）")
+        print("=" * 60)
+
+        # 组装任务：URL 直接打开；标题先检索定位（默认取第一条结果）
+        tasks = [{'paper_url': u, 'paper_title': ''} for u in self.paper_urls]
+        if self.paper_title:
+            tasks.append({'paper_url': None, 'paper_title': self.paper_title})
+        if not tasks:
+            print(f"{tag} 未提供论文链接/标题，退出")
+            return
+
+        await self.init_browser()
+        total_refs = 0
+        ok_papers = 0
+        try:
+            for i, task in enumerate(tasks, 1):
+                paper_url = task['paper_url']
+                paper_title = task['paper_title']
+                print(f"\n{tag} [{i}/{len(tasks)}] 处理论文: {paper_title or paper_url[:70]}")
+                try:
+                    # —— 定位论文详情页 ——
+                    if not paper_url:
+                        located = await self._locate_paper_by_title(tag)
+                        if not located:
+                            print(f"{tag} 未能在检索结果中定位到论文，跳过")
+                            continue
+                        paper_url, paper_title = located
+                    else:
+                        print(f"{tag} 直接打开论文详情页: {paper_url}")
+
+                    await _pacing_wait()
+                    await self.page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
+                    if not await self.wait_for_page_stable(paper_url):
+                        print(f"{tag} ✗ 详情页遇到安全验证且未通过，跳过")
+                        continue
+                    await self._ensure_no_captcha(timeout=120)
+                    # 模拟真人浏览：先随机滚动再点页签，降低风控敏感度
+                    await self.random_scroll()
+                    await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
+
+                    # URL 入口时从详情页提取标题（标题入口在检索阶段已拿到）
+                    if not paper_title:
+                        try:
+                            paper_title = (await self.page.locator('div.doc h1, h1')
+                                           .first.inner_text(timeout=8000)).strip()
+                        except Exception:
+                            paper_title = ''
+
+                    refs = await self._crawl_references(tag)
+                    if not refs:
+                        print(f"{tag} 未抓到参考文献（详情页可能没有参考文献区块）")
+                        continue
+                    if self.max_items and len(refs) > self.max_items:
+                        print(f"{tag} 超过上限 {self.max_items} 条，截断")
+                        refs = refs[:self.max_items]
+
+                    print(f"{tag} 完成：共抓取参考文献 {len(refs)} 条，前 3 条预览：")
+                    for r in refs[:3]:
+                        print(f"{tag}   - {r['text'][:70]}")
+                    await self._save_references(paper_url, paper_title, refs)
+                    total_refs += len(refs)
+                    ok_papers += 1
+                except Exception as e:
+                    print(f"{tag} 处理论文异常: {e}")
+                    import traceback
+                    traceback.print_exc()
+                # 篇间退避：详情页导航频率是触发风控的主因，宁慢勿封
+                if i < len(tasks):
+                    gap = random.uniform(self.ref_interval, self.ref_interval * 1.8)
+                    print(f"{tag} 停 {gap:.1f}s 再处理下一篇（防风控）")
+                    await asyncio.sleep(gap)
+        finally:
+            await self.close_browser()
+
+        print(f"\n{tag} {'=' * 60}")
+        print(f"{tag} 全部完成：{ok_papers}/{len(tasks)} 篇论文，共入库参考文献 {total_refs} 条")
+        print(f"{tag} {'=' * 60}")
+
+    async def _locate_paper_by_title(self, tag: str):
+        """按论文标题搜索知网并定位详情页：默认取第一条结果，其余候选打印到日志供人工核对。"""
+        print(f"{tag} 按标题检索: {self.paper_title}")
+        await _pacing_wait()
+        await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+        for _ in range(90):
+            if 'cnki.net' in self.page.url:
+                break
+            await asyncio.sleep(2)
+        box = self.page.locator(self.SEARCH_SELECTOR).first
+        await box.wait_for(state='visible', timeout=60000)
+        await self.random_scroll()
+        await box.click()
+        await box.fill(self.paper_title)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await box.press('Enter')
+        await self._ensure_no_captcha(timeout=180)
+        if await self._search_navigation_failed(timeout=20):
+            print(f"{tag} 检索被风控拦截，退出")
+            return None
+
+        # 事件驱动等检索结果表渲染（站点反应快慢不一，固定 sleep 会拿到空结果）
+        try:
+            await self.page.locator(self.RESULT_TABLE_SELECTOR).first.wait_for(
+                state='visible', timeout=30000)
+        except Exception:
+            print(f"{tag} 等待检索结果表 30s 未出现，进入兜底重试")
+
+        # 结果可能懒加载：多轮重试收集，仍为空才放弃并落调试 HTML 供核对
+        candidates: list = []
+        for attempt in range(4):
+            candidates = await self._collect_papers_from_rows()
+            if candidates:
+                break
+            if attempt < 3:
+                print(f"{tag} 第 {attempt + 1} 次未取到结果，等待页面加载后重试...")
+                await asyncio.sleep(random.uniform(2.5, 4))
+        if not candidates:
+            print(f"{tag} 检索结果为空，已保存页面 HTML 供核对")
+            await self._dump_page_html()
+            return None
+        print(f"{tag} 检索到 {len(candidates)} 条候选，前 5 条：")
+        for i, c in enumerate(candidates[:5]):
+            print(f"{tag}   [{i + 1}] {c['title'][:60]} ({c.get('journal', '')} {c.get('year') or ''})")
+        first = candidates[0]
+        print(f"{tag} 默认取第 1 条: {first['title'][:60]}")
+        return first['url'], first['title']
+
+    async def _crawl_references(self, tag: str) -> list:
+        """抓取参考文献条目：ul.ebBd 下每页 li，a.next 翻页，按钮消失即末页。"""
+        refs: list = []
+        seen = set()
+        page_no = 1
+        while True:
+            # 需求确认：先点击「参考文献」页签（changeRefTypeTag）列表才渲染，每篇开始必点
+            if page_no == 1:
+                await self._open_references_tab(tag)
+            loc = self.page.locator(self.REF_LIST_SELECTOR)
+            if await loc.count() == 0:
+                print(f"{tag} 第 {page_no} 页未找到参考文献容器 ul.ebBd（可加 --show-browser 人工核对页面）")
+                break
+            items = await loc.locator('xpath=./li').evaluate_all(
+                """(lis) => lis.map((li) => {
+                    const a = li.querySelector('a[href]');
+                    const text = (li.innerText || '').replace(/\\s+/g, ' ').trim();
+                    return { text, url: a ? a.href : null };
+                }).filter((x) => x.text)"""
+            )
+            # 跨页去重：翻页未生效时重复收集的同一页内容会被去重掉，不会重复入库
+            new_count = 0
+            for it in items:
+                key = (it.get('url') or '', it['text'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                refs.append(it)
+                new_count += 1
+            print(f"{tag} 参考文献 第 {page_no} 页获取 {len(items)} 条（新增 {new_count}），累计 {len(refs)} 条")
+            if self.max_items and len(refs) >= self.max_items:
+                print(f"{tag} 已达上限 {self.max_items} 条，停止翻页")
+                break
+            # 「下一页」按钮：不存在即末页（需求）；置灰(disable)同样视为末页
+            nxt = self.page.locator(self.REF_NEXT_SELECTOR).first
+            if await nxt.count() == 0:
+                print(f"{tag} 「下一页」按钮已消失，参考文献抓取完成")
+                break
+            cls = (await nxt.get_attribute('class')) or ''
+            if 'disable' in cls:
+                print(f"{tag} 「下一页」按钮已置灰，已是末页，参考文献抓取完成")
+                break
+            first_before = items[0]['text'][:60] if items else ''
+            # 翻页请求同样计入风控：先随机停顿，再过全局导航闸
+            await asyncio.sleep(random.uniform(*self.REF_PAGE_INTERVAL))
+            await _pacing_wait()
+            try:
+                await nxt.click(timeout=8000)
+            except Exception as e:
+                print(f"{tag} 点击下一页失败: {e}")
+                break
+            # 等翻页真正生效：列表重新可见且首条内容变化（最多约 20s），防点击未生效导致死循环
+            advanced = False
+            deadline = asyncio.get_event_loop().time() + 20
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    await self.page.locator(self.REF_LIST_SELECTOR).first.wait_for(state='visible', timeout=5000)
+                except Exception:
+                    pass
+                cur_first = await self._first_ref_text()
+                if cur_first and cur_first != first_before:
+                    advanced = True
+                    break
+                if await self.page.locator(self.REF_LIST_SELECTOR).count() == 0:
+                    break
+                await asyncio.sleep(0.8)
+            if not advanced:
+                print(f"{tag} 点击下一页后列表内容未变化，视为已到末页，停止")
+                break
+            page_no += 1
+        return refs
+
+    async def _first_ref_text(self) -> str:
+        """读取当前参考文献列表首条文本（用于判断翻页是否生效）。"""
+        try:
+            loc = self.page.locator(f'{self.REF_LIST_SELECTOR} > li').first
+            text = await loc.inner_text(timeout=3000)
+            return (text or '').replace('\n', ' ').strip()[:60]
+        except Exception:
+            return ''
+
+
 async def main():
-    parser = argparse.ArgumentParser(description='知网爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索）')
+    parser = argparse.ArgumentParser(description='知网爬虫 - 验证码自动解决版本（按期刊 / 按关键词检索 / 参考文献抓取）')
     parser.add_argument('--show-browser', action='store_true', help='显示浏览器窗口（默认不显示）')
     parser.add_argument('--threads', type=int, default=3, help='期刊收集阶段的并发浏览器数（默认3）')
     parser.add_argument('--search', type=str, default=None,
@@ -3078,7 +3571,45 @@ async def main():
                         help='详情页并发抓取 tab 数（默认3；期刊模式与检索模式均有效，翻页/收集仍按各自并发模型）')
     parser.add_argument('--resume', action='store_true',
                         help='断点续跑：存在同关键词断点（.cache/search_checkpoint.json）时从上次进度继续')
+    parser.add_argument('--ref-paper-url', type=str, action='append', default=None,
+                        help='参考文献模式：论文详情页链接，可重复传多个；批量可配合 --ref-urls-file')
+    parser.add_argument('--ref-title', type=str, default=None,
+                        help='参考文献模式：论文标题（检索后取第一条结果进详情页抓参考文献）')
+    parser.add_argument('--ref-urls-file', type=str, default=None,
+                        help='参考文献模式：论文详情页链接清单文件（每行一个 URL，# 开头为注释）')
+    parser.add_argument('--ref-max-items', type=int, default=None,
+                        help='单篇参考文献条数上限（默认不限）')
+    parser.add_argument('--ref-interval', type=float, default=6.0,
+                        help='参考文献模式两篇论文之间的基础间隔秒数（实际随机上浮至约1.8倍；默认6，易触发验证码时调大）')
+    parser.add_argument('--detail-refs', action='store_true',
+                        help='抓论文详情时在同一详情页顺带抓取参考文献入库（省二次导航，总体更不易触发风控；期刊/检索模式均生效）')
     args = parser.parse_args()
+
+    if args.detail_refs and args.detail_workers > 2:
+        print("[提示] --detail-refs 开启时建议 --detail-workers ≤ 2：每个 tab 都可能翻参考文献页，请求经全局导航闸排队，并发多会更慢且更易触发风控")
+
+    # 参考文献模式：--ref-paper-url（可多个）/ --ref-urls-file / --ref-title 任一提供即启用
+    ref_urls = list(args.ref_paper_url or [])
+    if args.ref_urls_file:
+        try:
+            for line in Path(args.ref_urls_file).read_text(encoding='utf-8').splitlines():
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    ref_urls.append(line)
+        except Exception as e:
+            print(f"[WARN] 读取 URL 清单文件失败: {e}")
+    if ref_urls or args.ref_title:
+        state_file = None if args.no_login_state else str(CACHE_DIR / 'cnki_state.json')
+        ref_crawler = ReferenceCrawler(
+            headless=not args.show_browser,
+            state_file=state_file,
+            paper_urls=ref_urls,
+            paper_title=args.ref_title,
+            max_items=args.ref_max_items,
+            interval=args.ref_interval,
+        )
+        await ref_crawler.run()
+        return
 
     if args.search:
         # 校验检索字段，未知值回退到默认「主题」
@@ -3113,6 +3644,8 @@ async def main():
             search_url_file=args.save_url_file,
             detail_workers=args.detail_workers,
             resume=args.resume,
+            refs_with_details=args.detail_refs,
+            ref_max_items=args.ref_max_items,
         )
         await crawler.run_search()
         return
@@ -3121,6 +3654,8 @@ async def main():
         headless=not args.show_browser,
         max_workers=args.threads,
         detail_workers=args.detail_workers,
+        refs_with_details=args.detail_refs,
+        ref_max_items=args.ref_max_items,
     )
     await crawler.run()
 
