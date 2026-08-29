@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi, producerApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
-import { PaperDetailResponse } from '@/types/paper';
+import { PaperDetailResponse, PaperReferencesResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check, Bookmark, Pin, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -38,6 +38,24 @@ export default function PaperDetailPage() {
   // —— P2-11a：引用导出 ——
   const [citationBusy, setCitationBusy] = useState(false);
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
+
+  // —— 参考文献列表（懒加载：首次展开时拉取，paper_references 表未抓取过则为空）——
+  const [refsOpen, setRefsOpen] = useState(false);
+  const [refsLoading, setRefsLoading] = useState(false);
+  const [refsError, setRefsError] = useState(false);
+  const [refsData, setRefsData] = useState<PaperReferencesResponse | null>(null);
+
+  const loadRefs = async () => {
+    if (refsLoading || refsData) return;
+    setRefsLoading(true);
+    try {
+      setRefsData(await papersApi.getPaperReferences(params.id as string));
+    } catch {
+      setRefsError(true);
+    } finally {
+      setRefsLoading(false);
+    }
+  };
 
   const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -538,6 +556,50 @@ export default function PaperDetailPage() {
             {paper.features?.summary || paper.abstract}
           </p>
         </div>
+
+        {paper && (
+          <div className="mb-4 sm:mb-6 border border-gray-200 dark:border-gray-700 rounded-lg">
+            <button
+              onClick={() => { const next = !refsOpen; setRefsOpen(next); if (next) void loadRefs(); }}
+              className="w-full flex items-center justify-between px-3 sm:px-4 py-2.5 text-left"
+            >
+              <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
+                {t('pd.refsSection')}{refsData ? ` (${refsData.total})` : ''}
+              </span>
+              <span className="text-xs text-primary-600 dark:text-primary-400 shrink-0 ml-2">
+                {refsOpen ? t('pd.refsHide') : t('pd.refsShow')}
+              </span>
+            </button>
+            {refsOpen && (
+              <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-t border-gray-100 dark:border-gray-800 pt-3">
+                {refsLoading && <div className="text-sm text-gray-400 py-2"><Loader2 className="w-4 h-4 animate-spin inline mr-1" />…</div>}
+                {!refsLoading && refsError && <div className="text-sm text-red-500 py-2">{t('pd.refsLoadFailed')}</div>}
+                {!refsLoading && refsData && refsData.total === 0 && (
+                  <div className="text-xs sm:text-sm text-gray-400 py-2">
+                    {t('pd.refsEmpty')}
+                    <span className="block text-[11px] text-gray-300 dark:text-gray-500 mt-0.5">{t('pd.refsEmptyHint')}</span>
+                  </div>
+                )}
+                {!refsLoading && refsData && refsData.total > 0 && (
+                  <ol className="space-y-1.5 max-h-96 overflow-y-auto">
+                    {refsData.references.map((ref) => (
+                      <li key={ref.ref_index} className="text-xs sm:text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                        <span className="text-gray-400 mr-1">[{ref.ref_index}]</span>
+                        {ref.ref_url ? (
+                          <a href={ref.ref_url} target="_blank" rel="noopener noreferrer" className="hover:text-primary-600 hover:underline break-all">
+                            {ref.raw_text}
+                          </a>
+                        ) : (
+                          <span className="break-all">{ref.raw_text}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="border-t pt-4 sm:pt-6">
           <div className="grid grid-cols-3 gap-2 sm:gap-4">

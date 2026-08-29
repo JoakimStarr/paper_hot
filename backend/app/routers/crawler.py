@@ -125,6 +125,7 @@ class CNKISearchRequest(BaseModel):
     max_pages: Optional[int] = None  # 最大翻页数，默认翻到最后一页
     detail_workers: int = 3          # 详情页并发抓取数
     show_browser: bool = False       # 是否显示浏览器窗口（无头模式遇验证码只能自动解，显示窗口可人工处理）
+    detail_refs: bool = False        # 详情入库后在同一详情页顺带抓参考文献（省二次导航）
 
 
 # 与 cnki_paper_captcha.py 的 CNKI_SEARCH_FIELDS 保持一致
@@ -214,7 +215,8 @@ def _parse_cnki_progress(line: str, prog: dict) -> dict:
 
 async def _run_cnki_search_background(keyword: str, search_field: str, years: Optional[str],
                                       max_pages: Optional[int], detail_workers: int,
-                                      show_browser: bool = False, resume: bool = False):
+                                      show_browser: bool = False, resume: bool = False,
+                                      detail_refs: bool = False):
     """以后端子进程方式复用 cnki_paper_captcha.py --search 检索模式抓取并入库。
 
     该脚本内置通过 app.crud 写入 paperpulse.db 并记录 CrawlLog（详见其 main / run_search），
@@ -241,6 +243,8 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
     ]
     if show_browser:
         cmd += ["--show-browser"]
+    if detail_refs:
+        cmd += ["--detail-refs"]
     if years:
         cmd += ["--years", years]
     if max_pages:
@@ -264,6 +268,7 @@ async def _run_cnki_search_background(keyword: str, search_field: str, years: Op
                     "max_pages": max_pages,
                     "detail_workers": detail_workers,
                     "show_browser": show_browser,
+                    "detail_refs": detail_refs,
                 }, ensure_ascii=False),
             ))
             await db.commit()
@@ -359,6 +364,7 @@ async def start_cnki_search(body: CNKISearchRequest, token: bool = Depends(verif
         max_pages=body.max_pages,
         detail_workers=body.detail_workers,
         show_browser=body.show_browser,
+        detail_refs=body.detail_refs,
         resume=resume,
     ))
     return {"status": "started", "keyword": keyword, "resumed": resume}
@@ -447,6 +453,196 @@ async def stop_cnki_search(token: bool = Depends(verify_token)):
     return {"status": "stopped"}
 
 
+# —— 参考文献爬取（task_type=references）：给定论文链接或标题，抓详情页参考文献列表 ——
+_refs_state = {
+    "running": False,
+    "paper_url": None,
+    "paper_title": None,
+    "started_at": None,
+    "finished_at": None,
+    "message": None,
+    "stopped_by_user": False,
+    "progress": None,
+    "last_log": [],
+}
+_refs_proc: Optional[asyncio.subprocess.Process] = None
+
+
+class ReferencesStartRequest(BaseModel):
+    paper_url: Optional[str] = None
+    paper_title: Optional[str] = None
+    max_items: Optional[int] = None
+    interval: Optional[float] = None
+
+
+async def _run_references_background(paper_url: Optional[str], paper_title: Optional[str],
+                                     max_items: Optional[int], interval: Optional[float] = None):
+    """参考文献爬取后台任务：spawn cnki_paper_captcha.py --ref-* 子进程并解析进度。"""
+    global _refs_proc
+    _refs_state["running"] = True
+    _refs_state["stopped_by_user"] = False
+    _refs_state["paper_url"] = paper_url
+    _refs_state["paper_title"] = paper_title
+    _refs_state["started_at"] = datetime.now(timezone.utc).isoformat()
+    _refs_state["finished_at"] = None
+    _refs_state["progress"] = _empty_cnki_progress()
+    _refs_state["last_log"] = []
+    _refs_state["message"] = "启动中…"
+
+    script = BASE_DIR.parent / "cnki_paper_captcha.py"
+    cmd = [sys.executable, str(script)]
+    if paper_url:
+        cmd += ["--ref-paper-url", paper_url]
+    else:
+        cmd += ["--ref-title", paper_title or ""]
+    if max_items:
+        cmd += ["--ref-max-items", str(max(int(max_items), 1))]
+    if interval and float(interval) >= 1:
+        cmd += ["--ref-interval", str(float(interval))]
+
+    # 建任务记录：任务面板展示 + 重跑参数（paper_url/paper_title/max_items/interval）
+    crawl_log_id: Optional[int] = None
+    try:
+        from app.schemas import CrawlLogCreate
+        async with AsyncSessionLocal() as db:
+            crawl_log = await CrawlLogCRUD.create_crawl_log(db, CrawlLogCreate(
+                journal_name=(paper_title or paper_url or "参考文献爬取")[:200],
+                crawl_start_time=datetime.now(),
+                task_type="references",
+                rerun_params=json.dumps({
+                    "paper_url": paper_url,
+                    "paper_title": paper_title,
+                    "max_items": max_items,
+                    "interval": interval,
+                }, ensure_ascii=False),
+            ))
+            await db.commit()
+            crawl_log_id = crawl_log.id
+    except Exception as e:
+        logger.warning(f"Failed to create references crawl_log: {e}")
+
+    prog = _empty_cnki_progress()
+    recent: deque[str] = deque(maxlen=_MAX_STATUS_LOG_LINES)
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(BASE_DIR.parent),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        _refs_proc = proc
+        tail = ""
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip()
+            if not line:
+                continue
+            if len(line) > 500:
+                line = line[:500] + "…"
+            recent.append(line)
+            tail = line
+            _parse_cnki_progress(line, prog)
+            # 参考文献模式日志解析：`参考文献 第 X 页获取 Y 条（新增 Z），累计 N 条`
+            m_page = re.search(r"参考文献\s*第\s*(\d+)\s*页", line)
+            if m_page:
+                prog["page"] = int(m_page.group(1))
+            m_total = re.search(r"累计\s*(\d+)\s*条", line)
+            if m_total:
+                prog["collected"] = int(m_total.group(1))
+            _refs_state["progress"] = dict(prog)
+            _refs_state["last_log"] = list(recent)
+        await proc.wait()
+
+        if _refs_state.get("stopped_by_user"):
+            _refs_state["message"] = "已停止"
+        elif proc.returncode == 0:
+            _refs_state["message"] = f"已完成。{tail}" if tail else "已完成。"
+        else:
+            _refs_state["message"] = f"脚本退出码 {proc.returncode}。尾部输出：{tail}" if tail else f"脚本退出码 {proc.returncode}。"
+    except Exception as e:
+        logger.error(f"References crawl subprocess failed: {e}")
+        _refs_state["message"] = f"启动失败：{e}"
+    finally:
+        _refs_proc = None
+        _refs_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _refs_state["running"] = False
+        if _refs_state.get("stopped_by_user"):
+            _refs_state["message"] = "已停止"
+            if _refs_state.get("progress"):
+                _refs_state["progress"]["phase"] = "stopped"
+        if crawl_log_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await CrawlLogCRUD.update_crawl_log(
+                        db, crawl_log_id,
+                        crawl_end_time=datetime.now(),
+                        papers_fetched=prog.get("collected") if prog else 0,
+                        papers_failed=prog.get("failed") if prog else 0,
+                        status=("stopped" if _refs_state.get("stopped_by_user")
+                                else ("completed" if proc and proc.returncode == 0 else "failed")),
+                        log_detail="\n".join(recent) if recent else None,
+                    )
+                    await db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update references crawl_log: {e}")
+
+
+@router.post("/crawl/references/start")
+async def start_references_crawl(body: ReferencesStartRequest, token: bool = Depends(verify_token)):
+    """触发参考文献爬取：给论文详情页链接直接抓，或给标题检索定位（默认取第一条结果）。"""
+    paper_url = (body.paper_url or "").strip() or None
+    paper_title = (body.paper_title or "").strip() or None
+    if not paper_url and not paper_title:
+        raise HTTPException(status_code=400, detail="paper_url 与 paper_title 至少填一个")
+    if paper_url and not paper_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="paper_url 需以 http(s):// 开头")
+    if _refs_state["running"]:
+        return {"status": "already_running", "paper_title": _refs_state["paper_title"]}
+    from app.main import spawn_background_task
+    spawn_background_task(_run_references_background(
+        paper_url=paper_url,
+        paper_title=paper_title,
+        max_items=body.max_items,
+        interval=body.interval,
+    ))
+    return {"status": "started"}
+
+
+@router.get("/crawl/references/status")
+async def references_crawl_status(token: bool = Depends(verify_token)):
+    """参考文献爬取任务状态。"""
+    return dict(_refs_state)
+
+
+@router.post("/crawl/references/stop")
+async def stop_references_crawl(token: bool = Depends(verify_token)):
+    """停止参考文献爬取（SIGTERM 进程组，超时 SIGKILL 兜底）。"""
+    proc = _refs_proc
+    if not proc or proc.returncode is not None:
+        raise HTTPException(status_code=400, detail="当前没有运行中的参考文献爬取任务")
+    _refs_state["stopped_by_user"] = True
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"停止失败：{e}")
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+    _refs_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+    _refs_state["running"] = False
+    _refs_state["message"] = "已停止"
+    if _refs_state.get("progress"):
+        _refs_state["progress"]["phase"] = "stopped"
+    return {"status": "stopped"}
+
+
 class CrawlRerunRequest(BaseModel):
     log_id: int
 
@@ -477,9 +673,26 @@ async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db
             max_pages=params.get("max_pages"),
             detail_workers=int(params.get("detail_workers") or 3),
             show_browser=bool(params.get("show_browser", False)),
+            detail_refs=bool(params.get("detail_refs", False)),
             resume=resume,
         ))
         return {"status": "started", "task_type": "keyword", "name": log.journal_name, "resumed": resume}
+    if ttype == "references":
+        if _refs_state["running"]:
+            raise HTTPException(status_code=400, detail="已有参考文献爬取任务在运行")
+        params: dict = {}
+        try:
+            params = json.loads(log.rerun_params or "{}")
+        except Exception:
+            params = {}
+        from app.main import spawn_background_task
+        spawn_background_task(_run_references_background(
+            paper_url=params.get("paper_url"),
+            paper_title=params.get("paper_title") or log.journal_name,
+            max_items=params.get("max_items"),
+            interval=params.get("interval"),
+        ))
+        return {"status": "started", "task_type": "references", "name": log.journal_name}
     # journal 类型：调度器按期刊重跑
     from app.main import scheduler
     try:

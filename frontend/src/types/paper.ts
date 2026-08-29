@@ -178,6 +178,7 @@ export interface CNKISearchRequest {
   max_pages?: number;
   detail_workers?: number;
   show_browser?: boolean;  // 显示浏览器窗口（无头模式验证码只能自动解；勾选后可人工处理）
+  detail_refs?: boolean;   // 详情入库后在同一详情页顺带抓参考文献（省二次导航）
 }
 
 export interface CNKISearchProgress {
@@ -204,6 +205,34 @@ export interface CNKISearchInfo {
   last_log?: string[];
   /** 断点摘要（.cache/search_checkpoint.json）：同关键词启动将自动从上次进度续跑 */
   checkpoint?: { keyword: string; phase: string; page: number; papers: number; saved_at?: string } | null;
+}
+
+/** 参考文献爬取任务状态 */
+export interface ReferencesCrawlInfo {
+  running: boolean;
+  paper_url: string | null;
+  paper_title: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  message: string | null;
+  stopped_by_user?: boolean;
+  progress?: CNKISearchProgress | null;
+  last_log?: string[];
+}
+
+/** 论文参考文献条目 */
+export interface PaperReferenceItem {
+  ref_index: number;
+  raw_text: string | null;
+  ref_url: string | null;
+}
+
+/** 论文参考文献响应 */
+export interface PaperReferencesResponse {
+  paper_id: string;
+  paper_url: string;
+  total: number;
+  references: PaperReferenceItem[];
 }
 
 export interface NetworkNode {

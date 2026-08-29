@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.config import settings
 from app.cache_util import ttl_cache
-from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD
+from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD, PaperReferenceCRUD
 from app.models import BatchReport, PinnedPaper, MAX_PINNED_PAPERS
 from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
@@ -176,6 +176,28 @@ async def get_paper(
         ],
         should_read_score=should_read_score
     )
+
+
+@router.get("/papers/{paper_id}/references")
+async def get_paper_references(paper_id: str, db: AsyncSession = Depends(get_db)):
+    """论文参考文献列表（paper_references 表，按 ref_index 排序；未抓取过返回空列表）。"""
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    refs = await PaperReferenceCRUD.get_paper_references(db, paper.url)
+    return {
+        "paper_id": paper_id,
+        "paper_url": paper.url,
+        "total": len(refs),
+        "references": [
+            {
+                "ref_index": r.ref_index,
+                "raw_text": r.raw_text,
+                "ref_url": r.ref_url,
+            }
+            for r in refs
+        ],
+    }
 
 
 @router.get("/filter-statistics")

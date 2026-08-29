@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Layout from '@/components/Layout';
 import { papersApi, ApiError } from '@/lib/api';
-import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo, Msg, ExportedSettings } from '@/types/paper';
+import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo, ReferencesCrawlInfo, Msg, ExportedSettings } from '@/types/paper';
 import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide-react';
 import { KeywordCrawlForm } from './CrawlerTab';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -71,7 +71,7 @@ export default function SystemPage() {
   const [kwStarting, setKwStarting] = useState(false);
   const [kwStopping, setKwStopping] = useState(false);
   const [rerunningLogId, setRerunningLogId] = useState<number | null>(null);
-  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', detail_workers: '3', show_browser: false });
+  const [kwForm, setKwForm] = useState<KeywordCrawlForm>({ keyword: '', search_field: '主题', years: '', max_pages: '', detail_workers: '3', show_browser: false, detail_refs: false });
   const kwPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /** 统一把异常转成结构化反馈 */
@@ -117,6 +117,64 @@ export default function SystemPage() {
 
   useEffect(() => () => { if (kwPollRef.current) { clearTimeout(kwPollRef.current); kwPollRef.current = null; } }, []);
 
+  // —— 参考文献爬取任务 ——
+  const [refsInfo, setRefsInfo] = useState<ReferencesCrawlInfo | null>(null);
+  const [refsStarting, setRefsStarting] = useState(false);
+  const [refsStopping, setRefsStopping] = useState(false);
+  const refsPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadRefsStatus = async (): Promise<ReferencesCrawlInfo | null> => {
+    try {
+      const info = await papersApi.getReferencesStatus();
+      setRefsInfo(info);
+      return info;
+    } catch { /* ignore */ return null; }
+  };
+
+  // 参考文献任务轮询：3s 一次直到结束（任务一般较短，不做降频）
+  const startRefsStatusPoll = () => {
+    if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; }
+    const tick = async () => {
+      const info = await papersApi.getReferencesStatus().catch(() => null);
+      if (info) setRefsInfo(info);
+      if (!info || !info.running) {
+        refsPollRef.current = null;
+        setRefsStarting(false);
+        return;
+      }
+      refsPollRef.current = setTimeout(tick, 3000);
+    };
+    refsPollRef.current = setTimeout(tick, 3000);
+  };
+
+  useEffect(() => () => { if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; } }, []);
+
+  const handleStartReferencesCrawl = async (opts: { paper_url?: string; paper_title?: string; max_items?: number; interval?: number }) => {
+    setRefsStarting(true);
+    setRefsInfo(null);
+    try {
+      await papersApi.startReferencesCrawl(opts);
+      setMessage(okMsg(t('sys.refsStarted')));
+      startRefsStatusPoll();
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.refsStartFailed')));
+      setRefsStarting(false);
+    }
+  };
+
+  const handleStopReferencesCrawl = async () => {
+    if (!refsInfo?.running) return;
+    setRefsStopping(true);
+    try {
+      await papersApi.stopReferencesCrawl();
+      setMessage(okMsg(t('sys.refsStopped')));
+      setRefsStopping(false);
+    } catch (error: unknown) {
+      setRefsStopping(false);
+      setMessage(errMsg(error, t('sys.refsStopFailed')));
+    }
+  };
+
   const handleStartKeywordCrawl = async () => {
     const keyword = kwForm.keyword.trim();
     if (!keyword) return;
@@ -129,6 +187,7 @@ export default function SystemPage() {
         max_pages: kwForm.max_pages ? Number(kwForm.max_pages) : undefined,
         detail_workers: kwForm.detail_workers ? Math.min(Math.max(1, Number(kwForm.detail_workers)), 12) : 3,
         show_browser: kwForm.show_browser,
+        detail_refs: kwForm.detail_refs,
       });
       setMessage(okMsg(t('sys.kwStarted')));
       startKwStatusPoll();
@@ -288,6 +347,8 @@ export default function SystemPage() {
     (async () => {
       const info = await loadKwStatus();
       if (info?.running) startKwStatusPoll();
+      const refs = await loadRefsStatus();
+      if (refs?.running) startRefsStatusPoll();
     })();
   }, []);
 
@@ -918,6 +979,11 @@ export default function SystemPage() {
             onPauseKeywordCrawl={handlePauseKeywordCrawl}
             onResumeKeywordCrawl={handleResumeKeywordCrawl}
             onStopKeywordCrawl={handleStopKeywordCrawl}
+            refsInfo={refsInfo}
+            refsStarting={refsStarting}
+            refsStopping={refsStopping}
+            onStartReferencesCrawl={handleStartReferencesCrawl}
+            onStopReferencesCrawl={handleStopReferencesCrawl}
           />
         );
       case 'data':
