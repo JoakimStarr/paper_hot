@@ -3426,14 +3426,31 @@ class ReferenceCrawler(KeywordSearchCrawler):
             await asyncio.sleep(2)
         box = self.page.locator(self.SEARCH_SELECTOR).first
         await box.wait_for(state='visible', timeout=60000)
-        await self.random_scroll()
-        await box.click()
-        await box.fill(self.paper_title)
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-        await box.press('Enter')
-        await self._ensure_no_captcha(timeout=180)
-        if await self._search_navigation_failed(timeout=20):
-            print(f"{tag} 检索被风控拦截，退出")
+        # 检索触发可能被风控以 403 拦截（页面落到 chrome-error）：退避重试，
+        # 策略与关键词检索流程一致（重试间回首页、过全局导航闸）
+        nav_ok = False
+        for attempt in range(1, SEARCH_MAX_RETRIES + 1):
+            await self.random_scroll()
+            await box.click()
+            await box.fill(self.paper_title)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await box.press('Enter')
+            await self._ensure_no_captcha(timeout=180)
+            if not await self._search_navigation_failed(timeout=20):
+                nav_ok = True
+                break
+            print(f"{tag} 检索被风控拦截（第 {attempt}/{SEARCH_MAX_RETRIES} 次），退避后重试...")
+            await asyncio.sleep(random.uniform(5, 9))
+            try:
+                await _pacing_wait()
+                await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+                box = self.page.locator(self.SEARCH_SELECTOR).first
+                await box.wait_for(state='visible', timeout=60000)
+            except Exception as e:
+                print(f"{tag} 回首页准备重试失败: {e}")
+                return None
+        if not nav_ok:
+            print(f"{tag} 检索连续 {SEARCH_MAX_RETRIES} 次被风控拦截，退出")
             return None
 
         # 事件驱动等检索结果表渲染（站点反应快慢不一，固定 sleep 会拿到空结果）
