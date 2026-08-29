@@ -15,6 +15,7 @@ import { Loader2, X, Sparkles, FileDown, Clock, ArrowUp } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { usePreferences } from '@/lib/usePreferences';
 import { usePins } from '@/lib/usePins';
 import { useToast } from '@/components/Toast';
@@ -88,6 +89,7 @@ export default function HomePage() {
 
 function HomePageInner() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.home'));
   const { toast } = useToast();
   const searchParams = useSearchParams();
 

@@ -2,8 +2,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLanguage } from '@/contexts/LanguageContext';
 import Layout from '@/components/Layout';
 import { useToast } from '@/components/Toast';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { workbenchApi } from '@/lib/api';
 import { reportPageContext } from '@/lib/assistantBus';
 import type { TopicProject } from '@/types/paper';
@@ -54,8 +56,10 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
 export default function ProjectDetail({ projectId, initialStep }: { projectId: number; initialStep?: number }) {
   const { toast } = useToast();
   const router = useRouter();
+  const { t } = useLanguage();
 
   const [project, setProject] = useState<TopicProject | null>(null);
+  usePageTitle(project ? `${project.title} · ${t('nav.topics')}` : t('nav.topics'));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // 深链：?step= 参数优先显示指定步骤；未传时跟随后端 current_step（点击步骤条后以本地为准）

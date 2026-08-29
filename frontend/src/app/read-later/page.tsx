@@ -6,6 +6,7 @@ import PaperCard from '@/components/PaperCard';
 import { Clock, Loader2, Check, X } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { useToast } from '@/components/Toast';
 import { personalApi } from '@/lib/api';
 import { downloadTextFile } from '@/lib/utils';
@@ -15,6 +16,7 @@ import type { PaperCard as PaperCardType } from '@/types/paper';
 /** 稍后读页面：队列完整视图（工作台仅展示入口与最近队列）。 */
 export default function ReadLaterPage() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.readLater'));
   const { toast } = useToast();
   const [papers, setPapers] = useState<PaperCardType[]>([]);
   const [loading, setLoading] = useState(true);

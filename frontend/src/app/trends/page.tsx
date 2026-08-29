@@ -8,6 +8,7 @@ import { papersApi, topicsApi, getLastModel, rememberModel, streamTrendChat, Api
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 
 // 重组件按需加载：recharts(雷达/折线) 与 react-markdown 栈各成独立懒 chunk，首屏不阻塞
 const TrendChart = dynamic(() => import('@/components/TrendChart'), {
@@ -61,6 +62,7 @@ const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
 
 export default function TrendsPage() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.trends'));
   const router = useRouter();
   const [topics, setTopics] = useState<TrendingTopic[]>([]);
   const [loading, setLoading] = useState(true);

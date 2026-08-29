@@ -1,5 +1,7 @@
 'use client';
 
+import { usePageTitle } from '@/lib/usePageTitle';
+
 import React, { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -9,6 +11,7 @@ import ProjectDetail from './ProjectDetail';
 
 // 研究工作台：项目列表（默认）+ 项目详情（?project={id}，&step=1..5 深链）
 export default function TopicsPage() {
+  usePageTitle('选题中心');
   return (
     <Suspense fallback={
       <Layout>

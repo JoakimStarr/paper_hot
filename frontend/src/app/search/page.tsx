@@ -11,6 +11,7 @@ import SkeletonCard from '@/components/SkeletonCard';
 import { Loader2, Search, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { usePapersPage } from '@/lib/usePapersPage';
 import { usePreferences } from '@/lib/usePreferences';
 
@@ -30,6 +31,7 @@ export default function SearchPage() {
 
 function SearchPageInner() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.search'));
   const searchParams = useSearchParams();
   const router = useRouter();
 

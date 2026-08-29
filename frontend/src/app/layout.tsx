@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import ToastProvider from '@/components/Toast';
 
 export const metadata: Metadata = {
-  title: 'PaperPulse - Discover Trending Research Papers',
+  title: 'PaperPulse',
   description: 'A platform to discover and understand trending research papers',
 };
 

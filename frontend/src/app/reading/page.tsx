@@ -6,11 +6,13 @@ import PaperCard from '@/components/PaperCard';
 import { History, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { personalApi } from '@/lib/api';
 import { PaperCard as PaperCardType } from '@/types/paper';
 
 export default function ReadingHistoryPage() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.reading'));
   const [papers, setPapers] = useState<PaperCardType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
