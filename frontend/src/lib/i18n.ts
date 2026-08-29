@@ -285,7 +285,7 @@ export const translations = {
       // —— 参考文献爬取 ——
       refsTitle: '参考文献爬取',
       refsDesc: '粘贴论文详情页链接，或输入论文标题（检索后默认取第一条结果，候选会记录在日志中），抓取其参考文献列表条目；同论文重复抓取会覆盖旧数据。',
-      refsUrlLabel: '论文详情页链接（可留空用标题检索）',
+      refsUrlLabel: '论文详情页链接（每行一个可批量，可留空用标题检索）',
       refsTitleLabel: '论文标题（链接与标题二选一，都填优先链接）',
       refsTitlePlaceholder: '数字普惠金融对县域经济的影响研究',
       refsMaxLabel: '条数上限',
@@ -301,6 +301,14 @@ export const translations = {
       refsCollected: '累计条目',
       detailRefsToggle: '抓详情时顺带抓参考文献',
       detailRefsHint: '开启后，关键词/期刊爬取的详情阶段会在同一详情页顺带抓参考文献（省二次导航，建议详情并发 ≤ 2）',
+      detailRefsWorkersHint: '顺带抓参考文献时详情并发建议 ≤ 2，已自动调整',
+      refsBadge: '参考文献',
+      refsUnit: '条目',
+      refsBatchPlaceholder: 'https://kns.cnki.net/kcms2/article/abstract?...\n（每行一个链接，可批量抓取）',
+      refsUrlInvalid: '链接需以 http(s):// 开头（每行一个）',
+      refsIntervalInvalid: '篇间隔需在 1~60 秒之间',
+      kwRefsDone: '参考文献',
+      kwRefsFail: '参考文献失败',
 
       // —— 本次优化新增 ——
       agentTitle: 'AI 追问数据库检索（Agent 工具）',
@@ -514,6 +522,8 @@ export const translations = {
       refsLoadFailed: '参考文献加载失败',
       refsHide: '收起',
       refsShow: '展开',
+      citedBy: '被库内论文引用',
+      citedByCount: '被库内 {n} 篇引用',
     },
 
     // 通用
@@ -1067,7 +1077,7 @@ export const translations = {
       // —— Reference crawler ——
       refsTitle: 'Reference Crawler',
       refsDesc: 'Paste a paper detail page link, or enter a paper title (search locates it, first match by default; candidates are logged), to crawl its reference list. Re-crawling the same paper overwrites previous data.',
-      refsUrlLabel: 'Paper detail page link (optional; fall back to title search)',
+      refsUrlLabel: 'Paper detail page links (one per line for batch; optional, fall back to title search)',
       refsTitleLabel: 'Paper title (link and title are mutually exclusive; link takes precedence)',
       refsTitlePlaceholder: 'The impact of digital inclusive finance on county economies',
       refsMaxLabel: 'Max items',
@@ -1083,6 +1093,14 @@ export const translations = {
       refsCollected: 'Collected',
       detailRefsToggle: 'Fetch references while crawling details',
       detailRefsHint: 'When enabled, the detail phase of keyword/journal crawls also fetches references on the same page (fewer navigations; keep detail workers ≤ 2)',
+      detailRefsWorkersHint: 'Detail workers ≤ 2 recommended with reference fetching; auto-adjusted',
+      refsBadge: 'References',
+      refsUnit: 'items',
+      refsBatchPlaceholder: 'https://kns.cnki.net/kcms2/article/abstract?...\n(one link per line for batch crawling)',
+      refsUrlInvalid: 'Each line must start with http(s)://',
+      refsIntervalInvalid: 'Interval must be between 1 and 60 seconds',
+      kwRefsDone: 'Refs added',
+      kwRefsFail: 'Refs failed',
 
       // —— New in this round of optimization ——
       agentTitle: 'AI Chat DB Retrieval (Agent Tools)',
@@ -1296,6 +1314,8 @@ export const translations = {
       refsLoadFailed: 'Failed to load references',
       refsHide: 'Collapse',
       refsShow: 'Expand',
+      citedBy: 'Cited in library',
+      citedByCount: '{n} in-library citations',
     },
 
     // General

@@ -1193,6 +1193,28 @@ class PaperReferenceCRUD:
         )
         return list(result.scalars().all())
 
+    @staticmethod
+    async def find_citing_papers(db: AsyncSession, paper_title: str, paper_url: str) -> List[dict]:
+        """反向查询：库内哪些论文的参考文献列表引用了该论文。
+
+        匹配规则：ref_url 精确相等，或条目原文包含论文标题（标题过短易误伤，需 ≥8 字）；
+        排除论文自身，返回库内论文 {id, title} 列表。
+        """
+        conds = [PaperReference.ref_url == paper_url]
+        title = (paper_title or "").strip()
+        if len(title) >= 8:
+            conds.append(PaperReference.raw_text.contains(title))
+        rows = (await db.execute(
+            select(PaperReference.paper_url)
+            .where(or_(*conds), PaperReference.paper_url != paper_url)
+            .distinct()
+        )).all()
+        urls = list(dict.fromkeys(r[0] for r in rows))
+        if not urls:
+            return []
+        res = await db.execute(select(Paper.id, Paper.title).where(Paper.url.in_(urls)))
+        return [{"id": r[0], "title": r[1]} for r in res.all()]
+
 
 class CrawlLogCRUD:
     @staticmethod

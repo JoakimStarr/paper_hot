@@ -180,11 +180,28 @@ async def get_paper(
 
 @router.get("/papers/{paper_id}/references")
 async def get_paper_references(paper_id: str, db: AsyncSession = Depends(get_db)):
-    """论文参考文献列表（paper_references 表，按 ref_index 排序；未抓取过返回空列表）。"""
+    """论文参考文献列表（paper_references 表，按 ref_index 排序；未抓取过返回空列表）。
+
+    每条附带 matched_paper_id/matched_paper_title：ref_url 精确命中库内论文时回填，
+    前端据此把条目渲染为站内链接（引用图谱的入口）。
+    """
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
     refs = await PaperReferenceCRUD.get_paper_references(db, paper.url)
+
+    # ref_url -> 库内论文 精确匹配（一条 IN 查询，避免逐条 LIKE）
+    url_to_paper: dict = {}
+    ref_urls = [r.ref_url for r in refs if r.ref_url]
+    if ref_urls:
+        from sqlalchemy import select as sa_select
+        from app.models import Paper as PaperModel
+        rows = (await db.execute(
+            sa_select(PaperModel.url, PaperModel.id, PaperModel.title)
+            .where(PaperModel.url.in_(ref_urls))
+        )).fetchall()
+        url_to_paper = {r[0]: {"matched_paper_id": r[1], "matched_paper_title": r[2]} for r in rows}
+
     return {
         "paper_id": paper_id,
         "paper_url": paper.url,
@@ -194,10 +211,21 @@ async def get_paper_references(paper_id: str, db: AsyncSession = Depends(get_db)
                 "ref_index": r.ref_index,
                 "raw_text": r.raw_text,
                 "ref_url": r.ref_url,
+                **(url_to_paper.get(r.ref_url) or {"matched_paper_id": None, "matched_paper_title": None}),
             }
             for r in refs
         ],
     }
+
+
+@router.get("/papers/{paper_id}/cited-by")
+async def get_paper_cited_by(paper_id: str, db: AsyncSession = Depends(get_db)):
+    """被引查询：库内哪些论文的参考文献列表引用了该论文（ref_url 精确 + 标题包含匹配）。"""
+    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    citing = await PaperReferenceCRUD.find_citing_papers(db, paper.title, paper.url)
+    return {"paper_id": paper_id, "total": len(citing), "citing_papers": citing}
 
 
 @router.get("/filter-statistics")

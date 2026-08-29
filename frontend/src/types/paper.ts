@@ -192,6 +192,9 @@ export interface CNKISearchProgress {
   filtered: number;
   verify_failed: number;
   failed: number;
+  /** --detail-refs 顺带抓取的参考文献：入库条目数 / 失败篇数 */
+  refs_ok?: number;
+  refs_failed?: number;
 }
 
 export interface CNKISearchInfo {
@@ -233,6 +236,13 @@ export interface PaperReferencesResponse {
   paper_url: string;
   total: number;
   references: PaperReferenceItem[];
+}
+
+/** 被引查询响应：库内哪些论文的参考文献引用了该论文 */
+export interface PaperCitedByResponse {
+  paper_id: string;
+  total: number;
+  citing_papers: Array<{ id: string; title: string }>;
 }
 
 export interface NetworkNode {

@@ -5,7 +5,7 @@ import Layout from '@/components/Layout';
 import { papersApi, ApiError } from '@/lib/api';
 import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo, ReferencesCrawlInfo, Msg, ExportedSettings } from '@/types/paper';
 import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide-react';
-import { KeywordCrawlForm } from './CrawlerTab';
+import { KeywordCrawlForm, ReferencesCrawlForm } from './CrawlerTab';
 import { useLanguage } from '@/contexts/LanguageContext';
 import OverviewTab from './OverviewTab';
 import CrawlerTab from './CrawlerTab';
@@ -121,6 +121,8 @@ export default function SystemPage() {
   const [refsInfo, setRefsInfo] = useState<ReferencesCrawlInfo | null>(null);
   const [refsStarting, setRefsStarting] = useState(false);
   const [refsStopping, setRefsStopping] = useState(false);
+  // 表单在 page 层：切页签不丢失输入
+  const [refsForm, setRefsForm] = useState<ReferencesCrawlForm>({ url: '', title: '', maxItems: '', interval: '' });
   const refsPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadRefsStatus = async (): Promise<ReferencesCrawlInfo | null> => {
@@ -131,10 +133,12 @@ export default function SystemPage() {
     } catch { /* ignore */ return null; }
   };
 
-  // 参考文献任务轮询：3s 一次直到结束（任务一般较短，不做降频）
+  // 参考文献任务轮询：3s 一次，100 次（约 5 分钟）后降频到 30s（批量任务可能持续很久），约 1 小时后停止
   const startRefsStatusPoll = () => {
     if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; }
+    let refsAttempts = 0;
     const tick = async () => {
+      refsAttempts += 1;
       const info = await papersApi.getReferencesStatus().catch(() => null);
       if (info) setRefsInfo(info);
       if (!info || !info.running) {
@@ -142,14 +146,21 @@ export default function SystemPage() {
         setRefsStarting(false);
         return;
       }
-      refsPollRef.current = setTimeout(tick, 3000);
+      if (refsAttempts > 600) {
+        refsPollRef.current = null;
+        setRefsStarting(false);
+        setMessage({ ok: true, text: t('sys.kwPollTimeout') });
+        return;
+      }
+      const delay = refsAttempts <= 100 ? 3000 : 30000;
+      refsPollRef.current = setTimeout(tick, delay);
     };
     refsPollRef.current = setTimeout(tick, 3000);
   };
 
   useEffect(() => () => { if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; } }, []);
 
-  const handleStartReferencesCrawl = async (opts: { paper_url?: string; paper_title?: string; max_items?: number; interval?: number }) => {
+  const handleStartReferencesCrawl = async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }) => {
     setRefsStarting(true);
     setRefsInfo(null);
     try {
@@ -264,6 +275,7 @@ export default function SystemPage() {
         max_pages: raw.max_pages != null ? String(raw.max_pages) : '',
         detail_workers: raw.detail_workers != null ? String(raw.detail_workers) : '3',
         show_browser: !!raw.show_browser,
+        detail_refs: !!raw.detail_refs,
       };
     } catch { /* 旧记录无参数则保留当前表单 */ }
     setKwForm(prev => ({
@@ -982,6 +994,8 @@ export default function SystemPage() {
             refsInfo={refsInfo}
             refsStarting={refsStarting}
             refsStopping={refsStopping}
+            refsForm={refsForm}
+            setRefsForm={setRefsForm}
             onStartReferencesCrawl={handleStartReferencesCrawl}
             onStopReferencesCrawl={handleStopReferencesCrawl}
           />

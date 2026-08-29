@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, PaperReferencesResponse, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate } from '@/types/paper';
+import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, PaperReferencesResponse, PaperCitedByResponse, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate, MethodPlaybookEntry } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
@@ -272,7 +272,7 @@ export const papersApi = {
   stopCNKISearch: async (): Promise<{ status: string }> =>
     request('/crawl/cnki/search/stop', { method: 'POST' }),
 
-  startReferencesCrawl: async (opts: { paper_url?: string; paper_title?: string; max_items?: number; interval?: number }): Promise<{ status: string }> =>
+  startReferencesCrawl: async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }): Promise<{ status: string }> =>
     request('/crawl/references/start', { method: 'POST', body: opts }),
   getReferencesStatus: async (): Promise<ReferencesCrawlInfo> =>
     request('/crawl/references/status'),
@@ -281,6 +281,9 @@ export const papersApi = {
   /** 论文参考文献列表（未抓取过返回空列表）。 */
   getPaperReferences: async (paperId: string): Promise<PaperReferencesResponse> =>
     request(`/papers/${paperId}/references`),
+  /** 被引查询：库内哪些论文的参考文献引用了该论文。 */
+  getPaperCitedBy: async (paperId: string): Promise<PaperCitedByResponse> =>
+    request(`/papers/${paperId}/cited-by`),
   sendFeedback: async (body: { surface: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
     request('/ai/feedback', { method: 'POST', body }),
 

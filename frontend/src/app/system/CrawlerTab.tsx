@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { CrawlLog, SchedulerJob, CNKISearchInfo, ReferencesCrawlInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
+import TaskStatusPanel from './TaskStatusPanel';
 
 export interface KeywordCrawlForm {
   keyword: string;
@@ -16,6 +17,14 @@ export interface KeywordCrawlForm {
   detail_workers: string;
   show_browser: boolean;
   detail_refs: boolean;
+}
+
+export interface ReferencesCrawlForm {
+  /** 链接 textarea：每行一个详情页链接，多行走批量模式 */
+  url: string;
+  title: string;
+  maxItems: string;
+  interval: string;
 }
 
 // CNKI 检索字段全集（value 即知网站点字段名，后端/爬虫按此匹配，与 cnki_paper_captcha.py CNKI_SEARCH_FIELDS 保持一致）
@@ -66,7 +75,9 @@ interface CrawlerTabProps {
   refsInfo: ReferencesCrawlInfo | null;
   refsStarting: boolean;
   refsStopping: boolean;
-  onStartReferencesCrawl: (opts: { paper_url?: string; paper_title?: string; max_items?: number; interval?: number }) => void;
+  refsForm: ReferencesCrawlForm;
+  setRefsForm: (form: ReferencesCrawlForm) => void;
+  onStartReferencesCrawl: (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }) => void;
   onStopReferencesCrawl: () => void;
 }
 
@@ -98,17 +109,19 @@ export default function CrawlerTab({
   refsInfo,
   refsStarting,
   refsStopping,
+  refsForm,
+  setRefsForm,
   onStartReferencesCrawl,
   onStopReferencesCrawl,
 }: CrawlerTabProps) {
   const { t } = useLanguage();
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
-  // 参考文献表单：链接与标题二选一（都填优先链接），条数上限/篇间隔可选
-  const [refUrl, setRefUrl] = useState('');
-  const [refTitle, setRefTitle] = useState('');
-  const [refMaxItems, setRefMaxItems] = useState('');
-  const [refInterval, setRefInterval] = useState('');
-  const refCanStart = !refsStarting && !refsInfo?.running && (refUrl.trim().length > 0 || refTitle.trim().length > 0);
+  // 参考文献表单校验：链接每行一个、需 http(s):// 前缀；篇间隔 1~60 秒
+  const refUrlLines = refsForm.url.split('\n').map(s => s.trim()).filter(Boolean);
+  const refUrlInvalid = refUrlLines.some(u => !/^https?:\/\//i.test(u));
+  const refIntervalNum = refsForm.interval.trim() !== '' ? Number(refsForm.interval) : null;
+  const refIntervalInvalid = refIntervalNum !== null && (!Number.isFinite(refIntervalNum) || refIntervalNum < 1 || refIntervalNum > 60);
+  const refCanStart = !refsStarting && !refsInfo?.running && (refUrlLines.length > 0 || refsForm.title.trim().length > 0) && !refUrlInvalid && !refIntervalInvalid;
 
   const phaseText = (phase?: string) => {
     const map: Record<string, string> = {
@@ -284,13 +297,21 @@ export default function CrawlerTab({
               <input
                 type="checkbox"
                 checked={kwForm.detail_refs}
-                onChange={e => setKwForm({ ...kwForm, detail_refs: e.target.checked })}
+                onChange={e => {
+                  const checked = e.target.checked;
+                  // 顺带抓参考文献时每个详情 tab 都可能翻页，自动把并发压到建议值 ≤ 2
+                  const autoWorkers = checked && Number(kwForm.detail_workers) > 2 ? '2' : kwForm.detail_workers;
+                  setKwForm({ ...kwForm, detail_refs: checked, detail_workers: autoWorkers });
+                }}
                 disabled={kwStarting || !!kwInfo?.running}
                 className="mt-0.5 w-4 h-4 accent-blue-600 disabled:opacity-50"
               />
               <span>
                 {t('sys.detailRefsToggle')}
                 <span className="block text-[11px] text-gray-400 dark:text-gray-500">{t('sys.detailRefsHint')}</span>
+                {kwForm.detail_refs && Number(kwForm.detail_workers) > 2 && (
+                  <span className="block text-[11px] text-amber-600 dark:text-amber-400">{t('sys.detailRefsWorkersHint')}</span>
+                )}
               </span>
             </label>
             <button
@@ -304,60 +325,48 @@ export default function CrawlerTab({
               {kwStarting || kwInfo?.running ? t('sys.kwRunning') : (resumable ? t('sys.kwResumeRun') : t('sys.kwRun'))}
             </button>
             {kwInfo && (kwInfo.running || kwInfo.keyword || kwInfo.message) && (
-              <div className="mt-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-gray-700 dark:text-gray-200 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">{t('sys.kwStatus')}:</span>
-                  <span className={`inline-flex items-center gap-1 font-medium ${
-                    kwInfo.running
-                      ? (kwInfo.paused ? 'text-amber-600' : 'text-blue-600')
-                      : (kwInfo.progress && (kwInfo.progress.phase === 'done' || kwInfo.progress.phase === 'stopped')
-                          ? 'text-gray-600 dark:text-gray-300'
-                          : 'text-green-600')
-                  }`}>
-                    {kwInfo.running && !kwInfo.paused && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {kwInfo.running
-                      ? (kwInfo.paused ? t('sys.kwPausedBadge') : t('sys.kwRunningBadge'))
-                      : (kwInfo.progress && (kwInfo.progress.phase === 'done' || kwInfo.progress.phase === 'stopped')
-                          ? phaseText(kwInfo.progress.phase)
-                          : t('sys.simIdle'))}
-                  </span>
-                  {kwInfo.running && (
-                    <span className="flex items-center gap-1 ml-auto">
-                      {kwInfo.paused ? (
-                        <button
-                          onClick={onResumeKeywordCrawl}
-                          disabled={kwStopping}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
-                        >
-                          <Play className="w-3 h-3" />
-                          {t('sys.kwResume')}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={onPauseKeywordCrawl}
-                          disabled={kwStopping}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-50 transition-colors"
-                        >
-                          <Pause className="w-3 h-3" />
-                          {t('sys.kwPause')}
-                        </button>
-                      )}
+              <TaskStatusPanel
+                tone="blue"
+                running={!!kwInfo.running}
+                runningText={kwInfo.paused ? t('sys.kwPausedBadge') : t('sys.kwRunningBadge')}
+                idleText={kwInfo.progress && (kwInfo.progress.phase === 'done' || kwInfo.progress.phase === 'stopped')
+                  ? phaseText(kwInfo.progress.phase)
+                  : t('sys.simIdle')}
+                statusLabel={t('sys.kwStatus')}
+                title={kwInfo.keyword}
+                actions={kwInfo.running ? (
+                  <>
+                    {kwInfo.paused ? (
                       <button
-                        onClick={onStopKeywordCrawl}
+                        onClick={onResumeKeywordCrawl}
                         disabled={kwStopping}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
-                        title={t('sys.kwStop')}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
                       >
-                        {kwStopping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
-                        {t('sys.kwStop')}
+                        <Play className="w-3 h-3" />
+                        {t('sys.kwResume')}
                       </button>
-                    </span>
-                  )}
-                </div>
-                {kwInfo.keyword && (
-                  <div><span className="text-gray-500 dark:text-gray-400">{t('sys.kwKeywordHint')}:</span> <span className="font-medium">{kwInfo.keyword}</span></div>
-                )}
-                {kwInfo.progress && (kwInfo.progress.phase !== 'starting' || kwInfo.progress.page > 0 || kwInfo.progress.collected > 0 || kwInfo.progress.done > 0) && (
+                    ) : (
+                      <button
+                        onClick={onPauseKeywordCrawl}
+                        disabled={kwStopping}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                      >
+                        <Pause className="w-3 h-3" />
+                        {t('sys.kwPause')}
+                      </button>
+                    )}
+                    <button
+                      onClick={onStopKeywordCrawl}
+                      disabled={kwStopping}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+                      title={t('sys.kwStop')}
+                    >
+                      {kwStopping ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                      {t('sys.kwStop')}
+                    </button>
+                  </>
+                ) : null}
+                children={kwInfo.progress && (kwInfo.progress.phase !== 'starting' || kwInfo.progress.page > 0 || kwInfo.progress.collected > 0 || kwInfo.progress.done > 0) ? (
                   <div className="pt-2 mt-1 border-t border-blue-100 dark:border-blue-800/40 space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500 dark:text-gray-400">
@@ -373,26 +382,22 @@ export default function CrawlerTab({
                         />
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                      {kwInfo.progress.page > 0 && <span>{t('sys.kwPage')}: {kwInfo.progress.page}</span>}
-                      {kwInfo.progress.collected > 0 && <span>{t('sys.kwCollected')}: {kwInfo.progress.collected}</span>}
-                      {kwInfo.progress.ok > 0 && <span className="text-green-600 dark:text-green-400">{t('sys.kwOk')}: {kwInfo.progress.ok}</span>}
-                      {kwInfo.progress.already_exists > 0 && <span>{t('sys.kwAlreadyExists')}: {kwInfo.progress.already_exists}</span>}
-                      {kwInfo.progress.filtered > 0 && <span>{t('sys.kwFiltered')}: {kwInfo.progress.filtered}</span>}
-                      {kwInfo.progress.failed > 0 && <span className="text-red-500">{t('sys.kwFailed')}: {kwInfo.progress.failed}</span>}
-                    </div>
                   </div>
-                )}
-                {kwInfo.last_log && kwInfo.last_log.length > 0 && (
-                  <div className="pt-1">
-                    <div className="text-[11px] text-gray-400 mb-1">{t('sys.kwRecentLog')}</div>
-                    <div className="max-h-24 overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-900/60 p-2 text-[10px] leading-4 text-gray-500 dark:text-gray-400 font-mono break-all">
-                      {kwInfo.last_log.slice(-6).map((l, i) => <div key={i}>{l}</div>)}
-                    </div>
-                  </div>
-                )}
-                {kwInfo.message && <div className="text-gray-600 dark:text-gray-300 break-words">{kwInfo.message}</div>}
-              </div>
+                ) : null}
+                metrics={[
+                  ...(kwInfo.progress && kwInfo.progress.page > 0 ? [{ label: t('sys.kwPage'), value: kwInfo.progress.page }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.collected > 0 ? [{ label: t('sys.kwCollected'), value: kwInfo.progress.collected }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.ok > 0 ? [{ label: t('sys.kwOk'), value: kwInfo.progress.ok, tone: 'good' as const }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.refs_ok ? [{ label: t('sys.kwRefsDone'), value: kwInfo.progress.refs_ok, tone: 'accent' as const }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.refs_failed ? [{ label: t('sys.kwRefsFail'), value: kwInfo.progress.refs_failed, tone: 'bad' as const }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.already_exists > 0 ? [{ label: t('sys.kwAlreadyExists'), value: kwInfo.progress.already_exists }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.filtered > 0 ? [{ label: t('sys.kwFiltered'), value: kwInfo.progress.filtered }] : []),
+                  ...(kwInfo.progress && kwInfo.progress.failed > 0 ? [{ label: t('sys.kwFailed'), value: kwInfo.progress.failed, tone: 'bad' as const }] : []),
+                ]}
+                log={kwInfo.last_log}
+                logTitle={t('sys.kwRecentLog')}
+                message={kwInfo.message}
+              />
             )}
           </div>
         </div>
@@ -408,20 +413,24 @@ export default function CrawlerTab({
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsUrlLabel')}</label>
-              <input
-                value={refUrl}
-                onChange={e => setRefUrl(e.target.value)}
-                placeholder="https://kns.cnki.net/kcms2/article/abstract?..."
+              <textarea
+                value={refsForm.url}
+                onChange={e => setRefsForm({ ...refsForm, url: e.target.value })}
+                rows={3}
+                placeholder={t('sys.refsBatchPlaceholder')}
                 disabled={refsStarting || !!refsInfo?.running}
-                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
+                className="w-full px-3 py-2 text-xs font-mono border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50 break-all"
               />
+              {refUrlInvalid && (
+                <p className="mt-1 text-[11px] text-red-500">{t('sys.refsUrlInvalid')}</p>
+              )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsTitleLabel')}</label>
                 <input
-                  value={refTitle}
-                  onChange={e => setRefTitle(e.target.value)}
+                  value={refsForm.title}
+                  onChange={e => setRefsForm({ ...refsForm, title: e.target.value })}
                   placeholder={t('sys.refsTitlePlaceholder')}
                   disabled={refsStarting || !!refsInfo?.running}
                   className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
@@ -431,8 +440,8 @@ export default function CrawlerTab({
                 <div>
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsMaxLabel')}</label>
                   <input
-                    value={refMaxItems}
-                    onChange={e => setRefMaxItems(e.target.value.replace(/\D/g, ''))}
+                    value={refsForm.maxItems}
+                    onChange={e => setRefsForm({ ...refsForm, maxItems: e.target.value.replace(/\D/g, '') })}
                     type="text"
                     inputMode="numeric"
                     placeholder="—"
@@ -443,24 +452,28 @@ export default function CrawlerTab({
                 <div>
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">{t('sys.refsIntervalLabel')}</label>
                   <input
-                    value={refInterval}
-                    onChange={e => setRefInterval(e.target.value.replace(/[^\d.]/g, ''))}
+                    value={refsForm.interval}
+                    onChange={e => setRefsForm({ ...refsForm, interval: e.target.value.replace(/[^\d.]/g, '') })}
                     type="text"
                     inputMode="decimal"
                     placeholder="6"
                     disabled={refsStarting || !!refsInfo?.running}
                     className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
                   />
+                  {refIntervalInvalid && (
+                    <p className="mt-1 text-[11px] text-red-500">{t('sys.refsIntervalInvalid')}</p>
+                  )}
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onStartReferencesCrawl({
-                  paper_url: refUrl.trim() || undefined,
-                  paper_title: refUrl.trim() ? undefined : refTitle.trim(),
-                  max_items: refMaxItems ? Number(refMaxItems) : undefined,
-                  interval: refInterval ? Number(refInterval) : undefined,
+                  paper_url: refUrlLines.length === 1 ? refUrlLines[0] : undefined,
+                  urls: refUrlLines.length > 1 ? refUrlLines : undefined,
+                  paper_title: refUrlLines.length ? undefined : refsForm.title.trim(),
+                  max_items: refsForm.maxItems ? Number(refsForm.maxItems) : undefined,
+                  interval: refsForm.interval.trim() ? Number(refsForm.interval) : undefined,
                 })}
                 disabled={!refCanStart}
                 className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
@@ -481,34 +494,22 @@ export default function CrawlerTab({
             </div>
 
             {refsInfo && (refsInfo.running || refsInfo.message) && (
-              <div className="mt-1 p-3 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-xs text-gray-700 dark:text-gray-200 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">{t('sys.kwStatus')}:</span>
-                  <span className={`inline-flex items-center gap-1 font-medium ${refsInfo.running ? 'text-teal-600' : 'text-gray-600 dark:text-gray-300'}`}>
-                    {refsInfo.running && <Loader2 className="w-3 h-3 animate-spin" />}
-                    {refsInfo.running ? t('sys.refsRunningBadge') : phaseText(refsInfo.progress?.phase) || t('sys.simIdle')}
-                  </span>
-                  {refsInfo.paper_title && (
-                    <span className="truncate font-medium text-gray-800 dark:text-gray-100">{refsInfo.paper_title}</span>
-                  )}
-                </div>
-                {refsInfo.progress && (refsInfo.progress.page > 0 || refsInfo.progress.collected > 0) && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    {refsInfo.progress.page > 0 && <span>{t('sys.refsPage')}: {refsInfo.progress.page}</span>}
-                    {refsInfo.progress.collected > 0 && <span className="font-medium text-teal-600 dark:text-teal-400">{t('sys.refsCollected')}: {refsInfo.progress.collected}</span>}
-                    {refsInfo.progress.failed > 0 && <span className="text-red-500">{t('sys.kwFailed')}: {refsInfo.progress.failed}</span>}
-                  </div>
-                )}
-                {refsInfo.last_log && refsInfo.last_log.length > 0 && (
-                  <div className="pt-1">
-                    <div className="text-[11px] text-gray-400 mb-1">{t('sys.kwRecentLog')}</div>
-                    <div className="max-h-24 overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-900/60 p-2 text-[10px] leading-4 text-gray-500 dark:text-gray-400 font-mono break-all">
-                      {refsInfo.last_log.slice(-6).map((l, i) => <div key={i}>{l}</div>)}
-                    </div>
-                  </div>
-                )}
-                {refsInfo.message && <div className="text-gray-600 dark:text-gray-300 break-words">{refsInfo.message}</div>}
-              </div>
+              <TaskStatusPanel
+                tone="teal"
+                running={!!refsInfo.running}
+                runningText={t('sys.refsRunningBadge')}
+                idleText={phaseText(refsInfo.progress?.phase) || t('sys.simIdle')}
+                statusLabel={t('sys.kwStatus')}
+                title={refsInfo.paper_title}
+                metrics={[
+                  ...(refsInfo.progress && refsInfo.progress.page > 0 ? [{ label: t('sys.refsPage'), value: refsInfo.progress.page }] : []),
+                  ...(refsInfo.progress && refsInfo.progress.collected > 0 ? [{ label: t('sys.refsCollected'), value: refsInfo.progress.collected, tone: 'accent' as const }] : []),
+                  ...(refsInfo.progress && refsInfo.progress.failed > 0 ? [{ label: t('sys.kwFailed'), value: refsInfo.progress.failed, tone: 'bad' as const }] : []),
+                ]}
+                log={refsInfo.last_log}
+                logTitle={t('sys.kwRecentLog')}
+                message={refsInfo.message}
+              />
             )}
           </div>
         </div>
@@ -585,6 +586,7 @@ export default function CrawlerTab({
               {crawlLogs.map((log) => {
                 const expanded = expandedLogId === log.id;
                 const isKeyword = log.task_type === 'keyword';
+                const isRefs = log.task_type === 'references';
                 const done = log.status === 'success' || log.status === 'completed';
                 return (
                   <div key={log.id} className="border border-gray-100 dark:border-gray-700 rounded-lg">
@@ -601,9 +603,12 @@ export default function CrawlerTab({
                             {isKeyword && (
                               <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300">{t('sys.kwKeywordLabel')}</span>
                             )}
+                            {isRefs && (
+                              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-300">{t('sys.refsBadge')}</span>
+                            )}
                           </div>
                           <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                            <span>{t('sys.fetchedLabel')}: {log.papers_fetched}{t('sys.papersUnit')}</span>
+                            <span>{t('sys.fetchedLabel')}: {log.papers_fetched}{isRefs ? t('sys.refsUnit') : t('sys.papersUnit')}</span>
                             {log.papers_failed > 0 && <span className="text-red-500">{t('sys.failedLabel')}: {log.papers_failed}{t('sys.papersUnit')}</span>}
                             <span>{formatTime(log.created_at)}</span>
                           </div>

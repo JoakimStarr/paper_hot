@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi, producerApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
-import { PaperDetailResponse, PaperReferencesResponse } from '@/types/paper';
+import { PaperDetailResponse, PaperReferencesResponse, PaperCitedByResponse } from '@/types/paper';
 import { Loader2, ExternalLink, Calendar, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check, Bookmark, Pin, MessageSquare } from 'lucide-react';
 import Link from 'next/link';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -44,12 +44,19 @@ export default function PaperDetailPage() {
   const [refsLoading, setRefsLoading] = useState(false);
   const [refsError, setRefsError] = useState(false);
   const [refsData, setRefsData] = useState<PaperReferencesResponse | null>(null);
+  // 被引查询：库内哪些论文的参考文献引用了本文（随参考文献一并懒加载，失败静默）
+  const [citedBy, setCitedBy] = useState<PaperCitedByResponse | null>(null);
 
   const loadRefs = async () => {
     if (refsLoading || refsData) return;
     setRefsLoading(true);
     try {
-      setRefsData(await papersApi.getPaperReferences(params.id as string));
+      const [refs, cited] = await Promise.all([
+        papersApi.getPaperReferences(params.id as string),
+        papersApi.getPaperCitedBy(params.id as string).catch(() => null),
+      ]);
+      setRefsData(refs);
+      if (cited) setCitedBy(cited);
     } catch {
       setRefsError(true);
     } finally {
@@ -561,10 +568,15 @@ export default function PaperDetailPage() {
           <div className="mb-4 sm:mb-6 border border-gray-200 dark:border-gray-700 rounded-lg">
             <button
               onClick={() => { const next = !refsOpen; setRefsOpen(next); if (next) void loadRefs(); }}
-              className="w-full flex items-center justify-between px-3 sm:px-4 py-2.5 text-left"
+              className="w-full flex items-center justify-between px-3 sm:px-4 py-2.5 text-left gap-2"
             >
-              <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white">
+              <span className="text-sm sm:text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2 min-w-0">
                 {t('pd.refsSection')}{refsData ? ` (${refsData.total})` : ''}
+                {citedBy && citedBy.total > 0 && (
+                  <span className="shrink-0 text-[10px] sm:text-[11px] font-normal px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-300">
+                    {t('pd.citedByCount', { n: citedBy.total })}
+                  </span>
+                )}
               </span>
               <span className="text-xs text-primary-600 dark:text-primary-400 shrink-0 ml-2">
                 {refsOpen ? t('pd.refsHide') : t('pd.refsShow')}
@@ -595,6 +607,18 @@ export default function PaperDetailPage() {
                       </li>
                     ))}
                   </ol>
+                )}
+                {citedBy && citedBy.total > 0 && (
+                  <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                    <div className="text-[11px] text-gray-400 mb-1">{t('pd.citedBy')}</div>
+                    <div className="space-y-1">
+                      {citedBy.citing_papers.map((p) => (
+                        <Link key={p.id} href={`/paper/${p.id}`} className="block text-xs sm:text-sm text-gray-700 dark:text-gray-300 hover:text-primary-600 hover:underline truncate">
+                          {p.title}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}

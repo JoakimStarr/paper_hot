@@ -177,6 +177,8 @@ def _empty_cnki_progress() -> dict:
         "filtered": 0,
         "verify_failed": 0,
         "failed": 0,
+        "refs_ok": 0,
+        "refs_failed": 0,
     }
 
 
@@ -210,6 +212,15 @@ def _parse_cnki_progress(line: str, prog: dict) -> dict:
         prog["verify_failed"] = int(m.group(5))
         prog["failed"] = int(m.group(6))
         prog["phase"] = "done"
+    # --detail-refs 顺带抓取的参考文献进度：每篇「✓ 参考文献已入库 N 条」累加，
+    # 汇总行「参考文献（--detail-refs）：成功 X 篇 | 失败 Y 篇」直接覆盖
+    m = re.search(r"参考文献已入库\s*(\d+)\s*条", line)
+    if m:
+        prog["refs_ok"] = prog.get("refs_ok", 0) + int(m.group(1))
+    m = re.search(r"参考文献（--detail-refs）：成功\s*(\d+)\s*篇.*?失败\s*(\d+)\s*篇", line)
+    if m:
+        prog["refs_ok"] = int(m.group(1))
+        prog["refs_failed"] = int(m.group(2))
     return prog
 
 
@@ -470,13 +481,15 @@ _refs_proc: Optional[asyncio.subprocess.Process] = None
 
 class ReferencesStartRequest(BaseModel):
     paper_url: Optional[str] = None
+    urls: Optional[List[str]] = None       # 批量模式：多个详情页链接（>1 时脚本走 --ref-urls-file）
     paper_title: Optional[str] = None
     max_items: Optional[int] = None
     interval: Optional[float] = None
 
 
 async def _run_references_background(paper_url: Optional[str], paper_title: Optional[str],
-                                     max_items: Optional[int], interval: Optional[float] = None):
+                                     max_items: Optional[int], interval: Optional[float] = None,
+                                     urls: Optional[List[str]] = None):
     """参考文献爬取后台任务：spawn cnki_paper_captcha.py --ref-* 子进程并解析进度。"""
     global _refs_proc
     _refs_state["running"] = True
@@ -491,7 +504,16 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
 
     script = BASE_DIR.parent / "cnki_paper_captcha.py"
     cmd = [sys.executable, str(script)]
-    if paper_url:
+    if urls and len(urls) > 1:
+        # 批量：写临时清单文件走 --ref-urls-file（脚本逐篇抓取，单篇间隔仍由 --ref-interval 控制）
+        cache_dir = BASE_DIR.parent / ".cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        urls_file = cache_dir / f"refs_urls_{datetime.now().strftime('%Y%m%d%H%M%S')}.txt"
+        urls_file.write_text("\n".join(urls), encoding="utf-8")
+        cmd += ["--ref-urls-file", str(urls_file)]
+    elif urls:
+        cmd += ["--ref-paper-url", urls[0]]
+    elif paper_url:
         cmd += ["--ref-paper-url", paper_url]
     else:
         cmd += ["--ref-title", paper_title or ""]
@@ -500,17 +522,18 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
     if interval and float(interval) >= 1:
         cmd += ["--ref-interval", str(float(interval))]
 
-    # 建任务记录：任务面板展示 + 重跑参数（paper_url/paper_title/max_items/interval）
+    # 建任务记录：任务面板展示 + 重跑参数（paper_url/urls/paper_title/max_items/interval）
     crawl_log_id: Optional[int] = None
     try:
         from app.schemas import CrawlLogCreate
         async with AsyncSessionLocal() as db:
             crawl_log = await CrawlLogCRUD.create_crawl_log(db, CrawlLogCreate(
-                journal_name=(paper_title or paper_url or "参考文献爬取")[:200],
+                journal_name=(paper_title or (urls[0] if urls else paper_url) or "参考文献爬取")[:200],
                 crawl_start_time=datetime.now(),
                 task_type="references",
                 rerun_params=json.dumps({
                     "paper_url": paper_url,
+                    "urls": urls,
                     "paper_title": paper_title,
                     "max_items": max_items,
                     "interval": interval,
@@ -534,6 +557,7 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
         )
         _refs_proc = proc
         tail = ""
+        refs_done_total = 0  # 已完成篇目的入库条目总和（配合单篇「累计 N 条」跨篇累加）
         async for raw in proc.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
@@ -543,13 +567,23 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
             recent.append(line)
             tail = line
             _parse_cnki_progress(line, prog)
-            # 参考文献模式日志解析：`参考文献 第 X 页获取 Y 条（新增 Z），累计 N 条`
+            # 参考文献模式日志解析：`参考文献 第 X 页获取 Y 条（新增 Z），累计 N 条`。
+            # 「累计 N 条」是单篇内计数：用已完成篇目的入库条目总和做跨篇累加，
+            # 保证前端「累计条目」随批量任务单调递增而不回跳。
             m_page = re.search(r"参考文献\s*第\s*(\d+)\s*页", line)
             if m_page:
                 prog["page"] = int(m_page.group(1))
+            m_saved = re.search(r"参考文献已入库\s*(\d+)\s*条", line)
+            if m_saved:
+                refs_done_total += int(m_saved.group(1))
             m_total = re.search(r"累计\s*(\d+)\s*条", line)
             if m_total:
-                prog["collected"] = int(m_total.group(1))
+                prog["collected"] = refs_done_total + int(m_total.group(1))
+            m_all = re.search(r"共入库参考文献\s*(\d+)\s*条", line)
+            if m_all:
+                prog["collected"] = int(m_all.group(1))
+            if "参考文献入库失败" in line:
+                prog["refs_failed"] = prog.get("refs_failed", 0) + 1
             _refs_state["progress"] = dict(prog)
             _refs_state["last_log"] = list(recent)
         await proc.wait()
@@ -590,13 +624,16 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
 
 @router.post("/crawl/references/start")
 async def start_references_crawl(body: ReferencesStartRequest, token: bool = Depends(verify_token)):
-    """触发参考文献爬取：给论文详情页链接直接抓，或给标题检索定位（默认取第一条结果）。"""
+    """触发参考文献爬取：链接（单个/批量）直接抓，或给标题检索定位（默认取第一条结果）。"""
     paper_url = (body.paper_url or "").strip() or None
     paper_title = (body.paper_title or "").strip() or None
-    if not paper_url and not paper_title:
-        raise HTTPException(status_code=400, detail="paper_url 与 paper_title 至少填一个")
+    urls = [u.strip() for u in (body.urls or []) if u.strip()] or None
     if paper_url and not paper_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="paper_url 需以 http(s):// 开头")
+    if urls and any(not u.startswith(("http://", "https://")) for u in urls):
+        raise HTTPException(status_code=400, detail="批量链接需每行都以 http(s):// 开头")
+    if not paper_url and not urls and not paper_title:
+        raise HTTPException(status_code=400, detail="paper_url、urls 与 paper_title 至少填一个")
     if _refs_state["running"]:
         return {"status": "already_running", "paper_title": _refs_state["paper_title"]}
     from app.main import spawn_background_task
@@ -605,6 +642,7 @@ async def start_references_crawl(body: ReferencesStartRequest, token: bool = Dep
         paper_title=paper_title,
         max_items=body.max_items,
         interval=body.interval,
+        urls=urls,
     ))
     return {"status": "started"}
 
@@ -641,6 +679,67 @@ async def stop_references_crawl(token: bool = Depends(verify_token)):
     if _refs_state.get("progress"):
         _refs_state["progress"]["phase"] = "stopped"
     return {"status": "stopped"}
+
+
+class ReferencesBackfillRequest(BaseModel):
+    limit: Optional[int] = 30          # 本轮补抓篇数（1-200）
+    max_items: Optional[int] = None    # 每篇最多抓多少条参考文献
+    interval: Optional[float] = None   # 单篇间隔秒数（防封控）
+
+
+@router.post("/crawl/references/backfill")
+async def backfill_references_crawl(body: ReferencesBackfillRequest, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+    """智能批量补抓：自动选出「未抓取过参考文献」的论文队列（按 置顶 > 收藏 > 已读 > 综合评分 优先），
+    复用 references 后台任务逐篇抓取。解决手动单篇触发覆盖率永远起不来的问题。"""
+    if _refs_state["running"]:
+        return {"status": "already_running", "paper_title": _refs_state["paper_title"]}
+
+    from sqlalchemy import select as sa_select, func as sa_func, case as sa_case
+    from app.models import Paper, PaperScore, PaperReference, PinnedPaper, Favorite, ReadingHistory
+
+    limit = max(1, min(int(body.limit or 30), 200))
+
+    # 未抓取过的论文（paper_references 覆盖式写入，distinct paper_url 即已抓集合）
+    refs_url = sa_select(PaperReference.paper_url).distinct().scalar_subquery()
+    priority = sa_case(
+        (sa_select(PinnedPaper.id).where(PinnedPaper.paper_id == Paper.id).limit(1).exists(), 3),
+        (sa_select(Favorite.id).where(Favorite.paper_id == Paper.id).limit(1).exists(), 2),
+        (sa_select(ReadingHistory.id).where(ReadingHistory.paper_id == Paper.id).limit(1).exists(), 1),
+        else_=0,
+    ).label("priority")
+    rows = (await db.execute(
+        sa_select(Paper.id, Paper.url, Paper.title, priority, PaperScore.final_score)
+        .outerjoin(PaperScore, PaperScore.paper_id == Paper.id)
+        .where(Paper.url.isnot(None), Paper.url != "", ~Paper.url.in_(refs_url))
+        .order_by(priority.desc(), sa_func.coalesce(PaperScore.final_score, 0).desc(), Paper.published_at.desc())
+        .limit(limit)
+    )).fetchall()
+
+    urls = [r[1] for r in rows if r[1]]
+    if not urls:
+        return {"status": "empty", "message": "没有需要补抓的论文（全库已覆盖或论文无有效链接）"}
+
+    from app.main import spawn_background_task
+    spawn_background_task(_run_references_background(
+        paper_url=None, paper_title=f"智能补抓（{len(urls)} 篇）",
+        max_items=body.max_items, interval=body.interval, urls=urls,
+    ))
+    return {"status": "started", "queued": len(urls)}
+
+
+@router.get("/crawl/references/coverage")
+async def references_coverage(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
+    """参考文献覆盖率：已抓取论文数 / 有效链接论文总数（系统页展示用）。"""
+    from sqlalchemy import select as sa_select, func as sa_func
+    from app.models import Paper, PaperReference
+
+    with_refs = (await db.execute(
+        sa_select(sa_func.count(sa_func.distinct(PaperReference.paper_url)))
+    )).scalar() or 0
+    total = (await db.execute(
+        sa_select(sa_func.count(Paper.id)).where(Paper.url.isnot(None), Paper.url != "")
+    )).scalar() or 0
+    return {"papers_with_refs": int(with_refs), "papers_total": int(total)}
 
 
 class CrawlRerunRequest(BaseModel):
@@ -691,6 +790,7 @@ async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db
             paper_title=params.get("paper_title") or log.journal_name,
             max_items=params.get("max_items"),
             interval=params.get("interval"),
+            urls=params.get("urls"),
         ))
         return {"status": "started", "task_type": "references", "name": log.journal_name}
     # journal 类型：调度器按期刊重跑
