@@ -485,11 +485,12 @@ class ReferencesStartRequest(BaseModel):
     paper_title: Optional[str] = None
     max_items: Optional[int] = None
     interval: Optional[float] = None
+    show_browser: bool = False             # 显示浏览器窗口（无头模式遇验证码只能自动解，显示窗口可人工处理）
 
 
 async def _run_references_background(paper_url: Optional[str], paper_title: Optional[str],
                                      max_items: Optional[int], interval: Optional[float] = None,
-                                     urls: Optional[List[str]] = None):
+                                     urls: Optional[List[str]] = None, show_browser: bool = False):
     """参考文献爬取后台任务：spawn cnki_paper_captcha.py --ref-* 子进程并解析进度。"""
     global _refs_proc
     _refs_state["running"] = True
@@ -500,7 +501,7 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
     _refs_state["finished_at"] = None
     _refs_state["progress"] = _empty_cnki_progress()
     _refs_state["last_log"] = []
-    _refs_state["message"] = "启动中…"
+    _refs_state["message"] = "浏览器窗口模式，遇验证码请在弹出窗口中人工处理" if show_browser else "启动中…"
 
     script = BASE_DIR.parent / "cnki_paper_captcha.py"
     cmd = [sys.executable, str(script)]
@@ -521,8 +522,10 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
         cmd += ["--ref-max-items", str(max(int(max_items), 1))]
     if interval and float(interval) >= 1:
         cmd += ["--ref-interval", str(float(interval))]
+    if show_browser:
+        cmd += ["--show-browser"]
 
-    # 建任务记录：任务面板展示 + 重跑参数（paper_url/urls/paper_title/max_items/interval）
+    # 建任务记录：任务面板展示 + 重跑参数（paper_url/urls/paper_title/max_items/interval/show_browser）
     crawl_log_id: Optional[int] = None
     try:
         from app.schemas import CrawlLogCreate
@@ -537,6 +540,7 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
                     "paper_title": paper_title,
                     "max_items": max_items,
                     "interval": interval,
+                    "show_browser": show_browser,
                 }, ensure_ascii=False),
             ))
             await db.commit()
@@ -643,6 +647,7 @@ async def start_references_crawl(body: ReferencesStartRequest, token: bool = Dep
         max_items=body.max_items,
         interval=body.interval,
         urls=urls,
+        show_browser=body.show_browser,
     ))
     return {"status": "started"}
 
@@ -791,6 +796,7 @@ async def rerun_crawl(body: CrawlRerunRequest, db: AsyncSession = Depends(get_db
             max_items=params.get("max_items"),
             interval=params.get("interval"),
             urls=params.get("urls"),
+            show_browser=bool(params.get("show_browser", False)),
         ))
         return {"status": "started", "task_type": "references", "name": log.journal_name}
     # journal 类型：调度器按期刊重跑

@@ -122,7 +122,7 @@ export default function SystemPage() {
   const [refsStarting, setRefsStarting] = useState(false);
   const [refsStopping, setRefsStopping] = useState(false);
   // 表单在 page 层：切页签不丢失输入
-  const [refsForm, setRefsForm] = useState<ReferencesCrawlForm>({ url: '', title: '', maxItems: '', interval: '' });
+  const [refsForm, setRefsForm] = useState<ReferencesCrawlForm>({ url: '', title: '', maxItems: '', interval: '', showBrowser: false });
   const refsPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadRefsStatus = async (): Promise<ReferencesCrawlInfo | null> => {

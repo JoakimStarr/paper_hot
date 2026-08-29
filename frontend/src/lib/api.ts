@@ -272,7 +272,7 @@ export const papersApi = {
   stopCNKISearch: async (): Promise<{ status: string }> =>
     request('/crawl/cnki/search/stop', { method: 'POST' }),
 
-  startReferencesCrawl: async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }): Promise<{ status: string }> =>
+  startReferencesCrawl: async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number; show_browser?: boolean }): Promise<{ status: string }> =>
     request('/crawl/references/start', { method: 'POST', body: opts }),
   getReferencesStatus: async (): Promise<ReferencesCrawlInfo> =>
     request('/crawl/references/status'),

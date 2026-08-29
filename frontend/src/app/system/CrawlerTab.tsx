@@ -25,6 +25,7 @@ export interface ReferencesCrawlForm {
   title: string;
   maxItems: string;
   interval: string;
+  showBrowser: boolean;
 }
 
 // CNKI 检索字段全集（value 即知网站点字段名，后端/爬虫按此匹配，与 cnki_paper_captcha.py CNKI_SEARCH_FIELDS 保持一致）
@@ -77,7 +78,7 @@ interface CrawlerTabProps {
   refsStopping: boolean;
   refsForm: ReferencesCrawlForm;
   setRefsForm: (form: ReferencesCrawlForm) => void;
-  onStartReferencesCrawl: (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }) => void;
+  onStartReferencesCrawl: (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number; show_browser?: boolean }) => void;
   onStopReferencesCrawl: () => void;
 }
 
@@ -474,6 +475,7 @@ export default function CrawlerTab({
                   paper_title: refUrlLines.length ? undefined : refsForm.title.trim(),
                   max_items: refsForm.maxItems ? Number(refsForm.maxItems) : undefined,
                   interval: refsForm.interval.trim() ? Number(refsForm.interval) : undefined,
+                  show_browser: refsForm.showBrowser,
                 })}
                 disabled={!refCanStart}
                 className="flex items-center gap-2 px-4 py-2.5 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
@@ -492,6 +494,16 @@ export default function CrawlerTab({
                 </button>
               )}
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={refsForm.showBrowser}
+                onChange={e => setRefsForm({ ...refsForm, showBrowser: e.target.checked })}
+                disabled={refsStarting || !!refsInfo?.running}
+                className="w-4 h-4 accent-teal-600 disabled:opacity-50"
+              />
+              {t('sys.kwShowBrowser')}
+            </label>
 
             {refsInfo && (refsInfo.running || refsInfo.message) && (
               <TaskStatusPanel
