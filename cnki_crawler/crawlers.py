@@ -36,7 +36,6 @@ from cnki_crawler.parsing import (
     BASE_URL,
     SEARCH_FIELD_GROUP_MAP,
     TARGET_YEARS,
-    VERIFY_URL_PREFIX,
     _is_cnki_detail_url,
     _norm_title,
     _parse_ref_meta,
@@ -50,6 +49,7 @@ from cnki_crawler.storage import (
 )
 from cnki_crawler.captcha_solver import CaptchaSolver, DDDDOCR_AVAILABLE
 from cnki_crawler.browser import _launch_kwargs
+from cnki_crawler.captcha_gate import is_verify_url, wait_clean
 from cnki_crawler import progress
 
 # —— 详情抓取与搜索的防检测常量（原单文件脚本散落常量收敛于此）——
@@ -81,8 +81,6 @@ class JournalCrawler:
         self.state_file = Path(state_file) if state_file else None
         self.db_initialized = False
         self.captcha_solver = CaptchaSolver(thread_id=thread_id)
-        self._captcha_retry_count = 0
-        self._max_captcha_retries = 3
 
     async def init_browser(self):
         """初始化浏览器"""
@@ -187,69 +185,18 @@ class JournalCrawler:
             pass
 
     def is_verify_page(self, page_url: str) -> bool:
-        """检查是否是验证码页面"""
-        return page_url.startswith(VERIFY_URL_PREFIX)
+        """检查是否是验证码页面（委托统一验证码闸的 URL 判定）。"""
+        return is_verify_url(page_url)
 
     async def wait_for_page_stable(self, target_url: str, max_wait_time: int = 300, page=None) -> bool:
-        """等待页面稳定，自动解决验证码"""
+        """等待页面稳定，自动解决验证码（委托统一验证码闸 captcha_gate.wait_clean）。
+
+        与原实现相比：现在同时检测不改变 URL 的弹窗/遮罩验证码，且失败会上报熔断。
+        """
         page = page or self.page
-        current_url = page.url
-
-        if not self.is_verify_page(current_url):
-            return True
-
-        print(f"    [线程{self.thread_id}] ⚠ 遇到验证码页面")
-
-        # 检查是否超过最大重试次数
-        if self._captcha_retry_count >= self._max_captcha_retries:
-            print(f"    [线程{self.thread_id}] 验证码重试次数已达上限 ({self._max_captcha_retries})，放弃")
-            return False
-
-        self._captcha_retry_count += 1
-
-        # 尝试自动解决验证码
-        if self.captcha_solver.is_available():
-            captcha_type = await self.captcha_solver.detect_captcha_type(page)
-            print(f"    [线程{self.thread_id}] 检测到验证码类型: {captcha_type}")
-
-            if captcha_type == 'slider':
-                success = await self.captcha_solver.solve_slider_captcha(page)
-                if success:
-                    self._captcha_retry_count = 0  # 成功后重置计数器
-                    return True
-            elif captcha_type == 'click':
-                success = await self.captcha_solver.solve_click_captcha(page)
-                if success:
-                    self._captcha_retry_count = 0
-                    return True
-
-            print(f"    [线程{self.thread_id}] 自动解决验证码失败，尝试手动解决...")
-        else:
-            print(f"    [线程{self.thread_id}] ddddocr 不可用，无法自动解决验证码")
-
-        # 自动解决失败，降级到手动解决（仅非 headless 模式）
-        if self.headless:
-            print(f"    [线程{self.thread_id}] 当前为无头模式，无法手动解决验证码")
-            return False
-
-        print(f"    [线程{self.thread_id}] 请在浏览器窗口中手动完成验证...")
-
-        start_time = asyncio.get_event_loop().time()
-
-        while True:
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > max_wait_time:
-                print(f"    [线程{self.thread_id}] 等待验证码解决超时")
-                return False
-
-            current_url = page.url
-
-            if not self.is_verify_page(current_url):
-                print(f"    [线程{self.thread_id}] ✓ 验证码已解决")
-                self._captcha_retry_count = 0  # 成功后重置计数器
-                return True
-
-            await asyncio.sleep(1)
+        return await wait_clean(
+            page, tag=f"    [线程{self.thread_id}]", timeout=max_wait_time,
+            headless=self.headless, solver=self.captcha_solver)
 
     async def get_year_issues(self, journal_url: str) -> list:
         """获取期刊的年份期次列表"""
@@ -1485,7 +1432,6 @@ class KeywordSearchCrawler(JournalCrawler):
         python cnki_paper_captcha.py --search "新质生产力" --max-pages 3 --years 2025-2026
     """
 
-    VERIFY_MARK = "/verify"
     # CNKI 检索页 XPath 选择器
     SEARCH_SELECTOR = '//textarea[@id="txt_SearchText"]'
     # 检索字段下拉：现行首页/检索页（参考 demo.py）
@@ -1500,14 +1446,6 @@ class KeywordSearchCrawler(JournalCrawler):
     NEXT_PAGE_SELECTOR = '//a[@id="PageNext"]'
     TITLE_LINK_SELECTOR = './/a[contains(@class, "fz14")]'
     ROW_LINK_SELECTOR = './/td[1]//a'
-    # 验证码弹窗/遮罩检测（不改变 URL 时的滑块 iframe 等，选择器需精确，避免误命中结果页普通元素）
-    # 主判据是 URL 是否含 /verify（见 _ensure_no_captcha），此处仅做严格辅助
-    CAPTCHA_POPUP_SELECTORS = [
-        '//iframe[contains(@src,"captcha") or contains(@src,"verify") or contains(@src,"nc_") or contains(@src,"yidun")]',
-        '//div[contains(@class,"verify-slide") or contains(@class,"verify-slider")]',
-        '//div[contains(@class,"nc-container") or contains(@class,"yidun")]',
-        '//div[@id="captcha"]',
-    ]
 
     def __init__(self, headless=True, keyword="", search_field="主题", max_pages=None,
                  min_year=None, max_year=None, state_file=None, thread_id=0,
@@ -1604,49 +1542,11 @@ class KeywordSearchCrawler(JournalCrawler):
                 break
         return cur
 
-    async def _captcha_popup_visible(self) -> bool:
-        """检测不改变 URL 的验证码弹窗/遮罩。"""
-        for sel in self.CAPTCHA_POPUP_SELECTORS:
-            try:
-                loc = self.page.locator(sel).first
-                if await loc.count() > 0 and await loc.is_visible():
-                    return True
-            except Exception:
-                continue
-        return False
-
     async def _ensure_no_captcha(self, timeout: int = 180) -> bool:
-        """确保当前无安全验证：优先自动解（滑块/点选），失败则提示手动（非无头）。"""
-        start = asyncio.get_event_loop().time()
-        prompted = False
-        while True:
-            url_verify = self.VERIFY_MARK in self.page.url
-            popup = await self._captcha_popup_visible()
-            if not url_verify and not popup:
-                if prompted:
-                    print(f"  [关键词#{self.thread_id}] ✓ 安全验证已通过")
-                return True
-            if asyncio.get_event_loop().time() - start > timeout:
-                print(f"  [关键词#{self.thread_id}] 等待安全验证超时")
-                _report_captcha(tag=f"[关键词#{self.thread_id}]")
-                return False
-            # 优先尝试自动解决（仅首次）
-            if not prompted and self.captcha_solver.is_available():
-                try:
-                    ctype = await self.captcha_solver.detect_captcha_type(self.page)
-                    ok = False
-                    if ctype == 'slider':
-                        ok = await self.captcha_solver.solve_slider_captcha(self.page)
-                    elif ctype == 'click':
-                        ok = await self.captcha_solver.solve_click_captcha(self.page)
-                    if ok:
-                        continue
-                except Exception:
-                    pass
-            if not prompted and not self.headless:
-                print(f"  [关键词#{self.thread_id}] 请在浏览器中手动完成安全验证/滑块...")
-                prompted = True
-            await asyncio.sleep(1.5)
+        """确保当前无安全验证：委托统一验证码闸 captcha_gate.wait_clean。"""
+        return await wait_clean(
+            self.page, tag=f"  [关键词#{self.thread_id}]", timeout=timeout,
+            headless=self.headless, solver=self.captcha_solver)
 
     async def _pick_field_filter(self) -> bool:
         """按检索字段在侧边栏筛选(div#divGroup)中做分组匹配并点选。
