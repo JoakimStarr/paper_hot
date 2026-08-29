@@ -8,6 +8,7 @@ import {
 import { CrawlLog, SchedulerJob, CNKISearchInfo, ReferencesCrawlInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
 import TaskStatusPanel from './TaskStatusPanel';
+import { rememberRefsShowBrowser } from '@/lib/utils';
 
 export interface KeywordCrawlForm {
   keyword: string;
@@ -498,7 +499,11 @@ export default function CrawlerTab({
               <input
                 type="checkbox"
                 checked={refsForm.showBrowser}
-                onChange={e => setRefsForm({ ...refsForm, showBrowser: e.target.checked })}
+                onChange={e => {
+                  // 与论文详情页的抓取开关共用同一份 localStorage 偏好，双页同步
+                  setRefsForm({ ...refsForm, showBrowser: e.target.checked });
+                  rememberRefsShowBrowser(e.target.checked);
+                }}
                 disabled={refsStarting || !!refsInfo?.running}
                 className="w-4 h-4 accent-teal-600 disabled:opacity-50"
               />

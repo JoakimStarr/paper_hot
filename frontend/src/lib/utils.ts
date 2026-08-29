@@ -119,3 +119,22 @@ export async function downloadAsWord(filename: string, title: string, markdownCo
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+const REFS_SHOW_BROWSER_KEY = 'paperpulse.refsShowBrowser';
+
+/** 参考文献抓取是否显示浏览器（详情页与系统页-爬虫共用同一份偏好，localStorage 持久化） */
+export function getRefsShowBrowser(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem(REFS_SHOW_BROWSER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function rememberRefsShowBrowser(value: boolean): void {
+  try {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(REFS_SHOW_BROWSER_KEY, value ? '1' : '0');
+    }
+  } catch { /* localStorage 不可用（隐私模式等）时静默 */ }
+}

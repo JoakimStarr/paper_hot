@@ -6,13 +6,13 @@ import { useParams, useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { papersApi, producerApi, getLastModel, rememberModel, ApiError } from '@/lib/api';
 import { PaperDetailResponse, PaperReferencesResponse, PaperCitedByResponse } from '@/types/paper';
-import { Loader2, ExternalLink, Calendar, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check, Bookmark, Pin, MessageSquare } from 'lucide-react';
+import { Loader2, ExternalLink, Calendar, TrendingUp, ArrowLeft, AlertCircle, Sparkles, Bot, Brain, ChevronDown, FileText, Target, Copy, Check, Bookmark, Pin, MessageSquare, Download } from 'lucide-react';
 import Link from 'next/link';
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
 });
 import { useLanguage } from '@/contexts/LanguageContext';
-import { getIssuePeriod, topicColors, downloadTextFile } from '@/lib/utils';
+import { getIssuePeriod, topicColors, downloadTextFile, getRefsShowBrowser, rememberRefsShowBrowser } from '@/lib/utils';
 import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
 import { useToast } from '@/components/Toast';
@@ -46,6 +46,12 @@ export default function PaperDetailPage() {
   const [refsData, setRefsData] = useState<PaperReferencesResponse | null>(null);
   // 被引查询：库内哪些论文的参考文献引用了本文（随参考文献一并懒加载，失败静默）
   const [citedBy, setCitedBy] = useState<PaperCitedByResponse | null>(null);
+  // 「一键抓取本篇参考文献」：复用系统页 references 后台任务，完成后自动刷新列表
+  const [refsCrawling, setRefsCrawling] = useState(false);
+  const refsCrawlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 抓取时是否显示浏览器（localStorage 持久化，与系统页-爬虫同一份偏好）
+  const [refsShowBrowser, setRefsShowBrowser] = useState(false);
+  useEffect(() => { setRefsShowBrowser(getRefsShowBrowser()); }, []);
 
   const loadRefs = async () => {
     if (refsLoading || refsData) return;
@@ -65,6 +71,56 @@ export default function PaperDetailPage() {
   };
 
   const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 用 ref 保存最新 loadRefs，避免 effect/回调里的闭包过期问题
+  const loadRefsRef = useRef(loadRefs);
+  loadRefsRef.current = loadRefs;
+
+  const handleCrawlRefs = async () => {
+    if (!paper || refsCrawling) return;
+    setRefsCrawling(true);
+    setRefsError(false);
+    try {
+      const res = await papersApi.startReferencesCrawl({ paper_url: paper.url, paper_title: paper.title, show_browser: refsShowBrowser });
+      if (res.status === 'already_running') {
+        toast(t('pd.refsCrawlAlready'), 'info');
+      }
+      let attempts = 0;
+      const tick = async () => {
+        attempts += 1;
+        if (attempts > 100) {  // 上限 5 分钟，防止无限轮询
+          setRefsCrawling(false);
+          return;
+        }
+        try {
+          const info = await papersApi.getReferencesStatus();
+          if (!info.running) {
+            setRefsCrawling(false);
+            if (info.stopped_by_user) {
+              toast(t('pd.refsCrawlStopped'), 'info');
+            } else {
+              setRefsData(null);
+              setCitedBy(null);
+              setRefsOpen(true);
+              toast(t('pd.refsCrawlDone'), 'success');
+            }
+            return;
+          }
+        } catch { /* 忽略单次轮询失败 */ }
+        refsCrawlTimerRef.current = setTimeout(tick, 3000);
+      };
+      refsCrawlTimerRef.current = setTimeout(tick, 3000);
+    } catch {
+      toast(t('pd.refsCrawlFailed'), 'error');
+      setRefsCrawling(false);
+    }
+  };
+
+  // 爬取完成/展开时：refsData 为空且未在加载 → 拉取（含爬取完成后的强制刷新路径）
+  useEffect(() => {
+    if (refsOpen && !refsData && !refsLoading && !refsError) void loadRefsRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refsOpen, refsData, refsError]);
+
 
   // —— 阅读进度条 ——
   const [readProgress, setReadProgress] = useState(0);
@@ -120,6 +176,7 @@ export default function PaperDetailPage() {
     return () => {
       if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
     };
+      if (refsCrawlTimerRef.current) clearTimeout(refsCrawlTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -585,7 +642,14 @@ export default function PaperDetailPage() {
             {refsOpen && (
               <div className="px-3 sm:px-4 pb-3 sm:pb-4 border-t border-gray-100 dark:border-gray-800 pt-3">
                 {refsLoading && <div className="text-sm text-gray-400 py-2"><Loader2 className="w-4 h-4 animate-spin inline mr-1" />…</div>}
-                {!refsLoading && refsError && <div className="text-sm text-red-500 py-2">{t('pd.refsLoadFailed')}</div>}
+                {!refsLoading && refsError && (
+                  <div className="text-sm text-red-500 py-2 flex items-center gap-2 flex-wrap">
+                    {t('pd.refsLoadFailed')}
+                    <button onClick={() => setRefsError(false)} className="text-xs text-primary-600 hover:underline">
+                      {t('pd.refsRetry')}
+                    </button>
+                  </div>
+                )}
                 {!refsLoading && refsData && refsData.total === 0 && (
                   <div className="text-xs sm:text-sm text-gray-400 py-2">
                     {t('pd.refsEmpty')}
@@ -597,7 +661,11 @@ export default function PaperDetailPage() {
                     {refsData.references.map((ref) => (
                       <li key={ref.ref_index} className="text-xs sm:text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
                         <span className="text-gray-400 mr-1">[{ref.ref_index}]</span>
-                        {ref.ref_url ? (
+                        {ref.matched_paper_id ? (
+                          <Link href={`/paper/${ref.matched_paper_id}`} className="hover:text-primary-600 hover:underline break-all" title={ref.matched_paper_title || undefined}>
+                            {ref.raw_text}
+                          </Link>
+                        ) : ref.ref_url ? (
                           <a href={ref.ref_url} target="_blank" rel="noopener noreferrer" className="hover:text-primary-600 hover:underline break-all">
                             {ref.raw_text}
                           </a>
@@ -612,6 +680,27 @@ export default function PaperDetailPage() {
                   <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
                     <div className="text-[11px] text-gray-400 mb-1">{t('pd.citedBy')}</div>
                     <div className="space-y-1">
+                    <div className="mt-2 flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={handleCrawlRefs}
+                        disabled={refsCrawling}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors disabled:opacity-60"
+                      >
+                        {refsCrawling
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />{t('pd.refsCrawling')}</>
+                          : <><Download className="w-3.5 h-3.5" />{t('pd.refsCrawlBtn')}</>}
+                      </button>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={refsShowBrowser}
+                          onChange={e => { setRefsShowBrowser(e.target.checked); rememberRefsShowBrowser(e.target.checked); }}
+                          disabled={refsCrawling}
+                          className="w-3.5 h-3.5 accent-primary-600 disabled:opacity-50"
+                        />
+                        {t('sys.kwShowBrowser')}
+                      </label>
+                    </div>
                       {citedBy.citing_papers.map((p) => (
                         <Link key={p.id} href={`/paper/${p.id}`} className="block text-xs sm:text-sm text-gray-700 dark:text-gray-300 hover:text-primary-600 hover:underline truncate">
                           {p.title}

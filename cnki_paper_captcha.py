@@ -2107,11 +2107,25 @@ class JournalCrawler:
                     print(f"{tag} 点击页签 {sel} 失败: {e}")
                     continue
             print(f"{tag} 已点击「参考文献」页签: {sel}")
+            # 列表多为滚动到可视区域才懒加载渲染：点完页签把文献区滚进视口，边滚边等 ul.ebBd 出现
+            deadline = asyncio.get_event_loop().time() + self.REF_TAB_WAIT
+            while asyncio.get_event_loop().time() < deadline:
+                if await self.page.locator(self.REF_LIST_SELECTOR).count() > 0:
+                    break
+                try:
+                    await loc.scroll_into_view_if_needed(timeout=2000)
+                except Exception:
+                    pass
+                try:
+                    await self.page.evaluate('window.scrollBy(0, 320)')
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(0.4, 0.8))
             try:
                 await self.page.locator(self.REF_LIST_SELECTOR).first.wait_for(
-                    state='visible', timeout=self.REF_TAB_WAIT * 1000)
+                    state='visible', timeout=3000)
             except Exception:
-                print(f"{tag} 点击页签后 {self.REF_TAB_WAIT}s 内未见 ul.ebBd，继续尝试直接解析")
+                print(f"{tag} 点击页签并滚动后仍未见到 ul.ebBd，继续尝试直接解析")
             return True
         print(f"{tag} 未找到「参考文献」页签，尝试直接解析列表")
         return False
@@ -2129,6 +2143,11 @@ class JournalCrawler:
             if await loc.count() == 0:
                 print(f"{tag} 第 {page_no} 页未找到参考文献容器 ul.ebBd（可加 --show-browser 人工核对页面）")
                 break
+            # 懒加载：把列表滚进视口再取（翻页后的新条目同样需要滚到可见才渲染）
+            try:
+                await loc.first.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
             items = await loc.locator('xpath=./li').evaluate_all(
                 """(lis) => lis.map((li) => {
                     const a = li.querySelector('a[href]');
@@ -3446,87 +3465,6 @@ class ReferenceCrawler(KeywordSearchCrawler):
         first = candidates[0]
         print(f"{tag} 默认取第 1 条: {first['title'][:60]}")
         return first['url'], first['title']
-
-    async def _crawl_references(self, tag: str) -> list:
-        """抓取参考文献条目：ul.ebBd 下每页 li，a.next 翻页，按钮消失即末页。"""
-        refs: list = []
-        seen = set()
-        page_no = 1
-        while True:
-            # 需求确认：先点击「参考文献」页签（changeRefTypeTag）列表才渲染，每篇开始必点
-            if page_no == 1:
-                await self._open_references_tab(tag)
-            loc = self.page.locator(self.REF_LIST_SELECTOR)
-            if await loc.count() == 0:
-                print(f"{tag} 第 {page_no} 页未找到参考文献容器 ul.ebBd（可加 --show-browser 人工核对页面）")
-                break
-            items = await loc.locator('xpath=./li').evaluate_all(
-                """(lis) => lis.map((li) => {
-                    const a = li.querySelector('a[href]');
-                    const text = (li.innerText || '').replace(/\\s+/g, ' ').trim();
-                    return { text, url: a ? a.href : null };
-                }).filter((x) => x.text)"""
-            )
-            # 跨页去重：翻页未生效时重复收集的同一页内容会被去重掉，不会重复入库
-            new_count = 0
-            for it in items:
-                key = (it.get('url') or '', it['text'])
-                if key in seen:
-                    continue
-                seen.add(key)
-                refs.append(it)
-                new_count += 1
-            print(f"{tag} 参考文献 第 {page_no} 页获取 {len(items)} 条（新增 {new_count}），累计 {len(refs)} 条")
-            if self.max_items and len(refs) >= self.max_items:
-                print(f"{tag} 已达上限 {self.max_items} 条，停止翻页")
-                break
-            # 「下一页」按钮：不存在即末页（需求）；置灰(disable)同样视为末页
-            nxt = self.page.locator(self.REF_NEXT_SELECTOR).first
-            if await nxt.count() == 0:
-                print(f"{tag} 「下一页」按钮已消失，参考文献抓取完成")
-                break
-            cls = (await nxt.get_attribute('class')) or ''
-            if 'disable' in cls:
-                print(f"{tag} 「下一页」按钮已置灰，已是末页，参考文献抓取完成")
-                break
-            first_before = items[0]['text'][:60] if items else ''
-            # 翻页请求同样计入风控：先随机停顿，再过全局导航闸
-            await asyncio.sleep(random.uniform(*self.REF_PAGE_INTERVAL))
-            await _pacing_wait()
-            try:
-                await nxt.click(timeout=8000)
-            except Exception as e:
-                print(f"{tag} 点击下一页失败: {e}")
-                break
-            # 等翻页真正生效：列表重新可见且首条内容变化（最多约 20s），防点击未生效导致死循环
-            advanced = False
-            deadline = asyncio.get_event_loop().time() + 20
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    await self.page.locator(self.REF_LIST_SELECTOR).first.wait_for(state='visible', timeout=5000)
-                except Exception:
-                    pass
-                cur_first = await self._first_ref_text()
-                if cur_first and cur_first != first_before:
-                    advanced = True
-                    break
-                if await self.page.locator(self.REF_LIST_SELECTOR).count() == 0:
-                    break
-                await asyncio.sleep(0.8)
-            if not advanced:
-                print(f"{tag} 点击下一页后列表内容未变化，视为已到末页，停止")
-                break
-            page_no += 1
-        return refs
-
-    async def _first_ref_text(self) -> str:
-        """读取当前参考文献列表首条文本（用于判断翻页是否生效）。"""
-        try:
-            loc = self.page.locator(f'{self.REF_LIST_SELECTOR} > li').first
-            text = await loc.inner_text(timeout=3000)
-            return (text or '').replace('\n', ' ').strip()[:60]
-        except Exception:
-            return ''
 
 
 async def main():

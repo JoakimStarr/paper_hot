@@ -6,6 +6,7 @@ import { papersApi, ApiError } from '@/lib/api';
 import { SystemStats, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, CNKISearchInfo, ReferencesCrawlInfo, Msg, ExportedSettings } from '@/types/paper';
 import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide-react';
 import { KeywordCrawlForm, ReferencesCrawlForm } from './CrawlerTab';
+import { getRefsShowBrowser } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import OverviewTab from './OverviewTab';
 import CrawlerTab from './CrawlerTab';
@@ -159,6 +160,9 @@ export default function SystemPage() {
   };
 
   useEffect(() => () => { if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; } }, []);
+
+  // 挂载后读取持久化的「显示浏览器」偏好（与论文详情页共用；SSR 完成后再同步避免水合不一致）
+  useEffect(() => { setRefsForm(f => ({ ...f, showBrowser: getRefsShowBrowser() })); }, []);
 
   const handleStartReferencesCrawl = async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }) => {
     setRefsStarting(true);
