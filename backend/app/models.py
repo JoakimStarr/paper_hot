@@ -72,32 +72,13 @@ class Paper(Base):
     cnki_subject = Column(String(500), nullable=True)
     doi = Column(String(200), nullable=True, unique=True)
     keywords_cn = Column(UnicodeJSON, default=list)
+    # 参考文献列表（JSON：[{index, text, url}]）——由参考文献爬取任务覆盖式写入，
+    # 替代独立 paper_references 表（知网 URL 的 v 令牌随入口变化，随论文行存储更稳）
+    references_cn = Column(UnicodeJSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     features = relationship("PaperFeatures", back_populates="paper", uselist=False, cascade="all, delete-orphan")
     scores = relationship("PaperScore", back_populates="paper", uselist=False, cascade="all, delete-orphan")
-
-
-class PaperReference(Base):
-    """论文参考文献条目（由参考文献爬取任务写入，按 paper_url 覆盖式更新）。
-
-    ref_url 为条目可点击链接（知网部分条目无链接则为空）；
-    (paper_url, ref_index) 唯一，支持「某文献被哪些论文引用」的反向查询。
-    """
-    __tablename__ = "paper_references"
-
-    id = get_uuid_column()
-    paper_url = Column(String(500), nullable=False, index=True)
-    paper_title = Column(String(500), nullable=True)
-    ref_index = Column(Integer, nullable=False)
-    raw_text = Column(Text, nullable=True)
-    ref_url = Column(String(500), nullable=True)
-    task_id = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    __table_args__ = (
-        UniqueConstraint('paper_url', 'ref_index', name='uq_paper_ref_idx'),
-    )
 
 
 class PaperAnalysis(Base):

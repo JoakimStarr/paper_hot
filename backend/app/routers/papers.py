@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.config import settings
 from app.cache_util import ttl_cache
-from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD, PaperReferenceCRUD
+from app.crud import PaperCRUD, PaperAnalysisCRUD, PaperChatCRUD, PaperSimilarityCRUD, find_citing_papers
 from app.models import BatchReport, PinnedPaper, MAX_PINNED_PAPERS
 from app.routers.personal import _load_hidden_preferences
 from app.routers.deps import (
@@ -188,11 +188,11 @@ async def get_paper_references(paper_id: str, db: AsyncSession = Depends(get_db)
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
-    refs = await PaperReferenceCRUD.get_paper_references(db, paper.url)
+    refs = list(paper.references_cn or [])
 
     # ref_url -> 库内论文 精确匹配（一条 IN 查询，避免逐条 LIKE）
     url_to_paper: dict = {}
-    ref_urls = [r.ref_url for r in refs if r.ref_url]
+    ref_urls = [it.get("url") for it in refs if it.get("url")]
     if ref_urls:
         from sqlalchemy import select as sa_select
         from app.models import Paper as PaperModel
@@ -208,12 +208,12 @@ async def get_paper_references(paper_id: str, db: AsyncSession = Depends(get_db)
         "total": len(refs),
         "references": [
             {
-                "ref_index": r.ref_index,
-                "raw_text": r.raw_text,
-                "ref_url": r.ref_url,
-                **(url_to_paper.get(r.ref_url) or {"matched_paper_id": None, "matched_paper_title": None}),
+                "ref_index": it.get("index"),
+                "raw_text": it.get("text"),
+                "ref_url": it.get("url"),
+                **(url_to_paper.get(it.get("url")) or {"matched_paper_id": None, "matched_paper_title": None}),
             }
-            for r in refs
+            for it in refs
         ],
     }
 
@@ -224,7 +224,7 @@ async def get_paper_cited_by(paper_id: str, db: AsyncSession = Depends(get_db)):
     paper = await PaperCRUD.get_paper_by_id(db, paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="Paper not found")
-    citing = await PaperReferenceCRUD.find_citing_papers(db, paper.title, paper.url)
+    citing = await find_citing_papers(db, paper_id, paper.title, paper.url)
     return {"paper_id": paper_id, "total": len(citing), "citing_papers": citing}
 
 
@@ -488,12 +488,23 @@ async def analyze_paper_stream(
     )
     await db.commit()
 
-    messages = _build_single_analysis_messages(paper)
+    ref_texts = _fetch_paper_ref_texts(paper)
+    messages = _build_single_analysis_messages(paper, refs=ref_texts)
     return _stream_single_analysis_response(analysis_id, paper_id, client, model, messages)
 
 
-def _build_single_analysis_messages(paper) -> list[dict]:
-    """单篇论文结构化分析的 prompt（悬浮窗流式接口与后台任务共用，避免双份漂移）。"""
+def _fetch_paper_ref_texts(paper, limit: int = 25) -> list:
+    """取论文参考文献原文（前 limit 条、截断），供 AI 分析 prompt 注入理论脉络；无数据返回空。"""
+    refs = paper.references_cn or []
+    return [(it.get("text") or "").strip()[:160] for it in refs[:limit] if (it.get("text") or "").strip()]
+
+
+def _build_single_analysis_messages(paper, refs: Optional[list] = None) -> list[dict]:
+    """单篇论文结构化分析的 prompt（悬浮窗流式接口与后台任务共用，避免双份漂移）。
+
+    refs：参考文献原文列表（可空）。有数据时注入「参考文献脉络」段落，
+    让 AI 能基于引用关系分析理论基础与学术定位，而非仅凭摘要臆测。
+    """
     authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
@@ -504,6 +515,18 @@ def _build_single_analysis_messages(paper) -> list[dict]:
         "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
         "回答使用中文，采用清晰的 Markdown 结构（可用标题、加粗、列表），做到有理有据、不空泛。"
     )
+    refs_section = ""
+    refs_instruction = ""
+    if refs:
+        ref_lines = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(refs))
+        refs_section = f"""
+参考文献（前 {len(refs)} 条）：
+{ref_lines}
+"""
+        refs_instruction = (
+            "5. **文献脉络**：结合参考文献分析该文的理论基础与学术定位（它承接了哪些工作、"
+            "与哪些文献对话），未提供参考文献则跳过本点\n"
+        )
     prompt = f"""请从学术角度分析以下论文：
 
 - 标题：{paper.title}
@@ -514,13 +537,13 @@ def _build_single_analysis_messages(paper) -> list[dict]:
 
 摘要：
 {paper.abstract or '无'}
-
+{refs_section}
 请从以下方面进行分析，用中文作答：
 1. **研究背景与核心问题**：论文试图解决什么问题，为什么重要
 2. **研究方法与创新点**：采用什么方法，创新之处在哪里
 3. **主要发现与结论**：核心结论与证据链条
 4. **研究意义与局限性**：对学术与实践的意义，以及存在的不足
-
+{refs_instruction}
 要求：结构清晰，观点明确；基于给出的论文信息作答，不要臆造未提供的内容。"""
 
     return [
@@ -606,7 +629,8 @@ async def _run_single_analyze_background(analysis_id: int, paper_id: str, model:
                 await db.commit()
                 return
 
-            messages = _build_single_analysis_messages(paper)
+            ref_texts = _fetch_paper_ref_texts(paper)
+            messages = _build_single_analysis_messages(paper, refs=ref_texts)
             response = await asyncio.to_thread(
                 client.chat.completions.create,
                 model=model,

@@ -212,9 +212,9 @@ def _parse_cnki_progress(line: str, prog: dict) -> dict:
         prog["verify_failed"] = int(m.group(5))
         prog["failed"] = int(m.group(6))
         prog["phase"] = "done"
-    # --detail-refs 顺带抓取的参考文献进度：每篇「✓ 参考文献已入库 N 条」累加，
+    # --detail-refs 顺带抓取的参考文献进度：每篇「✓ 参考文献已写入论文 N 条」累加，
     # 汇总行「参考文献（--detail-refs）：成功 X 篇 | 失败 Y 篇」直接覆盖
-    m = re.search(r"参考文献已入库\s*(\d+)\s*条", line)
+    m = re.search(r"参考文献已(?:写入论文|入库)\s*(\d+)\s*条", line)
     if m:
         prog["refs_ok"] = prog.get("refs_ok", 0) + int(m.group(1))
     m = re.search(r"参考文献（--detail-refs）：成功\s*(\d+)\s*篇.*?失败\s*(\d+)\s*篇", line)
@@ -577,7 +577,7 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
             m_page = re.search(r"参考文献\s*第\s*(\d+)\s*页", line)
             if m_page:
                 prog["page"] = int(m_page.group(1))
-            m_saved = re.search(r"参考文献已入库\s*(\d+)\s*条", line)
+            m_saved = re.search(r"参考文献已(?:写入论文|入库)\s*(\d+)\s*条", line)
             if m_saved:
                 refs_done_total += int(m_saved.group(1))
             m_total = re.search(r"累计\s*(\d+)\s*条", line)
@@ -586,7 +586,7 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
             m_all = re.search(r"共入库参考文献\s*(\d+)\s*条", line)
             if m_all:
                 prog["collected"] = int(m_all.group(1))
-            if "参考文献入库失败" in line:
+            if "参考文献写入失败" in line or "参考文献入库失败" in line:
                 prog["refs_failed"] = prog.get("refs_failed", 0) + 1
             _refs_state["progress"] = dict(prog)
             _refs_state["last_log"] = list(recent)
@@ -700,12 +700,11 @@ async def backfill_references_crawl(body: ReferencesBackfillRequest, db: AsyncSe
         return {"status": "already_running", "paper_title": _refs_state["paper_title"]}
 
     from sqlalchemy import select as sa_select, func as sa_func, case as sa_case
-    from app.models import Paper, PaperScore, PaperReference, PinnedPaper, Favorite, ReadingHistory
+    from app.models import Paper, PaperScore, PinnedPaper, Favorite, ReadingHistory
 
     limit = max(1, min(int(body.limit or 30), 200))
 
-    # 未抓取过的论文（paper_references 覆盖式写入，distinct paper_url 即已抓集合）
-    refs_url = sa_select(PaperReference.paper_url).distinct().scalar_subquery()
+    # 未抓取过的论文（参考文献随论文行存 references_cn，IS NULL 即未抓）
     priority = sa_case(
         (sa_select(PinnedPaper.id).where(PinnedPaper.paper_id == Paper.id).limit(1).exists(), 3),
         (sa_select(Favorite.id).where(Favorite.paper_id == Paper.id).limit(1).exists(), 2),
@@ -715,7 +714,7 @@ async def backfill_references_crawl(body: ReferencesBackfillRequest, db: AsyncSe
     rows = (await db.execute(
         sa_select(Paper.id, Paper.url, Paper.title, priority, PaperScore.final_score)
         .outerjoin(PaperScore, PaperScore.paper_id == Paper.id)
-        .where(Paper.url.isnot(None), Paper.url != "", ~Paper.url.in_(refs_url))
+        .where(Paper.url.isnot(None), Paper.url != "", Paper.references_cn.is_(None))
         .order_by(priority.desc(), sa_func.coalesce(PaperScore.final_score, 0).desc(), Paper.published_at.desc())
         .limit(limit)
     )).fetchall()
@@ -736,10 +735,10 @@ async def backfill_references_crawl(body: ReferencesBackfillRequest, db: AsyncSe
 async def references_coverage(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
     """参考文献覆盖率：已抓取论文数 / 有效链接论文总数（系统页展示用）。"""
     from sqlalchemy import select as sa_select, func as sa_func
-    from app.models import Paper, PaperReference
+    from app.models import Paper
 
     with_refs = (await db.execute(
-        sa_select(sa_func.count(sa_func.distinct(PaperReference.paper_url)))
+        sa_select(sa_func.count(Paper.id)).where(Paper.references_cn.isnot(None))
     )).scalar() or 0
     total = (await db.execute(
         sa_select(sa_func.count(Paper.id)).where(Paper.url.isnot(None), Paper.url != "")

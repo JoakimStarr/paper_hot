@@ -13,7 +13,7 @@ _filter_stats_cache: dict = {}
 _filter_stats_cache_time: float = 0
 _FILTER_STATS_TTL = 60
 
-from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog, PaperReference
+from app.models import Paper, PaperFeatures, PaperScore, TopicTrend, CrawlLog
 from app.schemas import PaperCreate, CrawlLogCreate
 from app.config import settings
 
@@ -1156,88 +1156,26 @@ class PaperChatCRUD:
         await db.flush()
 
 
-class PaperReferenceCRUD:
-    """论文参考文献条目：按 paper_url 覆盖式写入（先删旧再插新，保证序号连续）。"""
+async def find_citing_papers(
+    db: AsyncSession, paper_id: str, paper_title: str, paper_url: str
+) -> List[dict]:
+    """反向查询：库内哪些论文的参考文献（papers.references_cn JSON）引用了该论文。
 
-    @staticmethod
-    async def replace_paper_references(
-        db: AsyncSession,
-        paper_url: str,
-        paper_title: Optional[str],
-        refs: List[dict],
-        task_id: Optional[int] = None,
-    ) -> int:
-        """refs: [{text: str, url: Optional[str]}, ...]，按顺序编号。"""
-        await db.execute(delete(PaperReference).where(PaperReference.paper_url == paper_url))
-        rows = []
-        for idx, ref in enumerate(refs, start=1):
-            rows.append(PaperReference(
-                paper_url=paper_url,
-                paper_title=paper_title,
-                ref_index=idx,
-                raw_text=(ref.get('text') or '')[:2000] or None,
-                ref_url=(ref.get('url') or None),
-                task_id=task_id,
-            ))
-        if rows:
-            db.add_all(rows)
-        await db.flush()
-        return len(rows)
-
-    @staticmethod
-    async def get_paper_references(
-        db: AsyncSession, paper_url: str, paper_title: Optional[str] = None
-    ) -> List[PaperReference]:
-        """按 URL 取参考文献；URL 查不到时按论文标题兜底。
-
-        知网 kcms2 详情页 URL 的 v 令牌随入口/会话变化，同一论文的 papers.url
-        与参考文献任务所用 URL 可能不同；标题兜底取最近一次抓取那份
-        （同标题可能有多份历史 URL 记录，避免新旧条目混排）。
-        """
-        result = await db.execute(
-            select(PaperReference)
-            .where(PaperReference.paper_url == paper_url)
-            .order_by(PaperReference.ref_index)
-        )
-        refs = list(result.scalars().all())
-        if refs or not (paper_title or "").strip():
-            return refs
-        latest_url = (await db.execute(
-            select(PaperReference.paper_url)
-            .where(PaperReference.paper_title == paper_title.strip())
-            .order_by(PaperReference.created_at.desc())
-            .limit(1)
-        )).scalar()
-        if not latest_url or latest_url == paper_url:
-            return []
-        result = await db.execute(
-            select(PaperReference)
-            .where(PaperReference.paper_url == latest_url)
-            .order_by(PaperReference.ref_index)
-        )
-        return list(result.scalars().all())
-
-    @staticmethod
-    async def find_citing_papers(db: AsyncSession, paper_title: str, paper_url: str) -> List[dict]:
-        """反向查询：库内哪些论文的参考文献列表引用了该论文。
-
-        匹配规则：ref_url 精确相等，或条目原文包含论文标题（标题过短易误伤，需 ≥8 字）；
-        排除论文自身，返回库内论文 {id, title} 列表。
-        """
-        conds = [PaperReference.ref_url == paper_url]
-        title = (paper_title or "").strip()
-        if len(title) >= 8:
-            conds.append(PaperReference.raw_text.contains(title))
-        rows = (await db.execute(
-            select(PaperReference.paper_url)
-            .where(or_(*conds), PaperReference.paper_url != paper_url)
-            .distinct()
-        )).all()
-        urls = list(dict.fromkeys(r[0] for r in rows))
-        if not urls:
-            return []
-        res = await db.execute(select(Paper.id, Paper.title).where(Paper.url.in_(urls)))
-        return [{"id": r[0], "title": r[1]} for r in res.all()]
+    匹配规则：条目 url 与论文 URL 相等，或条目原文包含论文标题（标题过短易误伤，需 ≥8 字）；
+    排除论文自身，返回库内论文 {id, title} 列表。带参考文献的论文量级有限，Python 侧过滤足够。
+    """
+    rows = (await db.execute(
+        select(Paper.id, Paper.title, Paper.references_cn)
+        .where(Paper.references_cn.isnot(None), Paper.id != paper_id)
+    )).all()
+    title = (paper_title or "").strip()
+    out = []
+    for pid, ptitle, refs in rows:
+        for it in (refs or []):
+            if it.get("url") == paper_url or (len(title) >= 8 and title in (it.get("text") or "")):
+                out.append({"id": pid, "title": ptitle})
+                break
+    return out
 
 
 class CrawlLogCRUD:

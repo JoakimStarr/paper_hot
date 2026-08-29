@@ -129,3 +129,36 @@ async def init_db():
         pa_cols = {r[1] for r in pa_rows}
         if "user_id" not in pa_cols:
             await conn.execute(text("ALTER TABLE paper_analyses ADD COLUMN user_id VARCHAR(50) DEFAULT 'local'"))
+        # papers.references_cn：参考文献 JSON 直接挂论文行（替代独立 paper_references 表）
+        pp_rows = (await conn.execute(text("PRAGMA table_info(papers)"))).fetchall()
+        pp_cols = {r[1] for r in pp_rows}
+        if "references_cn" not in pp_cols:
+            await conn.execute(text("ALTER TABLE papers ADD COLUMN references_cn TEXT"))
+        # 旧表数据一次性迁移（URL 精确优先，同标题多份取最新一份；已有值不覆盖），迁移后删表
+        try:
+            ref_rows = (await conn.execute(text(
+                "select paper_url, paper_title, ref_index, raw_text, ref_url, created_at "
+                "from paper_references order by created_at"
+            ))).fetchall()
+        except Exception:
+            ref_rows = []  # 表不存在（已迁移过/新库）
+        if ref_rows:
+            from app.models import Paper as _PaperModel
+            by_url: dict = {}
+            title_latest: dict = {}
+            for _url, _ptitle, _idx, _raw, _rurl, _created in ref_rows:
+                by_url.setdefault(_url, []).append({"index": _idx, "text": _raw, "url": _rurl})
+                title_latest[_ptitle] = _url  # 已按 created_at 升序，最后一次写入即最新一份
+            for url, items in by_url.items():
+                await conn.execute(
+                    text("UPDATE papers SET references_cn=:payload WHERE url=:u AND references_cn IS NULL"),
+                    {"payload": json.dumps(items, ensure_ascii=False), "u": url},
+                )
+            for ptitle, url in title_latest.items():
+                if not ptitle:
+                    continue
+                await conn.execute(
+                    text("UPDATE papers SET references_cn=:payload WHERE title=:t AND references_cn IS NULL"),
+                    {"payload": json.dumps(by_url[url], ensure_ascii=False), "t": ptitle},
+                )
+            await conn.execute(text("DROP TABLE paper_references"))

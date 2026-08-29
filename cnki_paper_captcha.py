@@ -2197,41 +2197,37 @@ class JournalCrawler:
         except Exception:
             return ''
 
-    async def _ensure_ref_table(self):
-        """确保 paper_references 表存在（脚本自管建表，与 backend 模型解耦）。"""
-        if getattr(self, '_ref_table_ready', False):
-            return
-        from app.database import engine
-        async with engine.begin() as conn:
-            await conn.run_sync(RefBase.metadata.create_all)
-        self._ref_table_ready = True
-
     async def _save_references(self, paper_url: str, paper_title: str, refs: list):
-        """覆盖式写入 paper_references 表（先删该论文旧参考文献再插入，含序号）。"""
+        """覆盖式写入论文行的 references_cn JSON（[{index, text, url}]）。
+
+        知网 kcms2 URL 的 v 令牌随入口变化：先按 URL 精确更新，未命中再按标题更新；
+        论文不在库中则明确提示（参考文献随论文行存储，未入库无处挂载）。
+        """
+        payload = json.dumps(
+            [{"index": i, "text": (r.get('text') or '')[:2000], "url": r.get('url')}
+             for i, r in enumerate(refs, start=1)],
+            ensure_ascii=False)
         if not hasattr(self, "_db_lock"):
             self._db_lock = asyncio.Lock()
         async with self._db_lock:
             try:
                 await self._ensure_db()
-                await self._ensure_ref_table()
+                from sqlalchemy import update
+                from app.models import Paper
                 from app.database import AsyncSessionLocal
                 async with AsyncSessionLocal() as db:
-                    await db.execute(delete(PaperReference).where(PaperReference.paper_url == paper_url))
-                    rows = []
-                    for idx, ref in enumerate(refs, start=1):
-                        rows.append(PaperReference(
-                            paper_url=paper_url,
-                            paper_title=(paper_title or '')[:500] or None,
-                            ref_index=idx,
-                            raw_text=(ref.get('text') or '')[:2000] or None,
-                            ref_url=(ref.get('url') or None),
-                        ))
-                    if rows:
-                        db.add_all(rows)
+                    result = await db.execute(
+                        update(Paper).where(Paper.url == paper_url).values(references_cn=payload))
+                    if result.rowcount == 0 and (paper_title or '').strip():
+                        result = await db.execute(
+                            update(Paper).where(Paper.title == paper_title.strip()).values(references_cn=payload))
                     await db.commit()
-                    print(f"    [线程{self.thread_id}] ✓ 参考文献已入库 {len(rows)} 条 -> {(paper_title or paper_url)[:60]}")
+                    if result.rowcount:
+                        print(f"    [线程{self.thread_id}] ✓ 参考文献已写入论文 {len(refs)} 条 -> {(paper_title or paper_url)[:60]}")
+                    else:
+                        print(f"    [线程{self.thread_id}] ⚠ 该论文不在库中，参考文献未保存（可先入库再抓取）: {(paper_title or paper_url)[:60]}")
             except Exception as e:
-                print(f"    [线程{self.thread_id}] ✗ 参考文献入库失败: {e}")
+                print(f"    [线程{self.thread_id}] ✗ 参考文献写入失败: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -3275,35 +3271,6 @@ class KeywordSearchCrawler(JournalCrawler):
             traceback.print_exc()
         finally:
             await self.close_browser()
-
-
-# —— 参考文献抓取（方法供详情流程与独立参考文献模式共用）——
-# paper_references 表模型：与 v2.20.0 曾引入的 backend 模型同构，但定义在本脚本内
-# （独立 Base），建表由脚本自管（表已存在则跳过），不依赖也不修改 backend。
-from datetime import timezone
-from uuid import uuid4
-from sqlalchemy import Column, String, Text, Integer, DateTime, UniqueConstraint, delete
-from sqlalchemy.orm import declarative_base
-
-RefBase = declarative_base()
-
-
-class PaperReference(RefBase):
-    """论文参考文献条目（按 paper_url 覆盖式更新，(paper_url, ref_index) 唯一）。"""
-    __tablename__ = "paper_references"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    paper_url = Column(String(500), nullable=False, index=True)
-    paper_title = Column(String(500), nullable=True)
-    ref_index = Column(Integer, nullable=False)
-    raw_text = Column(Text, nullable=True)
-    ref_url = Column(String(500), nullable=True)
-    task_id = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    __table_args__ = (
-        UniqueConstraint('paper_url', 'ref_index', name='uq_paper_ref_idx'),
-    )
 
 
 class ReferenceCrawler(KeywordSearchCrawler):
