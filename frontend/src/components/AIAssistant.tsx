@@ -47,10 +47,12 @@ async function streamAssistantDirect(
   signal?: AbortSignal,
   agentEnabled?: boolean,
   model?: string,
+  extraContext?: string,
 ): Promise<void> {
   const body: Record<string, unknown> = { messages, session_id: sessionId };
   if (agentEnabled !== undefined) body.agent_enabled = agentEnabled;
   if (model) body.model = model;
+  if (extraContext) body.extra_context = extraContext;
   const res = await fetch(`${ASSISTANT_BACKEND_URL}/api/assistant/chat`, {
     method: 'POST',
     headers: assistantHeaders(),
@@ -255,20 +257,24 @@ export default function AIAssistant() {
   const [pageTab, setPageTab] = useState<string | undefined>(undefined);
   // 研究工作台项目标题（上报自 ProjectDetail，注入助手上下文）
   const [pageProjectTitle, setPageProjectTitle] = useState<string | undefined>(undefined);
+  // 页面动态上下文（上报自 network 等页面，如选中节点的结构摘要；随每次追问注入）
+  const [pageExtraContext, setPageExtraContext] = useState<string | undefined>(undefined);
 
   // 页面跳转时清除外部覆盖与 tab 上报
   useEffect(() => {
     setOverride(null);
     setPageTab(undefined);
     setPageProjectTitle(undefined);
+    setPageExtraContext(undefined);
   }, [derivedCtx.key]);
 
   // 监听页面内部子 tab 切换
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (((e as CustomEvent).detail || {})) as { tab?: string; projectTitle?: string };
+      const detail = (((e as CustomEvent).detail || {})) as { tab?: string; projectTitle?: string; contextText?: string };
       setPageTab(detail.tab || undefined);
       setPageProjectTitle(detail.projectTitle || undefined);
+      setPageExtraContext(detail.contextText || undefined);
     };
     window.addEventListener('pp:page-context', handler);
     return () => window.removeEventListener('pp:page-context', handler);
@@ -307,6 +313,9 @@ export default function AIAssistant() {
   const [agentOn, setAgentOn] = useState(false);
   // 首页/趋势页注入的论文库热门趋势（agent 关闭时也能用真实数据回答"热门趋势"）
   const [pageTrending, setPageTrending] = useState<string | null>(null);
+  // network 页注入的关键词共现网络摘要（agent 关闭时也能回答"网络结构/核心节点"）
+  const [pageNetworkSummary, setPageNetworkSummary] = useState<string | null>(null);
+  const networkSummaryRef = useRef<string | null>(null);
   // 打开后待自动发送的问题（如 AI 分析按钮触发）
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
@@ -476,6 +485,50 @@ export default function AIAssistant() {
     return () => { cancelled = true; };
   }, [ctx.key, ctx.page]);
 
+  // network 页：拉取关键词共现网络，生成全局结构摘要注入会话上下文
+  // （此前该页助手只有一句静态页面说明，AI 无法回答"网络结构/核心节点"类问题）
+  useEffect(() => {
+    if (ctx.page !== 'network') {
+      if (pageNetworkSummary !== null) {
+        setPageNetworkSummary(null);
+        networkSummaryRef.current = null;
+      }
+      return;
+    }
+    if (networkSummaryRef.current) {
+      if (pageNetworkSummary === null) setPageNetworkSummary(networkSummaryRef.current);
+      return;
+    }
+    let cancelled = false;
+    papersApi.getKeywordNetwork()
+      .then((res) => {
+        if (cancelled) return;
+        const nodes = res.nodes || [];
+        const links = (res.links || []) as Array<{ source: string | { id?: string }; target: string | { id?: string }; value?: number }>;
+        if (nodes.length === 0) return;
+        const nid = (x: string | { id?: string }) => (typeof x === 'string' ? x : x?.id || '');
+        const degree: Record<string, number> = {};
+        links.forEach((l) => {
+          const s = nid(l.source);
+          const t2 = nid(l.target);
+          if (s) degree[s] = (degree[s] || 0) + 1;
+          if (t2) degree[t2] = (degree[t2] || 0) + 1;
+        });
+        const topNodes = [...nodes].sort((a, b) => (degree[b.id] || 0) - (degree[a.id] || 0)).slice(0, 10);
+        const nodeLines = topNodes
+          .map((n, i) => `${i + 1}. ${n.name}（出现 ${n.count || 0} 次，与 ${degree[n.id] || 0} 个词共现）`)
+          .join('\n');
+        const topLinks = [...links].sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 8);
+        const linkLines = topLinks.map((l) => `${nid(l.source)}—${nid(l.target)}（共现 ${l.value || 0} 次）`).join('；');
+        const text = `当前关键词共现网络（全库统计，页面已加载）：\n- 规模：${nodes.length} 个关键词节点、${links.length} 条共现边\n- 核心关键词（按共现度降序）：\n${nodeLines}\n- 最强共现词对：${linkLines}\n\n（以上为论文库真实图数据，回答「网络揭示了什么结构/哪些节点是核心」等问题时请优先引用，不要臆造；摘要仅列出共现强度居前的词对，未列出的词对不代表共现为零——被问「A 与 B 是否共同出现过」时，若不在列表中应如实说明现有摘要无法判断）`;
+        networkSummaryRef.current = text;
+        setPageNetworkSummary(text);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.page]);
+
   // 监听外部「打开悬浮助手」事件（论文卡片 AI 分析按钮等）
   useEffect(() => {
     const handler = (e: Event) => {
@@ -587,9 +640,13 @@ export default function AIAssistant() {
     setHistoryOpen(false);
 
     let sid = sessionId;
+    // 请求级页面上下文（network 摘要/趋势/选中节点），随每轮追问更新；新建会话已注入 context_text，无需重复
+    const justCreatedSession = sessionId === null;
+    const requestExtraContext = [pageExtraContext, pageTrending, pageNetworkSummary]
+      .filter(Boolean).join('\n\n') || undefined;
     try {
       if (sid === null) {
-        const contextPieces = [ctx.contextText, pageTrending].filter(Boolean).join('\n\n');
+        const contextPieces = [ctx.contextText, pageExtraContext, pageTrending, pageNetworkSummary].filter(Boolean).join('\n\n');
         const created = await assistantApi.createSession(ctx.page, {
           ...(ctx.paperId ? { paper_id: ctx.paperId } : {}),
           ...(contextPieces ? { context_text: contextPieces } : {}),
@@ -647,7 +704,7 @@ export default function AIAssistant() {
           } else if (ev.usage) {
             setLastUsage(ev.usage);
           }
-        }, controller.signal, agentOn, chatModel || undefined);
+        }, controller.signal, agentOn, chatModel || undefined, justCreatedSession ? undefined : requestExtraContext);
 
         // 手动停止：保留已生成内容（不落库），而不是丢弃
         if (controller.signal.aborted && fullContent) {

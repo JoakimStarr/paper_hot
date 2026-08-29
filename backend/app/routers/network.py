@@ -100,12 +100,8 @@ async def get_keyword_gaps(
     return {"gaps": gaps, "total": len(gaps)}
 
 
-@router.get("/network/keyword-map")
-async def get_keyword_research_map(
-    keyword: str = Query(..., min_length=1, max_length=80),
-    db: AsyncSession = Depends(get_db),
-):
-    """查询驱动的研究版图（P2-13）：点一个关键词 -> 动态生成该词的研究版图。
+async def compute_keyword_research_map(db, keyword: str) -> dict:
+    """研究版图核心实现（端点 /network/keyword-map 与 agent 工具 keyword_map 共用）。
 
     返回：共现词（含计数）、年度趋势、代表论文（综合评分 top）、期刊分布。
     """
@@ -164,5 +160,14 @@ async def get_keyword_research_map(
         "representative_papers": representative,
         "journal_distribution": sorted(journals.items(), key=lambda x: x[1], reverse=True)[:10],
     }
+
+
+@router.get("/network/keyword-map")
+async def get_keyword_research_map(
+    keyword: str = Query(..., min_length=1, max_length=80),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询驱动的研究版图（P2-13）：点一个关键词 -> 动态生成该词的研究版图。"""
+    return await compute_keyword_research_map(db, keyword)
 
 

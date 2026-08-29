@@ -132,10 +132,10 @@ export default function ProjectDetail({ projectId, initialStep }: { projectId: n
     }
   }, [project, toast]);
 
-  const runAi = useCallback(async (action: string, ideaText?: string) => {
+  const runAi = useCallback(async (action: string, ideaText?: string, model?: string) => {
     if (!project) return;
     try {
-      await workbenchApi.aiAction(project.id, action, ideaText);
+      await workbenchApi.aiAction(project.id, action, ideaText, model);
       await load(true);
     } catch (e: any) {
       toast(e?.message || '任务启动失败', 'error');

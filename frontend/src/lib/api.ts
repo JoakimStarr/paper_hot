@@ -720,10 +720,10 @@ export const workbenchApi = {
     request(`/topic-projects/${id}/recall-papers`, { method: 'POST' }),
 
   // —— 统一 AI 操作（后台任务，轮询项目详情等待完成）——
-  aiAction: async (id: number, action: string, ideaText?: string): Promise<{ status: string; action: string }> =>
+  aiAction: async (id: number, action: string, ideaText?: string, model?: string): Promise<{ status: string; action: string }> =>
     request(`/topic-projects/${id}/ai`, {
       method: 'POST',
-      body: { action, ...(ideaText ? { idea_text: ideaText } : {}) },
+      body: { action, ...(ideaText ? { idea_text: ideaText } : {}), ...(model ? { model } : {}) },
     }),
 
   /** 立项书（结果存回项目 proposal）。 */
@@ -760,9 +760,12 @@ export function streamValidateTopic(
   cb: ChatStreamCallbacks,
   signal?: AbortSignal,
   projectId?: number,
+  useTools?: boolean,
 ): Promise<void> {
-  return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal,
-    projectId ? { topic, project_id: projectId } : { topic });
+  const extra: Record<string, unknown> = { topic };
+  if (projectId) extra.project_id = projectId;
+  if (useTools !== undefined) extra.use_tools = useTools;
+  return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal, extra);
 }
 
 /** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */

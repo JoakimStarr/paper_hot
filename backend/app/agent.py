@@ -138,11 +138,20 @@ async def _t_paper_trend(db: AsyncSession, args: dict) -> dict:
 
 
 async def _t_keyword_gaps(db: AsyncSession, args: dict) -> dict:
-    """研究空白组合（共现异常稀疏的高频词对）。"""
+    """研究空白候选组合：两个高频词很少在同一篇论文中共现（共现可为 0 或很小的正数）。"""
     from app.stats import compute_keyword_gaps
     top_n = min(int(args.get("top_n") or 5), 10)
     gaps = await compute_keyword_gaps(db, limit=top_n)
-    return {"gaps": gaps}
+    numbered = [{**g, "rank": i + 1} for i, g in enumerate(gaps)]
+    return {
+        "note": (
+            "以上为「共现稀疏」候选：两个关键词各自高频、但很少在同一篇论文中同时出现。"
+            "cooccurrence 为 0 或很小的正数——「共现稀疏」不等于「从未共同出现」。"
+            "向用户表述时必须写「共现仅 N 次，远低于两词热度下的预期」（N=0 时才可说「未检索到共现」），"
+            "严禁说「没有出现过」；引用数字必须与组合一一对应，不得跨行复用。"
+        ),
+        "gaps": numbered,
+    }
 
 
 async def _t_subfield_distribution(db: AsyncSession, args: dict) -> dict:
@@ -308,6 +317,78 @@ async def _t_topic_crowding(db: AsyncSession, args: dict) -> dict:
     }
 
 
+async def _t_keyword_network(db: AsyncSession, args: dict) -> dict:
+    """关键词共现网络摘要：节点/边规模 + 度中心性 top 节点 + 权重 top 共现对。
+
+    供「这个网络揭示了什么结构/哪些节点是核心」类问题；原图 top80 节点 top400 边，
+    工具内再次裁剪为 LLM 友好规模。
+    """
+    from app.stats import keyword_network
+
+    data = await keyword_network(db)
+    nodes = data.get("nodes") or []
+    links = data.get("links") or []
+
+    degree: dict = {}
+    for l in links:
+        s, t = l.get("source"), l.get("target")
+        if s:
+            degree[s] = degree.get(s, 0) + 1
+        if t:
+            degree[t] = degree.get(t, 0) + 1
+
+    top_n = min(int(args.get("top_n") or 12), 20)
+    top_nodes = sorted(
+        nodes,
+        key=lambda n: (degree.get(n.get("id"), 0), n.get("count") or 0),
+        reverse=True,
+    )[:top_n]
+    top_links = sorted(links, key=lambda l: l.get("value") or 0, reverse=True)[:top_n * 2]
+
+    return {
+        "note": (
+            "以上为共现强度居前的节点与词对；未列出的词对不代表共现为零。"
+            "被问「A 与 B 是否共同出现过」时，若不在列表中应如实说明现有数据无法判断，不得臆断。"
+        ),
+        "total_nodes": len(nodes),
+        "total_links": len(links),
+        "core_keywords_by_degree": [
+            {"keyword": n.get("name"), "occurrences": n.get("count") or 0, "cooccurrence_degree": degree.get(n.get("id"), 0)}
+            for n in top_nodes
+        ],
+        "strongest_cooccurrence_pairs": [
+            {"a": l.get("source"), "b": l.get("target"), "cooccurrence": l.get("value")}
+            for l in top_links
+        ],
+    }
+
+
+async def _t_keyword_map(db: AsyncSession, args: dict) -> dict:
+    """关键词研究版图：库内论文数/共现词/年度趋势/期刊分布/代表论文。"""
+    keyword = str(args.get("keyword") or "").strip()
+    if not keyword:
+        return {"error": "keyword 参数必填"}
+    from app.routers.network import compute_keyword_research_map
+    return await compute_keyword_research_map(db, keyword)
+
+
+async def _t_topic_clusters(db: AsyncSession, args: dict) -> dict:
+    """主题聚类地图（本地向量 KMeans，结果自带 30 分钟缓存）。"""
+    from app.clusters import build_topic_clusters
+
+    k = min(max(int(args.get("k") or 18), 4), 40)
+    data = await build_topic_clusters(db, k=k)
+    clusters = []
+    for c in (data.get("clusters") or [])[:15]:
+        clusters.append({
+            "label": c.get("label"),
+            "size": c.get("size"),
+            "year_range": c.get("year_range"),
+            "top_keywords": (c.get("top_keywords") or [])[:8],
+        })
+    return {"total_papers": data.get("total"), "k": data.get("k"), "clusters": clusters}
+
+
 # ---------------------------------------------------------------- 工具注册表
 
 def _schema(name: str, description: str, props: dict, required: list[str]) -> dict:
@@ -334,9 +415,28 @@ TOOL_HANDLERS = {
     "retrieve_context": _t_retrieve_context,
     "trending_topics": _t_trending_topics,
     "topic_crowding": _t_topic_crowding,
+    "keyword_network": _t_keyword_network,
+    "keyword_map": _t_keyword_map,
+    "topic_clusters": _t_topic_clusters,
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
+    # 选题验证器（技能层）：仅定量查询类工具——刻意不含返回论文列表的工具
+    # （search_papers/retrieve_context/author_papers 会产生独立 [n] 编号，与基础召回
+    #  的 [1-30] 引用编号冲突，前端引用跳转会错位）
+    "topic_validator": [
+        _schema("topic_crowding", "选题拥挤度评估：给定候选选题，返回论文库近似论文的拥挤度统计（相似度/近3月发文量/竞争作者与期刊分布）。需要核验拥挤度或补充竞争证据时使用",
+                {"topic": {"type": "string"}}, ["topic"]),
+        _schema("keyword_gaps", "获取研究空白候选组合（两个高频关键词很少共现——是「共现稀疏」而非「从未共现」）。评估选题是否踩中真实空白时使用",
+                {"top_n": {"type": "integer"}}, []),
+        _schema("paper_trend", "查询某关键词的逐年发文量趋势。判断方向升温/降温时使用",
+                {"keyword": {"type": "string"}}, ["keyword"]),
+        _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速）。对比选题热度时使用",
+                {}, []),
+        _schema("subfield_distribution", "获取经济学子领域论文分布", {}, []),
+        _schema("keyword_map", "查询某关键词的研究版图：库内论文数、共现关键词、年度趋势、期刊分布、代表论文。深挖选题涉及的核心概念时使用",
+                {"keyword": {"type": "string"}}, ["keyword"]),
+    ],
     # 全局悬浮助手（跨页面通用）：完整工具集，覆盖论文/趋势/空白/子领域/作者检索
     "assistant_chat": [
         _schema("search_papers", "按关键词/年份/期刊检索论文库中的论文",
@@ -347,7 +447,7 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
         _schema("paper_trend", "查询某关键词的逐年发文量趋势",
                 {"keyword": {"type": "string"}}, ["keyword"]),
-        _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
+        _schema("keyword_gaps", "获取研究空白候选组合（两个高频关键词很少在同一篇论文中共现，共现次数为 0 或很小的正数——是「共现稀疏」而非「从未共现」；回答“哪些交叉方向是空白/值得研究”时使用。引用数字必须与组合一一对应；共现>0 时严禁表述为「没有出现过」",
                 {"top_n": {"type": "integer"}}, []),
         _schema("trending_topics", "获取论文库当前热门话题 Top10（已按当年发文量降序，含同比增速参考）。回答“最近有什么热点/热门趋势/哪些领域在升温”时使用，保持其排序",
                 {}, []),
@@ -357,6 +457,12 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
         _schema("topic_crowding", "选题拥挤度评估：给定候选选题，返回论文库近似论文的拥挤度统计（相似度/近3月发文量/竞争作者与期刊分布）。回答“这个选题能不能做/是否拥挤/竞争如何”时使用",
                 {"topic": {"type": "string"}}, ["topic"]),
+        _schema("keyword_network", "获取关键词共现网络摘要：核心关键词（按共现度排序，含词频与共现度）与最强共现词对。回答“关键词网络结构/哪些关键词是核心/关键词间关联”时使用",
+                {"top_n": {"type": "integer"}}, []),
+        _schema("keyword_map", "查询某关键词的研究版图：库内论文数、共现关键词、年度发文趋势、期刊分布、代表论文。回答“某关键词的研究现状/版图/谁在做”时使用",
+                {"keyword": {"type": "string"}}, ["keyword"]),
+        _schema("topic_clusters", "获取论文库主题聚类地图：各主题簇的标签、规模、年份范围与高频关键词。回答“论文库有哪些主题/研究方向分类”时使用",
+                {"k": {"type": "integer"}}, []),
     ],
     # 趋势追问（P0）
     "trend_chat": [
@@ -368,7 +474,7 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]),
         _schema("paper_trend", "查询某关键词的逐年发文量趋势",
                 {"keyword": {"type": "string"}}, ["keyword"]),
-        _schema("keyword_gaps", "获取研究空白组合（高频但共现稀疏的关键词对）",
+        _schema("keyword_gaps", "获取研究空白候选组合（两个高频关键词很少在同一篇论文中共现，共现次数为 0 或很小的正数——是「共现稀疏」而非「从未共现」；回答“哪些交叉方向是空白/值得研究”时使用。引用数字必须与组合一一对应；共现>0 时严禁表述为「没有出现过」",
                 {"top_n": {"type": "integer"}}, []),
         _schema("trending_topics", "获取论文库当前热门话题 Top10（当年发文数+同比增速），回答“最近有什么热点/热门趋势”时使用",
                 {}, []),

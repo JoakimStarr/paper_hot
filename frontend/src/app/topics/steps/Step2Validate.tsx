@@ -30,6 +30,9 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
     recent_1y_count: number;
   } | null>(null);
   const [proposalBusy, setProposalBusy] = useState(false);
+  // Agent 工具模式：验证时允许 AI 调用定量工具查询论文库（拥挤度/空白/趋势）
+  const [useTools, setUseTools] = useState(true);
+  const [toolProgress, setToolProgress] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const aiRunning = project.ai_pending === 'overview';
@@ -93,6 +96,9 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
         // 不能再本地累加，否则报告会随流式片段成倍重复
         onContent: (text) => setReportContent(text),
         onReasoning: (text) => setReportReasoning(text),
+        onToolProgress: (data) => {
+          setToolProgress(data?.tool || '');
+        },
         onMeta: (data) => {
           if (data && typeof data === 'object' && 'papers' in data) {
             const meta = data as any;
@@ -106,6 +112,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
         },
         onDone: (fullContent) => {
           setValidating(false);
+          setToolProgress('');
           // 验证报告 + 证据快照 + 结构化评分一并沉淀回项目（评分驱动列表展示与状态）
           if (fullContent) {
             const scores = parseValidationScores(fullContent);
@@ -128,10 +135,12 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
         onError: (msg) => {
           setReportError(msg);
           setValidating(false);
+          setToolProgress('');
         },
       },
       controller.signal,
       project.id,
+      useTools,
     );
   };
 
@@ -180,14 +189,32 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
               </div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <label
+              className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none"
+              title="开启后 AI 可在写报告前调用论文库工具（拥挤度统计/空白组合/趋势）核验证据"
+            >
+              <input
+                type="checkbox"
+                checked={useTools}
+                onChange={(e) => setUseTools(e.target.checked)}
+                className="w-3.5 h-3.5 accent-purple-600"
+              />
+              工具查询
+            </label>
             {validating ? (
-              <button
-                onClick={handleAbort}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm rounded-lg transition-colors"
-              >
-                <Square className="w-4 h-4" /> 停止
-              </button>
+              <>
+                <span className="inline-flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  {toolProgress ? `正在查询：${toolProgress}` : 'AI 正在验证'}
+                </span>
+                <button
+                  onClick={handleAbort}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm rounded-lg transition-colors"
+                >
+                  <Square className="w-4 h-4" /> 停止
+                </button>
+              </>
             ) : (
               <button
                 onClick={handleValidate}

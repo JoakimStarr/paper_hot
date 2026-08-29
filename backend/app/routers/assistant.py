@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     messages: List[dict] = []                 # 本轮新增消息（通常只有一条 user）
     agent_enabled: Optional[bool] = None      # 请求级"数据库检索"开关；None 跟随全局 settings.agent_enabled
     model: Optional[str] = None               # 请求级模型（provider/model 或裸模型名）；None 用默认模型
+    extra_context: Optional[str] = None       # 请求级页面补充上下文（如 network 选中节点摘要），随每次追问更新，不落库
 
 
 class MessagesIn(BaseModel):
@@ -282,7 +283,12 @@ async def assistant_chat(
             logger.warning(f"assistant: failed to load paper {session.paper_id}: {e}")
             paper = None
 
-    system_prompt = _build_system_prompt(session.page, paper, session.context_text)
+    # 请求级 extra_context 覆盖在会话级 context_text 之上（如 network 页选中节点后的结构摘要），
+    # 让已存在会话无需重建也能感知最新页面状态
+    merged_context = "\n\n".join(
+        x for x in [session.context_text, body.extra_context] if x and x.strip()
+    ).strip() or None
+    system_prompt = _build_system_prompt(session.page, paper, merged_context)
     enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
     if enabled:
         # 工具行为规则保持精简：工具细节由 JSON schema 提供，提示词只约束行为，避免指令稀释

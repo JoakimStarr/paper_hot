@@ -8,6 +8,7 @@ import { Activity, Settings, Database, Brain, ScrollText, Loader2 } from 'lucide
 import { KeywordCrawlForm, ReferencesCrawlForm } from './CrawlerTab';
 import { getRefsShowBrowser } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import OverviewTab from './OverviewTab';
 import CrawlerTab from './CrawlerTab';
 import DataTab from './DataTab';
@@ -30,6 +31,7 @@ function useAutoClear(value: unknown, clear: () => void, ms = 5000) {
 
 export default function SystemPage() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.system'));
   const [activeTab, setActiveTabState] = useState<TabType>('overview');
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [crawlLogs, setCrawlLogs] = useState<CrawlLog[]>([]);
@@ -145,12 +147,14 @@ export default function SystemPage() {
       if (!info || !info.running) {
         refsPollRef.current = null;
         setRefsStarting(false);
+        loadRefsCoverage();  // 任务结束刷新覆盖率
         return;
       }
       if (refsAttempts > 600) {
         refsPollRef.current = null;
         setRefsStarting(false);
         setMessage({ ok: true, text: t('sys.kwPollTimeout') });
+        loadRefsCoverage();
         return;
       }
       const delay = refsAttempts <= 100 ? 3000 : 30000;
@@ -159,10 +163,10 @@ export default function SystemPage() {
     refsPollRef.current = setTimeout(tick, 3000);
   };
 
-  useEffect(() => () => { if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; } }, []);
-
   // 挂载后读取持久化的「显示浏览器」偏好（与论文详情页共用；SSR 完成后再同步避免水合不一致）
   useEffect(() => { setRefsForm(f => ({ ...f, showBrowser: getRefsShowBrowser() })); }, []);
+
+  useEffect(() => () => { if (refsPollRef.current) { clearTimeout(refsPollRef.current); refsPollRef.current = null; } }, []);
 
   const handleStartReferencesCrawl = async (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number }) => {
     setRefsStarting(true);
@@ -188,6 +192,39 @@ export default function SystemPage() {
       setRefsStopping(false);
       setMessage(errMsg(error, t('sys.refsStopFailed')));
     }
+  };
+
+  // —— 参考文献智能补抓（P1-A2）：自动构建未抓取队列 ——
+  const [backfillLimit, setBackfillLimit] = useState(30);
+  const [backfillStarting, setBackfillStarting] = useState(false);
+  const [refsCoverage, setRefsCoverage] = useState<{ papers_with_refs: number; papers_total: number } | null>(null);
+
+  const loadRefsCoverage = () => {
+    papersApi.getReferencesCoverage().then(setRefsCoverage).catch(() => {});
+  };
+
+  useEffect(() => {
+    loadRefsCoverage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleBackfillReferencesCrawl = async () => {
+    if (backfillStarting || refsInfo?.running) return;
+    setBackfillStarting(true);
+    try {
+      const res = await papersApi.backfillReferencesCrawl({ limit: backfillLimit });
+      if (res.status === 'already_running') {
+        setMessage(errMsg(new Error(t('sys.refsBackfillAlready')), ''));
+      } else if (res.status === 'empty') {
+        setMessage(errMsg(new Error(t('sys.refsBackfillEmpty')), ''));
+      } else {
+        setMessage(okMsg(t('sys.refsBackfillQueued', { n: res.queued ?? 0 })));
+        startRefsStatusPoll();
+      }
+    } catch (error: unknown) {
+      setMessage(errMsg(error, t('sys.refsBackfillFailed')));
+    }
+    setBackfillStarting(false);
   };
 
   const handleStartKeywordCrawl = async () => {
@@ -1002,6 +1039,11 @@ export default function SystemPage() {
             setRefsForm={setRefsForm}
             onStartReferencesCrawl={handleStartReferencesCrawl}
             onStopReferencesCrawl={handleStopReferencesCrawl}
+            backfillLimit={backfillLimit}
+            backfillStarting={backfillStarting}
+            refsCoverage={refsCoverage}
+            setBackfillLimit={setBackfillLimit}
+            onBackfillReferencesCrawl={handleBackfillReferencesCrawl}
           />
         );
       case 'data':

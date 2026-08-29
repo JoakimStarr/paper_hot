@@ -12,6 +12,7 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
   ssr: false,
 });
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import { getIssuePeriod, topicColors, downloadTextFile, getRefsShowBrowser, rememberRefsShowBrowser } from '@/lib/utils';
 import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
@@ -23,6 +24,7 @@ export default function PaperDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [paper, setPaper] = useState<PaperDetailResponse | null>(null);
+  usePageTitle(paper?.title);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +58,7 @@ export default function PaperDetailPage() {
   const loadRefs = async () => {
     if (refsLoading || refsData) return;
     setRefsLoading(true);
+    setRefsError(false);
     try {
       const [refs, cited] = await Promise.all([
         papersApi.getPaperReferences(params.id as string),
@@ -70,7 +73,6 @@ export default function PaperDetailPage() {
     }
   };
 
-  const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // 用 ref 保存最新 loadRefs，避免 effect/回调里的闭包过期问题
   const loadRefsRef = useRef(loadRefs);
   loadRefsRef.current = loadRefs;
@@ -121,6 +123,7 @@ export default function PaperDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refsOpen, refsData, refsError]);
 
+  const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // —— 阅读进度条 ——
   const [readProgress, setReadProgress] = useState(0);
@@ -175,9 +178,18 @@ export default function PaperDetailPage() {
   useEffect(() => {
     return () => {
       if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
-    };
       if (refsCrawlTimerRef.current) clearTimeout(refsCrawlTimerRef.current);
+    };
   }, []);
+
+  // 切换论文时重置参考文献/被引状态，避免展示上一篇文章的数据
+  useEffect(() => {
+    setRefsOpen(false);
+    setRefsData(null);
+    setRefsError(false);
+    setCitedBy(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.id]);
 
   useEffect(() => {
     if (!params.id) return;
@@ -346,50 +358,62 @@ export default function PaperDetailPage() {
     openAssistant({ paperId: paper.id, contextText: paper.title, autoPrompt: '请帮我深入分析这篇论文的贡献与不足' });
   };
 
+  /** pending 轮询兜底：流式入口被占用（已有后台分析）或历史 pending 时复用。 */
+  const startPendingPoll = () => {
+    if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
+    let attempts = 0;
+    analysisTimerRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 90) {  // 上限3分钟，防止无限轮询
+        clearInterval(analysisTimerRef.current!);
+        analysisTimerRef.current = null;
+        setAiError(t('pd.timeout'));
+        setAiAnalyzing(false);
+        return;
+      }
+      try {
+        const latest = await papersApi.getLatestAnalysis(params.id as string);
+        if (latest.status === "success" && latest.analysis) {
+          setAiAnalysis(latest.analysis);
+          setAiAnalyzing(false);
+          clearInterval(analysisTimerRef.current!);
+          analysisTimerRef.current = null;
+        } else if (latest.status === "failed") {
+          setAiAnalysis(latest.analysis);
+          setAiError(t('pd.failed'));
+          setAiAnalyzing(false);
+          clearInterval(analysisTimerRef.current!);
+          analysisTimerRef.current = null;
+        }
+      } catch {}
+    }, 2000);
+  };
+
+  // 流式分析：正文逐 token 渲染；后端返回 JSON pending（已有后台分析在跑）时退回轮询
   const analyzePaper = async () => {
     if (!params.id) return;
     setAiAnalyzing(true);
     setAiError(null);
     setAiAnalysis(null);
-    try {
-      const result = await papersApi.analyzePaper(params.id as string, analysisModel || undefined);
-      if (result.status === "pending") {
-        if (analysisTimerRef.current) clearInterval(analysisTimerRef.current);
-        let attempts = 0;
-        analysisTimerRef.current = setInterval(async () => {
-          attempts += 1;
-          if (attempts > 90) {  // 上限3分钟，防止无限轮询
-            clearInterval(analysisTimerRef.current!);
-            analysisTimerRef.current = null;
-            setAiError(t('pd.timeout'));
-            setAiAnalyzing(false);
+    await papersApi.streamPaperAnalysis(
+      params.id as string,
+      {
+        onContent: (delta) => setAiAnalysis((prev) => (prev || '') + delta),
+        onError: (msg) => {
+          setAiError(msg);
+          setAiAnalyzing(false);
+        },
+        onDone: (result) => {
+          if (result?.status === 'pending') {
+            startPendingPoll();
             return;
           }
-          try {
-            const latest = await papersApi.getLatestAnalysis(params.id as string);
-            if (latest.status === "success" && latest.analysis) {
-              setAiAnalysis(latest.analysis);
-              setAiAnalyzing(false);
-              clearInterval(analysisTimerRef.current!);
-              analysisTimerRef.current = null;
-            } else if (latest.status === "failed") {
-              setAiAnalysis(latest.analysis);
-              setAiError(t('pd.failed'));
-              setAiAnalyzing(false);
-              clearInterval(analysisTimerRef.current!);
-              analysisTimerRef.current = null;
-            }
-          } catch {}
-        }, 2000);
-        return;
-      }
-      setAiAnalysis(result.analysis);
-      setAiAnalyzing(false);
-    } catch (e: any) {
-      const msg = e instanceof ApiError ? (e.detail || e.message) : e.message || 'AI analysis failed';
-      setAiError(msg);
-      setAiAnalyzing(false);
-    }
+          setAiAnalyzing(false);
+          if (result?.analysis) setAiAnalysis(result.analysis);
+        },
+      },
+      analysisModel || undefined,
+    );
   };
 
   if (loading) {
@@ -654,6 +678,27 @@ export default function PaperDetailPage() {
                   <div className="text-xs sm:text-sm text-gray-400 py-2">
                     {t('pd.refsEmpty')}
                     <span className="block text-[11px] text-gray-300 dark:text-gray-500 mt-0.5">{t('pd.refsEmptyHint')}</span>
+                    <div className="mt-2 flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={handleCrawlRefs}
+                        disabled={refsCrawling}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors disabled:opacity-60"
+                      >
+                        {refsCrawling
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />{t('pd.refsCrawling')}</>
+                          : <><Download className="w-3.5 h-3.5" />{t('pd.refsCrawlBtn')}</>}
+                      </button>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={refsShowBrowser}
+                          onChange={e => { setRefsShowBrowser(e.target.checked); rememberRefsShowBrowser(e.target.checked); }}
+                          disabled={refsCrawling}
+                          className="w-3.5 h-3.5 accent-primary-600 disabled:opacity-50"
+                        />
+                        {t('sys.kwShowBrowser')}
+                      </label>
+                    </div>
                   </div>
                 )}
                 {!refsLoading && refsData && refsData.total > 0 && (
@@ -680,27 +725,6 @@ export default function PaperDetailPage() {
                   <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
                     <div className="text-[11px] text-gray-400 mb-1">{t('pd.citedBy')}</div>
                     <div className="space-y-1">
-                    <div className="mt-2 flex items-center gap-3 flex-wrap">
-                      <button
-                        onClick={handleCrawlRefs}
-                        disabled={refsCrawling}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors disabled:opacity-60"
-                      >
-                        {refsCrawling
-                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />{t('pd.refsCrawling')}</>
-                          : <><Download className="w-3.5 h-3.5" />{t('pd.refsCrawlBtn')}</>}
-                      </button>
-                      <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={refsShowBrowser}
-                          onChange={e => { setRefsShowBrowser(e.target.checked); rememberRefsShowBrowser(e.target.checked); }}
-                          disabled={refsCrawling}
-                          className="w-3.5 h-3.5 accent-primary-600 disabled:opacity-50"
-                        />
-                        {t('sys.kwShowBrowser')}
-                      </label>
-                    </div>
                       {citedBy.citing_papers.map((p) => (
                         <Link key={p.id} href={`/paper/${p.id}`} className="block text-xs sm:text-sm text-gray-700 dark:text-gray-300 hover:text-primary-600 hover:underline truncate">
                           {p.title}
@@ -771,7 +795,7 @@ export default function PaperDetailPage() {
                     </div>
                   </div>
                   <div className="text-sm text-gray-600 dark:text-gray-400 ml-4 shrink-0">
-                    {t('paper.similarity')}: {(similar.similarity_score * 100).toFixed(0)}%
+                    {t('paper.similarity')}: {similar.similarity_score != null ? `${(similar.similarity_score * 100).toFixed(0)}%` : '—'}
                   </div>
                 </div>
               </Link>
@@ -827,7 +851,7 @@ export default function PaperDetailPage() {
           )}
         </div>
 
-        {aiAnalyzing && (
+        {aiAnalyzing && !aiAnalysis && (
           <div className="flex items-center gap-3 py-8 justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
             <span className="text-gray-500 dark:text-gray-400">{t('pd.analyzing')}</span>
@@ -860,9 +884,9 @@ export default function PaperDetailPage() {
           </div>
         )}
 
-        {aiAnalysis && !aiAnalyzing && (
+        {aiAnalysis && (
           <div className="text-sm">
-            {/* P1-8c：结构化卡片（背景/方法/发现/意义），解析失败回退整文 */}
+            {/* P1-8c：结构化卡片（背景/方法/发现/意义），解析失败回退整文；流式生成中实时渲染 */}
             {analysisSections.length >= 2 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {analysisSections.map((section, i) => (

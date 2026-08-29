@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -9,9 +9,11 @@ import { papersApi, topicsApi } from '@/lib/api';
 import KeywordContextActions from '@/components/KeywordContextActions';
 import EntryCard from '@/components/EntryCard';
 import { NetworkData, NetworkNode } from '@/types/paper';
-import { Loader2, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target, TrendingUp, Crosshair } from 'lucide-react';
+import { Loader2, Hash, ChevronRight, ExternalLink, Map as MapIcon, Target, TrendingUp, Crosshair, Sparkles } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { usePageTitle } from '@/lib/usePageTitle';
 import type { KeywordMapResponse } from '@/lib/api';
+import { openAssistant, reportPageContext } from '@/lib/assistantBus';
 
 const NetworkGraph = dynamic(() => import('./NetworkGraph'), { ssr: false });
 const ClusterMap = dynamic(() => import('./ClusterMap'), { ssr: false });
@@ -35,6 +37,7 @@ function getLinkNodeId(node: string | { id?: string }): string {
 
 export default function NetworkPage() {
   const { t } = useLanguage();
+  usePageTitle(t('nav.network'));
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('keywords');
   const [data, setData] = useState<NetworkData | null>(null);
@@ -43,12 +46,17 @@ export default function NetworkPage() {
   const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const [linkedFilter, setLinkedFilter] = useState('');
 
+  const networkDataRef = useRef<NetworkData | null>(null);
+
   const fetchData = useCallback(async (tab: TabType) => {
+    // 会话内缓存：图数据全库聚合、变化低频，切 tab 回来不重拉（清空状态仍走首次加载路径）
+    if (networkDataRef.current) return;
     setLoading(true);
     setInfoNode(null);
     setHighlightedNodeId(null);
     try {
       const res = await papersApi.getKeywordNetwork();
+      networkDataRef.current = res;
       setData(res);
     } catch (error) {
       console.error('Error fetching network data:', error);
@@ -127,6 +135,29 @@ export default function NetworkPage() {
       .finally(() => { if (!cancelled) setMapLoading(false); });
     return () => { cancelled = true; };
   }, [infoNode]);
+
+  /** 选中节点的结构摘要（上报给悬浮助手，「AI 解读」按钮复用）。未选中返回 undefined。 */
+  const buildNodeSummary = useCallback((): string | undefined => {
+    if (!infoNode) return undefined;
+    const lines = [`当前选中节点：「${infoNode.name}」（关键词，出现 ${infoNode.count ?? 0} 次）`];
+    const top = connectedNodes.slice(0, 8).map((n) => `${n.name}(${n.linkValue})`).join('、');
+    if (top) lines.push(`- 共现关键词（按共现次数）：${top}`);
+    if (keywordMap) {
+      lines.push(`- 库内相关论文：${keywordMap.total_papers} 篇`);
+      const peak = keywordMap.yearly_trend.reduce<[string, number] | null>(
+        (acc, cur) => (!acc || cur[1] > acc[1] ? [cur[0], cur[1]] : acc), null);
+      if (peak) lines.push(`- 发文峰值年份：${peak[0]}（${peak[1]} 篇）`);
+      const topJournal = keywordMap.journal_distribution[0];
+      if (topJournal) lines.push(`- 主要期刊：${topJournal[0]}（${topJournal[1]} 篇）`);
+    }
+    lines.push('（以上为页面真实图数据，回答时请优先引用，不要臆造）');
+    return lines.join('\n');
+  }, [infoNode, connectedNodes, keywordMap]);
+
+  // 选中节点变化 → 上报给悬浮助手：选中为节点摘要，未选中清空（回退到助手自取的全局网络摘要）
+  useEffect(() => {
+    reportPageContext({ contextText: buildNodeSummary() });
+  }, [buildNodeSummary]);
 
   /** 一键转选题：关键词 -> 研究工作台项目（创建后进入五步向导）。 */
   const handleToTopic = async (keyword: string) => {
@@ -235,7 +266,7 @@ export default function NetworkPage() {
                 </button>
               )}
               <span className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
-                {data?.nodes.length || 0} · {data?.links.length || 0} — {t('net.zoomHint')}
+                节点 {data?.nodes.length || 0} · 连接 {data?.links.length || 0} — {t('net.zoomHint')}
               </span>
             </div>
           </div>
@@ -350,6 +381,17 @@ export default function NetworkPage() {
                         >
                           <Target className="w-3 h-3" />
                           转选题
+                        </button>
+                        <button
+                          onClick={() => openAssistant({
+                            contextText: buildNodeSummary(),
+                            autoPrompt: `请解读关键词「${infoNode.name}」在领域网络中的位置、发展趋势与研究机会`,
+                          })}
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border border-primary-200 dark:border-primary-700 text-primary-600 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/40 transition-colors"
+                          title="让 AI 助手结合网络数据解读该关键词"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          AI 解读
                         </button>
                       </h4>
 

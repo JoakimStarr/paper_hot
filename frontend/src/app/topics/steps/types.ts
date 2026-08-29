@@ -5,6 +5,6 @@ export interface StepProps {
   project: TopicProject;
   onRefresh: () => Promise<void>;
   onPatch: (patch: Record<string, unknown>) => Promise<void>;
-  runAi: (action: string, ideaText?: string) => Promise<void>;
+  runAi: (action: string, ideaText?: string, model?: string) => Promise<void>;
   goStep: (n: number) => void;
 }

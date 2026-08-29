@@ -28,6 +28,31 @@ export default function Step4Data({ project, onPatch, runAi }: StepProps) {
     .map((id) => playbook.find((e) => e.id === id))
     .filter((e): e is MethodPlaybookEntry => !!e);
 
+  const [aiModels, setAiModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [aiModel, setAiModel] = useState('');
+  const [showModelSelect, setShowModelSelect] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { papersApi, getLastModel, rememberModel } = await import('@/lib/api');
+        const res = await papersApi.getAIAnalysisModels();
+        const bare = (n: string) => (n.includes('/') ? n.split('/').slice(1).join('/') : n);
+        const label = (provider?: string) => (provider ? `${provider} · ` : '');
+        const list = (res.models || [])
+          .filter((m) => m.available)
+          .map((m) => ({ id: m.name, label: `${label(m.provider)}${bare(m.name)}` }));
+        if (!cancelled) {
+          setAiModels(list);
+          const last = getLastModel('step4_insights');
+          if (last && list.some((m) => m.id === last)) setAiModel(last);
+        }
+      } catch { /* 模型列表加载失败：仍可用默认模型 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const saveNotes = async () => {
     setSaving(true);
     const base = (insights || {}) as DataInsights;
@@ -35,6 +60,14 @@ export default function Step4Data({ project, onPatch, runAi }: StepProps) {
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const extract = async () => {
+    if (aiModel) {
+      const { rememberModel } = await import('@/lib/api');
+      rememberModel('step4_insights', aiModel);
+    }
+    await runAi('data_insights', undefined);
   };
 
   return (
@@ -50,15 +83,46 @@ export default function Step4Data({ project, onPatch, runAi }: StepProps) {
               从项目文献集提取已有研究用的数据来源与识别策略，并给数据可得性建议
             </p>
           </div>
-          <button
-            onClick={() => runAi('data_insights')}
-            disabled={aiRunning || (project.papers?.length || 0) === 0}
-            title={aiRunning ? 'AI 正在提取中…' : (project.papers?.length || 0) === 0 ? '文献集为空：先到第 3 步「文献管理」收集论文（或回第 2 步验证召回），才能从中提取数据与方法线索' : undefined}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
-          >
-            {aiRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {hasAi ? '重新提取' : '提取线索'}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 模型选择（默认跟随全局 default_model） */}
+            <div className="relative">
+              <button
+                onClick={() => setShowModelSelect((v) => !v)}
+                className="inline-flex items-center gap-1 px-2.5 py-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="选择提取线索用的模型（默认自动）"
+              >
+                {aiModel ? (aiModels.find((m) => m.id === aiModel)?.label || aiModel) : '默认模型'}
+              </button>
+              {showModelSelect && (
+                <div className="absolute right-0 top-9 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
+                  <button
+                    onClick={() => { setAiModel(''); setShowModelSelect(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${aiModel === '' ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                  >
+                    默认（跟随全局设置）
+                  </button>
+                  {aiModels.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setAiModel(m.id); setShowModelSelect(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${aiModel === m.id ? 'text-purple-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={extract}
+              disabled={aiRunning || (project.papers?.length || 0) === 0}
+              title={aiRunning ? 'AI 正在提取中…' : (project.papers?.length || 0) === 0 ? '文献集为空：先到第 3 步「文献管理」收集论文（或回第 2 步验证召回），才能从中提取数据与方法线索' : undefined}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {aiRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {hasAi ? '重新提取' : '提取线索'}
+            </button>
+          </div>
         </div>
 
         {aiRunning && (

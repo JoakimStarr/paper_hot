@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Settings, Activity, Play, Pause, Square, ChevronDown, Loader2, CheckCircle, XCircle, RefreshCw, AlertCircle,
-  ToggleRight, ToggleLeft, Search, History as HistoryIcon, BookOpen,
+  ToggleRight, ToggleLeft, Search, History as HistoryIcon, BookOpen, Sparkles,
 } from 'lucide-react';
 import { CrawlLog, SchedulerJob, CNKISearchInfo, ReferencesCrawlInfo, Msg } from '@/types/paper';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -81,6 +81,11 @@ interface CrawlerTabProps {
   setRefsForm: (form: ReferencesCrawlForm) => void;
   onStartReferencesCrawl: (opts: { paper_url?: string; urls?: string[]; paper_title?: string; max_items?: number; interval?: number; show_browser?: boolean }) => void;
   onStopReferencesCrawl: () => void;
+  backfillLimit: number;
+  backfillStarting: boolean;
+  refsCoverage: { papers_with_refs: number; papers_total: number } | null;
+  setBackfillLimit: (n: number) => void;
+  onBackfillReferencesCrawl: () => void;
 }
 
 export default function CrawlerTab({
@@ -115,6 +120,11 @@ export default function CrawlerTab({
   setRefsForm,
   onStartReferencesCrawl,
   onStopReferencesCrawl,
+  backfillLimit,
+  backfillStarting,
+  refsCoverage,
+  setBackfillLimit,
+  onBackfillReferencesCrawl,
 }: CrawlerTabProps) {
   const { t } = useLanguage();
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
@@ -509,6 +519,36 @@ export default function CrawlerTab({
               />
               {t('sys.kwShowBrowser')}
             </label>
+
+            {/* 智能补抓：自动构建未抓取论文队列（置顶>收藏>已读>评分），无需手动给链接 */}
+            <div className="pt-3 border-t border-gray-100 dark:border-gray-800 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500 dark:text-gray-400">{t('sys.refsBackfillDesc')}</span>
+              {refsCoverage && (
+                <span className="text-xs text-gray-400">
+                  {t('sys.refsCoverage', { done: refsCoverage.papers_with_refs, total: refsCoverage.papers_total })}
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <select
+                  value={backfillLimit}
+                  onChange={e => setBackfillLimit(Number(e.target.value))}
+                  disabled={backfillStarting || !!refsInfo?.running}
+                  className="px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
+                >
+                  {[30, 60, 100, 200].map((n) => (
+                    <option key={n} value={n}>{t('sys.refsBackfillUnit', { n })}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={onBackfillReferencesCrawl}
+                  disabled={backfillStarting || !!refsInfo?.running}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-teal-600 text-teal-600 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-900/30 disabled:opacity-50 transition-colors"
+                >
+                  {backfillStarting || refsInfo?.running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {t('sys.refsBackfillRun')}
+                </button>
+              </div>
+            </div>
 
             {refsInfo && (refsInfo.running || refsInfo.message) && (
               <TaskStatusPanel

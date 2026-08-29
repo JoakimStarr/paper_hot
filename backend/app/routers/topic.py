@@ -295,6 +295,8 @@ class ValidateRequest(BaseModel):
     model: Optional[str] = None
     # 提供时：流结束后服务端直接把评分/报告/状态落库到该项目（技能层回写）
     project_id: Optional[int] = None
+    # Agent 工具模式：报告生成前允许模型调用定量工具（topic_crowding/keyword_gaps 等）查询数据
+    use_tools: bool = False
 
 
 @router.get("/topic-validator/status")
@@ -908,7 +910,7 @@ async def validate_topic(
     stats["competition"] = competition
 
     # prompt 构造收敛到 skills.validate（预承诺评分标准 + Script 证据块 + 输出契约）
-    messages = validate_skill.build_messages(topic, papers, stats, competition)
+    messages = validate_skill.build_messages(topic, papers, stats, competition, use_tools=body.use_tools)
 
     try:
         client, provider, bare_model = resolve_working_model(body.model)
@@ -968,7 +970,60 @@ async def validate_topic(
 
         # 推理模型（如 glm-5.2）的 reasoning_content 会大量占用 token 预算，
         # 4096 会导致正文为空（与 workbench._llm_json 同因），验证报告放宽到 8192
-        llm_gen = _stream_llm_content(client, bare_model, messages, on_event=on_event, max_tokens=8192)
+        if body.use_tools:
+            # Agent 工具模式：模型可在写报告前调用定量工具查询论文库
+            # （工具集刻意不含返回论文列表的工具，[n] 引用编号始终对齐基础召回）
+            from app.routers.deps import _stream_agent_chat_response
+
+            async def _agent_frames():
+                async for chunk in _stream_agent_chat_response(
+                    client, provider, messages, model=bare_model,
+                    surface="topic_validator", agent_enabled=True,
+                ):
+                    text = chunk.decode("utf-8", "ignore") if isinstance(chunk, (bytes, bytearray)) else str(chunk)
+                    for line in text.split("\n"):
+                        line = line.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        try:
+                            frame = json.loads(line[6:])
+                        except Exception:
+                            continue
+                        if not isinstance(frame, dict):
+                            continue
+                        c = frame.get("content")
+                        if c:
+                            if not buf["decided"]:
+                                buf["text"] += c
+                                scores, rest = validate_skill.split_json_head(buf["text"])
+                                if scores is not None:
+                                    buf["decided"] = True
+                                    buf["scores"] = scores
+                                    buf["md"].append(rest)
+                                    if rest:
+                                        yield _sse({"content": rest})
+                                elif validate_skill.head_in_progress(buf["text"]):
+                                    pass  # JSON 头仍在流式中，继续缓冲
+                                else:
+                                    buf["decided"] = True
+                                    buf["md"].append(buf["text"])
+                                    yield _sse({"content": buf["text"]})
+                            else:
+                                buf["md"].append(c)
+                                yield _sse({"content": c})
+                        else:
+                            if '"done"' in line and not buf["decided"] and buf["text"]:
+                                # done 前放行缓冲正文
+                                buf["decided"] = True
+                                scores, rest = validate_skill.split_json_head(buf["text"])
+                                buf["md"].append(rest)
+                                if rest:
+                                    yield _sse({"content": rest})
+                            yield line + "\n\n"
+
+            llm_gen = _agent_frames()
+        else:
+            llm_gen = _stream_llm_content(client, bare_model, messages, on_event=on_event, max_tokens=8192)
         async for frame in llm_gen:
             if not buf["decided"] and '"done"' in frame:
                 # done 帧前放行全部缓冲正文，保证 content 先于 done 到达前端

@@ -2,7 +2,7 @@
 
 # PaperPulse 自适应安装脚本
 # 用法:
-#   ./install.sh                  # 基础安装（venv + 服务端依赖），交互询问是否装本地向量模型
+#   ./install.sh                  # 无参数 = 安装向导（交互式引导菜单；非交互环境自动退为基础安装）
 #   ./install.sh --with-ollama    # 基础安装 + Ollama 本地向量模型（bge-m3，国内加速下载）
 #   ./install.sh --base-only      # 仅基础安装，不询问
 #   ./install.sh --force          # 强制重装依赖并重新探测 Ollama（跳过“已就绪”捷径）
@@ -30,8 +30,86 @@ fail()  { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
+# venv 健康检查：除 activate/pip 外，还验证 python 真正激活了 venv
+# （sys.prefix 指向 venv），排除"二进制在但激活失效、静默回落系统 Python"的半损坏状态
+venv_ok() {
+    [ -f venv/bin/activate ] \
+        && venv/bin/python -c 'import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)' 2>/dev/null \
+        && venv/bin/python -m pip --version >/dev/null 2>&1
+}
+
 # ---------- 参数解析 ----------
 WITH_OLLAMA=""; BASE_ONLY=""; FORCE=""; MODEL_NAME="bge-m3"
+
+# ---------- 安装向导（无参数且为交互终端时展示） ----------
+# 状态总览 + 安装模式菜单；非交互环境（CI/管道）退为基础安装，保持可脚本化
+wizard() {
+    local env_stat dep_stat dotenv_stat ollama_stat faiss_stat choice
+    if venv_ok; then
+        env_stat="${GREEN}✓ 已创建${NC}"
+        if [ -f venv/.requirements-ready ]; then
+            dep_stat="${GREEN}✓ 已安装${NC}"
+        else
+            dep_stat="${YELLOW}… 未完成${NC}"
+        fi
+    else
+        env_stat="${YELLOW}✗ 未创建${NC}"
+        dep_stat="${YELLOW}✗ 未安装${NC}"
+    fi
+    [ -f backend/.env ] && dotenv_stat="${GREEN}✓ 已生成${NC}" || dotenv_stat="${YELLOW}✗ 未生成${NC}"
+    if ! command_exists ollama; then
+        ollama_stat="${YELLOW}✗ 未安装${NC}"
+    elif ollama list 2>/dev/null | awk 'NR>1{print $1}' | sed 's/:[^:]*$//' | grep -Fqx "$MODEL_NAME"; then
+        ollama_stat="${GREEN}✓ 模型已就绪${NC}"
+    else
+        ollama_stat="${YELLOW}… 运行时已装，$MODEL_NAME 未拉取${NC}"
+    fi
+    if venv/bin/python -c 'import faiss' 2>/dev/null; then
+        faiss_stat="${GREEN}✓ 已安装${NC}"
+    else
+        faiss_stat="${YELLOW}✗ 未安装（自动降级 numpy 暴力余弦）${NC}"
+    fi
+
+    echo ""
+    echo -e "${BLUE}──────────────────────────────────────────────────${NC}"
+    echo -e "${BLUE}  PaperPulse 安装向导${NC}"
+    echo -e "${BLUE}──────────────────────────────────────────────────${NC}"
+    echo "  当前状态:"
+    echo -e "    Python 虚拟环境    $env_stat"
+    echo -e "    服务端依赖         $dep_stat"
+    echo -e "    backend/.env       $dotenv_stat"
+    echo -e "    Ollama 本地向量    $ollama_stat"
+    echo -e "    faiss 向量加速     $faiss_stat"
+    echo ""
+    echo "  请选择安装模式:"
+    echo -e "    ${GREEN}1) 完整安装（推荐）${NC}  基础依赖 + Ollama 本地向量模型（$MODEL_NAME）"
+    echo "                          数据不出本机、零 API 成本；已完成步骤自动跳过"
+    echo "     2) 基础安装          仅 Python 环境 + 服务端依赖（不装 Ollama）"
+    echo "                          云端 AI 需自行在 backend/.env 配置 API Key"
+    echo "     3) 退出"
+    echo ""
+    echo "  高级参数: --force 强制重装 | --model 指定模型 | --python 指定解释器（-h 查看帮助）"
+    echo -e "${BLUE}──────────────────────────────────────────────────${NC}"
+    while true; do
+        read -rp "$(echo -e "${BLUE}回车默认 2，请选择 [1-3]:${NC} ")" choice
+        case "$choice" in
+            1)    WITH_OLLAMA="yes"; info "已选择：完整安装（基础依赖 + Ollama 本地向量模型）"; break ;;
+            2|"") BASE_ONLY="yes";  info "已选择：基础安装（不装 Ollama，可随时 --with-ollama 补装）"; break ;;
+            3)    ok "已退出安装向导"; exit 0 ;;
+            *)    warn "无效选择: $choice（请输入 1 / 2 / 3）" ;;
+        esac
+    done
+    echo ""
+}
+
+if [[ $# -eq 0 ]]; then
+    if [ -t 0 ]; then
+        wizard
+    else
+        BASE_ONLY="yes"
+    fi
+fi
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --with-ollama) WITH_OLLAMA="yes" ;;
@@ -83,7 +161,7 @@ else
     warn "Python $VNUM 过旧（<3.9）：多数依赖最新版无法安装，强烈建议改用 Python 3.11+"
 fi
 
-if [ -f venv/bin/activate ] && venv/bin/python -m pip --version >/dev/null 2>&1; then
+if venv_ok; then
     ok "虚拟环境已存在且可用，跳过创建"
 else
     if [ -d venv ]; then
@@ -126,10 +204,21 @@ else
 fi
 
 # ---------- 可选加速：faiss-cpu（选题验证向量召回） ----------
-# 非必需：未安装时自动降级为 numpy 暴力余弦。安装失败不阻断后续流程。
-venv/bin/python -m pip install -q faiss-cpu 2>/dev/null \
-    && ok "faiss-cpu 已安装（选题验证向量召回加速）" \
-    || warn "faiss-cpu 安装失败（可选依赖，将降级为 numpy 暴力余弦）"
+# 非必需：未安装时自动降级为 numpy 暴力余弦。失败不阻断后续流程；已装则跳过（不重复访问 pip 源）
+if venv/bin/python -c 'import faiss' 2>/dev/null; then
+    ok "faiss-cpu 已安装（选题验证向量召回加速）"
+else
+    info "安装可选加速依赖 faiss-cpu（失败自动降级 numpy，不阻断）"
+    venv/bin/python -m pip install -q faiss-cpu 2>/dev/null \
+        || venv/bin/python -m pip install -q faiss-cpu -i https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null \
+        || true
+    if venv/bin/python -c 'import faiss' 2>/dev/null; then
+        ok "faiss-cpu 已安装（选题验证向量召回加速）"
+    else
+        warn "faiss-cpu 安装失败（可选依赖，降级为 numpy 暴力余弦）"
+        warn "  手动补装: venv/bin/python -m pip install faiss-cpu -i https://pypi.tuna.tsinghua.edu.cn/simple"
+    fi
+fi
 
 # ---------- 2. .env ----------
 if [ ! -f backend/.env ]; then

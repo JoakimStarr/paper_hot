@@ -28,6 +28,8 @@ export interface PageContext {
   projectTitle?: string;
   /** 研究工作台当前步骤 */
   projectStep?: number;
+  /** 页面动态上下文文本（如 network 页选中节点的结构摘要），随每次追问注入 */
+  contextText?: string;
 }
 
 export function reportPageContext(context: PageContext = {}) {

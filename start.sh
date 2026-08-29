@@ -67,17 +67,37 @@ usage() {
 # ───────────────────────── 停止服务 ─────────────────────────
 # 仅当进程工作目录位于本项目内时才终止（防止误杀同机其他项目的同名服务）
 # 优先按进程组终止（启动时经 setsid 创建独立进程组，可连带清理 npm/next/uvicorn 子进程树）
+# 先发 SIGTERM 让 SQLite 有机会关闭 WAL 日志并刷盘，超时后才 SIGKILL 强制终止
 kill_project_pids() {
     local pids="$1" name="$2"
-    local pid cwd
+    local pid cwd pids_to_kill="" waited
+
+    # 第一阶段：筛选属于本项目的进程，发送 SIGTERM
     for pid in $pids; do
         cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null) || continue
         case "$cwd" in
             "$PROJECT_DIR"/*)
-                kill -9 "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
-                echo "   $name stopped (PID: $pid)"
+                pids_to_kill="$pids_to_kill $pid"
+                kill "$pid" 2>/dev/null || true
                 ;;
         esac
+    done
+
+    # 第二阶段：等待优雅退出（最多 5 秒）
+    waited=0
+    for pid in $pids_to_kill; do
+        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 5 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+    done
+
+    # 第三阶段：仍未退出的强制终止
+    for pid in $pids_to_kill; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        echo "   $name stopped (PID: $pid)"
     done
 }
 

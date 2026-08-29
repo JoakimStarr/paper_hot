@@ -478,6 +478,7 @@ _AI_ACTIONS = {"generate_topics", "overview", "data_insights", "literature_revie
 class AIActionRequest(BaseModel):
     action: str
     idea_text: Optional[str] = None   # generate_topics 专用：一句话想法
+    model: Optional[str] = None       # 数据与方法等动作的模型覆盖（'provider/bare' 或裸模型名）
 
 
 @router.post("/topic-projects/{project_id}/ai")
@@ -500,7 +501,7 @@ async def run_ai_action(
     p.ai_error = None
     await db.commit()
     from app.main import spawn_background_task
-    spawn_background_task(_run_ai_action(project_id, action, idea_text=body.idea_text))
+    spawn_background_task(_run_ai_action(project_id, action, idea_text=body.idea_text, model=body.model))
     return {"status": "started", "action": action}
 
 
@@ -550,14 +551,15 @@ def _extract_json(text: str):
     raise ValueError("无法从 LLM 输出解析 JSON")
 
 
-async def _llm_json(messages: list, max_tokens: int = 4096, temperature: float = 0.4):
-    """非流式 LLM 调用并解析 JSON（默认模型）。
+async def _llm_json(messages: list, max_tokens: int = 4096, temperature: float = 0.4, model: Optional[str] = None):
+    """非流式 LLM 调用并解析 JSON。
 
-    max_tokens 默认 4096：当前默认模型为推理模型（glm-5.2），
-    token 预算会被 reasoning_content 大量占用，过小会导致 content 为空、
-    finish_reason=length 而解析失败。
+    model：显式模型覆盖（Step4 模型设定）；为空时按 resolve_working_model 优先级
+    （显式 > 全局 default_model > 首个可用候选）解析，保证 bare_model 非空。
+    max_tokens 默认 4096：推理模型的 token 预算会被 reasoning_content 大量占用，
+    过小会导致 content 为空、finish_reason=length 而解析失败。
     """
-    client, provider, bare_model = resolve_working_model(None)
+    client, provider, bare_model = resolve_working_model(model)
     response = await asyncio.to_thread(
         client.chat.completions.create,
         model=bare_model, messages=messages,
@@ -566,7 +568,7 @@ async def _llm_json(messages: list, max_tokens: int = 4096, temperature: float =
     return _extract_json(response.choices[0].message.content or "")
 
 
-async def _run_ai_action(project_id: int, action: str, idea_text: Optional[str] = None):
+async def _run_ai_action(project_id: int, action: str, idea_text: Optional[str] = None, model: Optional[str] = None):
     async with AsyncSessionLocal() as db:
         p = await db.get(TopicProject, project_id)
         if not p or p.ai_pending != action:
@@ -577,7 +579,7 @@ async def _run_ai_action(project_id: int, action: str, idea_text: Optional[str] 
             elif action == "overview":
                 p.overview = await _ai_overview(db, p)
             elif action == "data_insights":
-                p.data_insights = await _ai_data_insights(db, p)
+                p.data_insights = await _ai_data_insights(db, p, model=model)
             elif action == "literature_review":
                 p.literature_review = await _ai_literature_review(db, p)
             p.ai_pending = None
@@ -668,7 +670,7 @@ async def _ai_overview(db: AsyncSession, p: TopicProject) -> str:
     return (response.choices[0].message.content or "").strip()
 
 
-async def _ai_data_insights(db: AsyncSession, p: TopicProject) -> dict:
+async def _ai_data_insights(db: AsyncSession, p: TopicProject, model: Optional[str] = None) -> dict:
     """数据与方法线索：从文献集提取数据来源与研究方法（JSON）+ 命中的方法手册条目。"""
     papers = await _load_project_papers(db, p.id, p.user_id)
     papers_text = _build_papers_text(papers, limit=15)
@@ -711,7 +713,7 @@ async def _ai_data_insights(db: AsyncSession, p: TopicProject) -> dict:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": "请提取数据与方法线索。"},
         ],
-        max_tokens=4096, temperature=0.3,
+        max_tokens=4096, temperature=0.3, model=model,
     )
     if isinstance(data, dict):
         # matched_methods 由 Script 侧确定性产出，不依赖 LLM 是否遵守

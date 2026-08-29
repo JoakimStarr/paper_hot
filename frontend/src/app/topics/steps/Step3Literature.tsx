@@ -32,6 +32,8 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
   // 单篇「相似论文」展开：paper_id -> 相似论文列表（仅展开时加载）
   const [simByPaper, setSimByPaper] = useState<Record<string, ProjectRecommendedPaper[]>>({});
   const [simLoadingId, setSimLoadingId] = useState<string | null>(null);
+  // 一键加入全部：批量添加进行中
+  const [bulkAdding, setBulkAdding] = useState<'search' | 'recommended' | null>(null);
   // 懒召回：文献集为空时按选题标题自动召回 Top-10 论文（仅挂载时触发一次）
   const [recalling, setRecalling] = useState(false);
   const recallFiredRef = useRef(false);
@@ -116,6 +118,27 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
       });
     } catch { /* 已存在等错误忽略 */ }
     finally { setAddingId(null); }
+  };
+
+  /** 一键加入全部：批量加入列表中尚未入集的论文，完成后统一刷新。 */
+  const addAll = async (
+    list: Array<{ id: string; in_project?: boolean; similarity?: number | null }>,
+    kind: 'search' | 'recommended',
+  ) => {
+    const pending = list.filter((x) => !x.in_project);
+    if (pending.length === 0 || bulkAdding) return;
+    setBulkAdding(kind);
+    try {
+      for (const x of pending) {
+        try {
+          await workbenchApi.addProjectPaper(project.id, x.id, x.similarity ?? null);
+        } catch { /* 单篇失败（已存在等）不中断批量 */ }
+      }
+      await onRefresh();
+      if (kind === 'search') setCandidates((prev) => prev.map((x) => ({ ...x, in_project: true })));
+    } finally {
+      setBulkAdding(null);
+    }
   };
 
   // 单篇「相似论文」展开/收起（懒加载，只查该篇的相似论文）
@@ -208,7 +231,18 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
 
         {candidates.length > 0 && (
           <div className="space-y-1.5">
-            <div className="text-xs text-gray-400">{searchMode === 'embedding+rerank' ? '语义检索+重排' : '语义检索'} 候选 {candidates.length} 条</div>
+            <div className="text-xs text-gray-400 flex items-center gap-2">
+              {searchMode === 'embedding+rerank' ? '语义检索+重排' : '语义检索'} 候选 {candidates.length} 条
+              <button
+                onClick={() => addAll(candidates, 'search')}
+                disabled={bulkAdding !== null}
+                title="把本列表中所有未入集的论文一键加入文献集"
+                className="ml-auto inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-primary-200 dark:border-primary-800 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 transition-colors"
+              >
+                {bulkAdding === 'search' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                一键加入
+              </button>
+            </div>
             {candidates.map((c) => (
               <div key={c.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-md">
                 <a href={`/paper/${c.id}`} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0">
@@ -237,14 +271,27 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
           <Sparkles className="w-4 h-4 text-amber-500" />
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">相关文献推荐</h2>
           <span className="text-xs text-gray-400">基于选题方向与文献集，供你决定是否加入引用</span>
-          <button
-            onClick={loadRecommendations}
-            disabled={recommending}
-            className="ml-auto inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 hover:border-primary-400 disabled:opacity-50 transition-colors"
-          >
-            <RefreshCw className={`w-3 h-3 ${recommending ? 'animate-spin' : ''}`} />
-            刷新
-          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            {recommended.length > 0 && (
+              <button
+                onClick={() => addAll(recommended, 'recommended')}
+                disabled={bulkAdding !== null}
+                title="把本列表中所有未入集的推荐论文一键加入文献集"
+                className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-primary-200 dark:border-primary-800 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50 transition-colors"
+              >
+                {bulkAdding === 'recommended' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                一键加入
+              </button>
+            )}
+            <button
+              onClick={loadRecommendations}
+              disabled={recommending}
+              className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-primary-600 hover:border-primary-400 disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw className={`w-3 h-3 ${recommending ? 'animate-spin' : ''}`} />
+              刷新
+            </button>
+          </div>
         </div>
         {recommending ? (
           <div className="flex items-center justify-center gap-2 text-sm text-gray-400 py-6">

@@ -75,10 +75,20 @@ def build_papers_text(papers: List[dict], limit: int = 30) -> str:
     return "\n".join(lines) or "（未召回近似论文：该题目的表述在库内近乎无匹配）"
 
 
-def build_messages(topic: str, papers: List[dict], stats: dict, competition: dict) -> List[dict]:
-    """构造验证 prompt：预承诺标准 + Script 证据 + 召回列表 + 输出契约。"""
+def build_messages(topic: str, papers: List[dict], stats: dict, competition: dict, use_tools: bool = False) -> List[dict]:
+    """构造验证 prompt：预承诺标准 + Script 证据 + 召回列表 + 输出契约。
+
+    use_tools：Agent 工具模式下追加工具使用注记（模型可调用定量工具核验证据）。
+    """
     papers_text = build_papers_text(papers)
     script_evidence = build_script_evidence(stats, competition)
+    tool_note = (
+        "\n【工具使用】\n"
+        "你可以调用论文库查询工具（返回确定性统计）。需要核验拥挤度、查空白组合、看趋势时先调用工具再下结论；\n"
+        "工具结果可作为量化依据引用，但不产生新的 [n] 编号——正文引用编号仅对应上方论文列表。\n"
+        "调用工具后仍须完整遵守输出契约（第一行 JSON 头）。\n"
+        if use_tools else ""
+    )
     system_prompt = f"""你是一位严格的学术选题评审专家。基于下方检索证据评估候选选题。
 
 候选选题：{topic}
@@ -90,7 +100,7 @@ def build_messages(topic: str, papers: List[dict], stats: dict, competition: dic
 
 【召回论文列表（按相似度降序；[n] 编号即引用编号）】
 {papers_text}
-
+{tool_note}
 【输出契约——严格遵守】
 1. 第一行输出 ```json 代码块（之后才是正文）：
 {{
@@ -99,22 +109,26 @@ def build_messages(topic: str, papers: List[dict], stats: dict, competition: dic
   "feasibility": 1-10 的整数,
   "gate": "pass|caution|avoid"
 }}
-2. 正文用 markdown，依次包含以下小节（顺序固定）：
+2. 正文用 markdown，800-1200 字，依次包含以下小节（顺序固定）：
 ## 新颖性评估
-按预承诺档位归档打分，引用所落阈值与具体论文 [n] 依据。
+按预承诺档位归档打分。必须包含「与最接近文献的差异」：对相似度最高的 2-3 篇 [n] 逐篇
+一句话说明——它做了什么、本选题差在哪里。
 ## 竞争拥挤度
-对照 recent_1y_count 与平均相似度阈值归档，指认最活跃的作者/期刊（引用 Script 统计）。
+对照 recent_1y_count 与平均相似度阈值归档；指认最活跃的作者/期刊（引用 Script 统计数字）。
 ## 机会窗口
-综合判断：蓝海 / 正在升温 / 红海，给进入时机结论。
+蓝海 / 正在升温 / 红海三选一，给出进入时机判断与 1 个量化理由。
 ## 风险与盲区
-必须包含「未找到的证据」小节：明确列出检索可能遗漏什么（关键词表述差异、跨领域文献、英文文献），
-并给出整体置信度（高/中/低）。禁止用检索沉默冒充"没有人做过"。
+必须包含「未找到的证据」小节：明确列出检索可能遗漏什么（关键词表述差异、跨领域文献、
+英文文献），并给出整体置信度（高/中/低）。禁止用检索沉默冒充"没有人做过"。
 ## 建议切入角度
-与已召回论文差异化的 2-3 个具体切入点。
+与已召回论文差异化的 2-3 个具体切入点，每个注明依赖的数据或方法。
 ## 结论
-gate 判定 + 一句话理由。
+gate 判定 + 一句可执行的下一步（做/改题/放弃，下一步先做什么）。
 
-要求：诚实、量化、不客套；证据不足时明确降低置信度。"""
+【写作纪律】
+- 每个判断首句先给量化结论（阈值数字或 [n] 编号），再展开一句依据；
+- Script 证据中的数字原样引用，禁止整段复述召回论文清单原文充当分析；
+- 证据不足时明确降低置信度，禁止凭空给高分。"""
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"请验证选题：「{topic}」"},
