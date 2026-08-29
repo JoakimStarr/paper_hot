@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
-import { papersApi, getLastModel, rememberModel, streamTrendChat, ApiError } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { papersApi, topicsApi, getLastModel, rememberModel, streamTrendChat, ApiError } from '@/lib/api';
 import { TrendingTopic, AIAnalysisReport, StructuredAnalysisItem } from '@/types/paper';
 import { Loader2, Sparkles, RefreshCw, History, Clock, AlertCircle, ChevronDown, ChevronUp, Brain, Send, Bot, Trash2, Download, Maximize2, Minimize2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -60,8 +61,19 @@ const CHAT_FULLSCREEN_STORAGE_KEY = 'trends_chat_fullscreen';
 
 export default function TrendsPage() {
   const { t } = useLanguage();
+  const router = useRouter();
   const [topics, setTopics] = useState<TrendingTopic[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /** 热点话题一键转选题：创建 keyword 来源的研究项目并进入向导 */
+  const handleToTopic = async (topic: string | undefined) => {
+    const name = (topic || '').trim();
+    if (!name) return;
+    try {
+      const p = await topicsApi.createTopicProject({ title: name, source_type: 'keyword', source_ref: name });
+      router.push(`/topics?project=${p.id}`);
+    } catch { /* ignore */ }
+  };
 
   const [report, setReport] = useState<AIAnalysisReport | null>(null);
   const [hasHistory, setHasHistory] = useState(false);
@@ -701,6 +713,15 @@ export default function TrendsPage() {
                             </a>
                           ) : null}
                         </h4>
+                        {item.topic && (
+                          <button
+                            onClick={() => handleToTopic(item.topic)}
+                            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                            title={`创建研究项目：${item.topic}`}
+                          >
+                            转选题 →
+                          </button>
+                        )}
                         <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">{item.description}</p>
                         {item.evidence && (
                           <p className="text-gray-400 text-xs mt-1">{t('tr.evidenceLabel')}: {item.evidence}</p>

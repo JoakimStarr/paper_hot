@@ -244,7 +244,13 @@ class TopicProject(Base):
     source_ref = Column(String(200), nullable=True)        # 来源引用（空白词对/热点词/一句话想法）
     source_paper_id = Column(Integer, nullable=True)       # 若从某篇论文起题，记录来源论文 id
     research_questions = Column(UnicodeJSON, nullable=True)  # 研究问题列表
+    # 检索关键词：Step1 手动维护，驱动 Step2 验证检索与 Step3 文献召回；
+    # 为空时前端回退到 generated_topics 快照里的 keywords
+    search_keywords = Column(UnicodeJSON, nullable=True)
     validation_report = Column(Text, nullable=True)        # 验证器生成的报告（markdown）
+    # 验证证据快照：{papers, mode, competition, validated_at}——召回列表/竞争地图随报告一起沉淀，
+    # 否则重进验证步时只剩报告文本，证据（组件内存态）会丢
+    validation_evidence = Column(UnicodeJSON, nullable=True)
     novelty = Column(Integer, nullable=True)               # 新颖性评分 1-10
     crowding = Column(String(20), nullable=True)           # 拥挤度 低/中/高
     feasibility = Column(Integer, nullable=True)           # 可行性评分 1-10
@@ -535,3 +541,38 @@ class UserEvent(Base):
     ref_id = Column(String(36), nullable=True, index=True)
     meta = Column(UnicodeJSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class PaperKeyword(Base):
+    """论文关键词平表（工作台性能优化）：替代 json_each(p.keywords_cn) 全表扫描的关键词召回。
+
+    keywords_cn 是 JSON 列，SQLite 无法对 json_each 展开建索引；本表一论文一关键词一行，
+    keyword 列建索引后召回走索引查找。由回填脚本维护（见 scripts/backfill_paper_keywords.py，
+    启动时空表自动后台回填），查询侧在表为空时自动回退 json_each，兼容未回填的库。
+    paper_id 不设外键：与 Favorite/ProjectPaper 等个人表保持一致（论文被外部清理后由重建回填收敛）。
+    """
+    __tablename__ = "paper_keywords"
+    __table_args__ = (
+        UniqueConstraint("paper_id", "keyword", name="uq_paper_keywords_paper_kw"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    keyword = Column(String(100), nullable=False, index=True)
+
+
+class ReadLater(Base):
+    """稍后读队列（工作台优化）：与收藏/置顶平行的轻量清单。
+
+    与收藏（长期沉淀）区分：队列强调"待办"，看完一条就从队列移除并计入阅读历史。
+    多用户预留：user_id 恒 "local"。
+    """
+    __tablename__ = "read_laters"
+    __table_args__ = (
+        UniqueConstraint("user_id", "paper_id", name="uq_read_later_user_paper"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), default="local", index=True)
+    paper_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

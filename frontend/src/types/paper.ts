@@ -228,6 +228,9 @@ export interface PaperReferenceItem {
   ref_index: number;
   raw_text: string | null;
   ref_url: string | null;
+  /** ref_url 精确命中库内论文时回填（前端渲染为站内链接） */
+  matched_paper_id?: string | null;
+  matched_paper_title?: string | null;
 }
 
 /** 论文参考文献响应 */
@@ -433,6 +436,8 @@ export interface TopicProject {
   feasibility: number | null;
   status: 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
   validation_report?: string | null;
+  validation_evidence?: ValidationEvidence | null;
+  search_keywords?: string[] | null;
   research_questions?: string[];
   current_step?: number;
   generated_topics?: GeneratedTopic[];
@@ -446,6 +451,18 @@ export interface TopicProject {
   papers?: ProjectPaper[];
   created_at: string | null;
   updated_at: string | null;
+}
+
+/** 验证证据快照：随验证报告一起持久化，重进步骤时恢复召回列表与竞争地图。 */
+export interface ValidationEvidence {
+  papers: Array<RetrievedPaper>;
+  mode: string;
+  competition: {
+    top_authors: Array<{ name: string; count: number }>;
+    journal_distribution: Array<{ journal: string; count: number }>;
+    recent_1y_count: number;
+  } | null;
+  validated_at: string;
 }
 
 export interface TopicProjectPayload {
@@ -495,6 +512,20 @@ export interface DataInsights {
   methods?: Array<{ name: string; papers: string[]; note: string }>;
   advice?: string;
   my_notes?: string;
+  /** 命中的方法手册条目 id（后端 Script 侧确定性匹配，非 LLM 产出） */
+  matched_methods?: string[];
+}
+
+/** 方法手册条目（GET /skills/method-playbook；econometrics 三元组：设计/数据/诊断）。 */
+export interface MethodPlaybookEntry {
+  id: string;
+  name: string;
+  aliases: string[];
+  applies: string;
+  data_needs: string;
+  assumptions: string;
+  diagnostics: string[];
+  code_hint: string;
 }
 
 /** 文献检索候选（search-papers 返回）。 */

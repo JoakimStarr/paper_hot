@@ -85,3 +85,11 @@ body {
 .dark .ai-citation-link:hover {
   color: #93c5fd;
 }
+/* 工作台「换一批」：卡片错峰入场（配合 dashboard 页 seed 变化的 key 重挂载） */
+@keyframes ppFadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pp-fade-slide-in {
+  animation: ppFadeSlideIn 0.45s ease both;
+}

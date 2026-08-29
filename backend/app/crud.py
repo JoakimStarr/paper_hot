@@ -1522,3 +1522,49 @@ class TrendChatCRUD:
         from app.models import TrendChat
         await db.execute(delete(TrendChat).where(TrendChat.report_id == report_id))
         await db.flush()
+
+
+# ---------- paper_keywords 平表回填（工作台关键词召回索引） ----------
+
+async def backfill_paper_keywords(batch_size: int = 1000, only_if_empty: bool = False) -> int:
+    """把 papers.keywords_cn 展开回填到 paper_keywords 平表（幂等，可重复执行）。
+
+    keywords_cn 是 JSON 列，SQLite 无法对 json_each 展开建索引；平表 + keyword 索引
+    让「今日值得读」的关键词召回走索引查找。返回本次新增行数。
+    only_if_empty=True 时（启动钩子）表非空直接返回 0，避免每次启动全量扫描。
+    """
+    from app.models import PaperKeyword
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        existing_count = (
+            await db.execute(select(func.count()).select_from(PaperKeyword))
+        ).scalar() or 0
+        if only_if_empty and existing_count > 0:
+            return 0
+
+        rows = (await db.execute(select(Paper.id, Paper.keywords_cn))).all()
+        have: set = set()
+        if existing_count:
+            for pid, kw in (await db.execute(select(PaperKeyword.paper_id, PaperKeyword.keyword))).all():
+                have.add((pid, kw))
+
+        added, buf = 0, []
+        for pid, kws in rows:
+            for kw in (kws or []):
+                k = (kw or "").strip()[:100]
+                if not k or (pid, k) in have:
+                    continue
+                have.add((pid, k))
+                buf.append(PaperKeyword(paper_id=pid, keyword=k))
+                added += 1
+                if len(buf) >= batch_size:
+                    db.add_all(buf)
+                    await db.commit()
+                    buf = []
+        if buf:
+            db.add_all(buf)
+        await db.commit()
+        if added:
+            logger.info(f"paper_keywords backfilled: +{added} rows (had {existing_count})")
+        return added

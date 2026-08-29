@@ -32,11 +32,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, AsyncSessionLocal
 from app.models import TopicProject, ProjectPaper, Paper
 from app.routers.deps import (
+    resolve_working_model,
     verify_token, _parse_json_list, _isoformat_utc,
     _get_ai_client, _resolve_model_provider, _get_default_model,
 )
 from app.routers.topic import _retrieve_similar_papers, _generate_proposal_content, _project_out
 from app.routers.producer import _suggest_journal_content
+from app.skills import method_playbook
+from app.skills import lit_review as lit_review_skill
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -111,6 +114,8 @@ class ProjectDetailOut(BaseModel):
     feasibility: Optional[int] = None
     status: str
     validation_report: Optional[str] = None
+    validation_evidence: Optional[dict] = None
+    search_keywords: Optional[list] = None
     research_questions: Optional[list] = None
     current_step: Optional[int] = 1
     generated_topics: Optional[list] = None
@@ -552,10 +557,7 @@ async def _llm_json(messages: list, max_tokens: int = 4096, temperature: float =
     token 预算会被 reasoning_content 大量占用，过小会导致 content 为空、
     finish_reason=length 而解析失败。
     """
-    provider, bare_model = _resolve_model_provider(None)
-    client, provider = _get_ai_client(provider)
-    if not bare_model:
-        bare_model = _get_default_model(provider)
+    client, provider, bare_model = resolve_working_model(None)
     response = await asyncio.to_thread(
         client.chat.completions.create,
         model=bare_model, messages=messages,
@@ -658,10 +660,7 @@ async def _ai_overview(db: AsyncSession, p: TopicProject) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": "请输出已有研究盘点。"},
     ]
-    provider, bare_model = _resolve_model_provider(None)
-    client, provider = _get_ai_client(provider)
-    if not bare_model:
-        bare_model = _get_default_model(provider)
+    client, provider, bare_model = resolve_working_model(None)
     response = await asyncio.to_thread(
         client.chat.completions.create,
         model=bare_model, messages=messages, max_tokens=3072, temperature=0.4,
@@ -670,16 +669,32 @@ async def _ai_overview(db: AsyncSession, p: TopicProject) -> str:
 
 
 async def _ai_data_insights(db: AsyncSession, p: TopicProject) -> dict:
-    """数据与方法线索：从文献集提取数据来源与研究方法（JSON）。"""
+    """数据与方法线索：从文献集提取数据来源与研究方法（JSON）+ 命中的方法手册条目。"""
     papers = await _load_project_papers(db, p.id, p.user_id)
     papers_text = _build_papers_text(papers, limit=15)
+
+    # 方法手册匹配（Script 侧确定性匹配）：标题 + 检索关键词 + 灵感快照关键词
+    kw: list = [k for k in (p.search_keywords or []) if k]
+    for g in (p.generated_topics or []):
+        if isinstance(g, dict):
+            kw.extend(g.get("keywords") or [])
+    matched = method_playbook.match_project(p.title, kw)
+    playbook_block = method_playbook.to_prompt_block(matched)
+
     if not papers_text:
-        return {"data_sources": [], "methods": [], "advice": "项目文献集为空，无法提取数据与方法线索。"}
+        return {
+            "data_sources": [],
+            "methods": [],
+            "advice": "项目文献集为空，无法提取数据与方法线索。",
+            "matched_methods": [e["id"] for e in matched],
+        }
 
     system_prompt = f"""以下是该选题相关论文的摘要与关键词。请提取这些研究所用的数据来源与研究方法。
 选题：{p.title}
 论文列表：
 {papers_text}
+
+{playbook_block}
 
 输出 JSON 对象：
 {{"data_sources": [{{"name": "数据库/数据源名称", "papers": ["编号1"], "usage": "用于什么研究"}}],
@@ -689,53 +704,47 @@ async def _ai_data_insights(db: AsyncSession, p: TopicProject) -> dict:
 要求：
 1. papers 数组里的编号对应论文列表的 [n]；多个编号如 ["1","3"]
 2. 数据来源若摘要里没有明确点名（如只说"上市公司数据""省级面板"），也要推断出具体可获得的库（CSMAR/Wind/CFPS/CHFS/投入产出表等）并在 usage 标注「推断」
-3. data_sources 与 methods 尽量非空；完全没有依据时才给空数组"""
-    return await _llm_json(
+3. data_sources 与 methods 尽量非空；完全没有依据时才给空数组
+4. 若上方方法手册命中了与选题相关的条目，methods 应纳入对应方法并在 note 里引用条目名"""
+    data = await _llm_json(
         [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": "请提取数据与方法线索。"},
         ],
         max_tokens=4096, temperature=0.3,
     )
+    if isinstance(data, dict):
+        # matched_methods 由 Script 侧确定性产出，不依赖 LLM 是否遵守
+        data["matched_methods"] = [e["id"] for e in matched]
+    return data
 
 
 async def _ai_literature_review(db: AsyncSession, p: TopicProject) -> str:
-    """文献综述：基于项目文献集生成结构化综述（markdown，复用综述结构）。"""
+    """文献综述：基于项目文献集生成结构化综述（lit_review 技能统一五节契约）。"""
     papers = await _load_project_papers(db, p.id, p.user_id)
     papers_text = _build_papers_text(papers, limit=20)
     if not papers_text:
         return "（项目文献集为空。请先在「文献管理」中添加论文，或在验证步骤召回。)"
-    system_prompt = f"""你是一位学术文献综述专家。请基于项目收集的论文，为选题生成一份结构化文献综述。
-选题：{p.title}
-相关论文（{len(papers[:20])} 篇，方括号为编号，按相关度排序）：
-{papers_text}
-
-请用 markdown 输出，包含：
-## 研究脉络
-梳理该方向从早期到近期的研究演进，说明主线脉络与发展阶段。
-## 方法演进
-文献采用的研究方法从简单到复杂的演进路径（概念界定、计量方法、数据来源等）。
-## 争议点
-现有文献存在哪些分歧与争议（结论冲突、方法派别、测度差异等）。
-## 研究空白
-基于上述脉络，指出尚待填补的空隙。
-## 可进一步研究
-给出 2-3 个可行切入点。
-
-要求：引用文献用 [编号] 标注，结论必须有文献支撑；每个部分 2-4 段。"""
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "请生成这份文献综述。"},
-    ]
-    provider, bare_model = _resolve_model_provider(None)
-    client, provider = _get_ai_client(provider)
-    if not bare_model:
-        bare_model = _get_default_model(provider)
+    messages = lit_review_skill.build_messages(
+        topic=p.title,
+        papers_text=papers_text,
+        paper_count=len(papers[:20]),
+        context_note="项目文献集",
+    )
+    client, provider, bare_model = resolve_working_model(None)
     response = await asyncio.to_thread(
         client.chat.completions.create,
         model=bare_model, messages=messages, max_tokens=4096, temperature=0.4,
     )
     return (response.choices[0].message.content or "").strip()
+
+
+# ---------------------------------------------------------------- 方法手册（skills/method_playbook）
+
+@router.get("/skills/method-playbook")
+async def get_method_playbook():
+    """方法手册全量条目（系统预置静态文本；前端按 data_insights.matched_methods 渲染命中卡）。"""
+    return {"entries": method_playbook.PLAYBOOK}
 
 
 # ---------------------------------------------------------------- 立项书 / 期刊适配（结果存回项目）
@@ -759,6 +768,9 @@ async def project_proposal(
         db, p.title, body.validation_report or p.validation_report
     )
     p.proposal = content
+    # 立项书请求携带验证报告时顺带沉淀（兼容跳过 onPatch 的调用路径）
+    if body.validation_report and not p.validation_report:
+        p.validation_report = body.validation_report
     await db.commit()
     return {"proposal": content, "model": model_name}
 

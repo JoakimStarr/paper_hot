@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 from fastapi import Header, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse  # noqa: F401
@@ -64,6 +64,34 @@ def _get_default_model(provider: str) -> Optional[str]:
                 return bare
     models = ai_trend_service.models.get(provider) or []
     return models[0] if models else None
+
+
+def resolve_working_model(model: Optional[str] = None) -> Tuple[Any, str, str]:
+    """统一模型解析（研究流水线各 AI 动作共用）。
+
+    优先级（用户预期）：显式 model 参数 > 全局 default_model（settings.default_model，
+    'provider/model'）> 首个可用 provider 的候选模型。保证返回的 bare_model 非空——
+    绝不以 model=None 请求上游（曾导致智谱返回 0 帧空流）。
+    default_model 指向未配置的 provider 时自动跳过（AI 调用失败由调用方降级）。
+    """
+    if model:
+        provider, bare = ai_trend_service._resolve_model(model)
+        client, provider = _get_ai_client(provider or None)
+        if not bare:
+            bare = _get_default_model(provider)
+        if provider and bare:
+            return client, provider, bare
+    global_default = getattr(settings, "default_model", None)
+    if global_default:
+        try:
+            g_provider, g_bare = ai_trend_service._resolve_model(global_default)
+            if g_provider and g_bare:
+                client, g_provider = _get_ai_client(g_provider)
+                return client, g_provider, g_bare
+        except Exception:
+            pass  # default_model 指向未配置/不可用的 provider：按优先级回落
+    client, provider = _get_ai_client(None)
+    return client, provider, _get_default_model(provider)
 
 
 def _stream_chat_response(client, provider: str, messages: list, model: Optional[str] = None,

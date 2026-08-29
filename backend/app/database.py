@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.config import settings
@@ -108,6 +110,9 @@ async def init_db():
         tp_rows = (await conn.execute(text("PRAGMA table_info(topic_projects)"))).fetchall()
         tp_cols = {r[1] for r in tp_rows}
         _tp_new_cols = [
+            ("validation_report", "TEXT"),
+            ("validation_evidence", "TEXT"),
+            ("search_keywords", "TEXT"),
             ("source_type", "VARCHAR(20) DEFAULT 'manual'"),
             ("source_ref", "VARCHAR(200)"),
             ("research_questions", "TEXT"),

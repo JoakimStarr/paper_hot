@@ -5,17 +5,19 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import PaperCard from '@/components/PaperCard';
+import PreferencesPanel from '@/components/PreferencesPanel';
 import SkeletonCard from '@/components/SkeletonCard';
 import { useToast } from '@/components/Toast';
 import { dashboardApi, DashboardData, personalApi } from '@/lib/api';
 import { reportPageContext } from '@/lib/assistantBus';
 import { usePreferences } from '@/lib/usePreferences';
+import { refreshPreferences } from '@/lib/cache';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { PaperCard as PaperCardType, TrendingTopic } from '@/types/paper';
 import {
   BookOpen, Newspaper, Layers, Sparkles, TrendingUp, TrendingDown,
-  Minus, Bookmark, FileSearch, Target, Loader2, EyeOff, Plus, X, History, SlidersHorizontal, BookMarked,
-  RefreshCw,
+  Minus, Bookmark, FileSearch, Target, Loader2, Plus, History, SlidersHorizontal, BookMarked,
+  RefreshCw, ChevronDown, Check, Clock, X,
 } from 'lucide-react';
 
 const trendIcon = (trend: string) =>
@@ -52,6 +54,14 @@ function TopicSparkline({ series }: { series?: Array<{ year: string; count: numb
 type DashboardTab = 'workbench' | 'briefing' | 'stack' | 'prefs';
 const VALID_TABS: DashboardTab[] = ['workbench', 'briefing', 'stack', 'prefs'];
 
+// 各页签需要的 /dashboard 子集：prefs 页签纯客户端，不需要聚合接口
+const TAB_SECTIONS: Record<DashboardTab, Array<'today_read' | 'briefing' | 'mine'>> = {
+  workbench: ['today_read', 'mine'],
+  briefing: ['briefing'],
+  stack: ['mine'],
+  prefs: [],
+};
+
 export default function DashboardPage() {
   return (
     <Suspense fallback={
@@ -76,44 +86,61 @@ function DashboardInner() {
     tabParam && (VALID_TABS as string[]).includes(tabParam) ? (tabParam as DashboardTab) : 'workbench'
   );
 
-  const [data, setData] = useState<DashboardData | null>(null);
+  // 按页签拆分取数：各页签只拉所需子集（后端 /dashboard?sections=...），
+  // 首屏只算「研究工作台」，领域快讯/研究栈切到时再取并缓存，屏蔽项变化只刷新当前页签。
+  const [dataByTab, setDataByTab] = useState<Partial<Record<DashboardTab, Partial<DashboardData>>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // 「不感兴趣」屏蔽版本号：新增/删除屏蔽项后重取工作台，保证「今日值得读」即时生效
   const { version: prefVersion } = usePreferences();
 
-  const load = useCallback(async (s: number) => {
-    setLoading(true);
+  // 关注变更版本号：SuggestionBar/FollowSubfields/FollowKeywords 变化时触发子组件重取
+  const [followVersion, setFollowVersion] = useState(0);
+
+  const [seed, setSeed] = useState(0);
+  const seedRef = React.useRef(0);
+
+  const loadTab = useCallback(async (tab: DashboardTab, s: number, silent = false) => {
+    const sections = TAB_SECTIONS[tab];
+    if (sections.length === 0) return;
+    if (!silent) setLoading(true);
     setError(null);
     try {
-      setData(await dashboardApi.getDashboard(s));
+      const fresh = await dashboardApi.getDashboard(s, sections);
+      setDataByTab((prev) => ({ ...prev, [tab]: { ...(prev[tab] || {}), ...fresh } }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('dash.loadFailed'));
+      if (!silent) setError(e instanceof Error ? e.message : t('dash.loadFailed'));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    load(0);
+    loadTab('workbench', 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 关注变更版本号：SuggestionBar/FollowSubfields/FollowKeywords 变化时触发子组件重取
-  const [followVersion, setFollowVersion] = useState(0);
+  // 页签切换：页内跳转 / 深链共用；未取过的页签按需取数
+  const switchTab = useCallback((tab: DashboardTab) => {
+    setActiveTab(tab);
+    reportPageContext({ tab });
+    if (TAB_SECTIONS[tab].length > 0 && !dataByTab[tab]) {
+      loadTab(tab, seedRef.current);
+    }
+  }, [dataByTab, loadTab]);
 
   // 页内 Link 跳转到 /dashboard?tab=xxx 时同步激活页签
   useEffect(() => {
     const p = searchParams.get('tab');
     if (p && (VALID_TABS as string[]).includes(p)) {
-      setActiveTab(p as DashboardTab);
+      switchTab(p as DashboardTab);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // 屏蔽项变化 / 「换一批」「看过了」时静默重取工作台；reloading 仅在顶部小节显示轻量加载指示
+  // 屏蔽项变化 / 「换一批」「看过了」时只静默重取当前页签子集；reloading 仅在顶部小节显示轻量加载指示
   const [reloading, setReloading] = useState(false);
-  const [seed, setSeed] = useState(0);
   const skipFirstPref = React.useRef(true);
   useEffect(() => {
     if (skipFirstPref.current) {
@@ -124,8 +151,10 @@ function DashboardInner() {
     setReloading(true);
     (async () => {
       try {
-        const fresh = await dashboardApi.getDashboard(seed);
-        if (!cancelled) setData(fresh);
+        const fresh = await dashboardApi.getDashboard(seed, TAB_SECTIONS[activeTab]);
+        if (!cancelled) {
+          setDataByTab((prev) => ({ ...prev, [activeTab]: { ...(prev[activeTab] || {}), ...fresh } }));
+        }
       } catch {
         /* 忽略静默刷新失败 */
       } finally {
@@ -135,6 +164,21 @@ function DashboardInner() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefVersion, seed]);
+
+  // 冷启动引导：工作台就绪、未关注任何子领域且未引导过时弹一次（localStorage 记忆）
+  const [showColdstart, setShowColdstart] = useState(false);
+  useEffect(() => {
+    if (activeTab !== 'workbench' || loading) return;
+    const mine = dataByTab.workbench?.mine;
+    if (mine && mine.has_followed_subfields === false && localStorage.getItem('pp_coldstart_done') !== '1') {
+      setShowColdstart(true);
+    }
+  }, [activeTab, loading, dataByTab]);
+
+  const bumpSeed = useCallback(() => {
+    seedRef.current += 1;
+    setSeed(seedRef.current);
+  }, []);
 
   const tabs: { key: DashboardTab; label: string; icon: React.ReactNode }[] = [
     { key: 'workbench', label: t('dash.tabWorkbench'), icon: <BookOpen className="w-4 h-4" /> },
@@ -162,14 +206,13 @@ function DashboardInner() {
 
       {/* 模块页签（对齐系统页「分开 + 切换」样式） */}
       <div className="border-b border-gray-200 dark:border-gray-700 mb-6 overflow-x-auto">
-        <nav className="flex gap-4 sm:gap-6 min-w-max">
+        <nav className="flex gap-4 sm:gap-6 min-w-max" role="tablist" aria-label={t('dash.tabWorkbench')}>
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => {
-                setActiveTab(tab.key);
-                reportPageContext({ tab: tab.key });
-              }}
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              onClick={() => switchTab(tab.key)}
               className={`flex items-center gap-1.5 sm:gap-2 px-1 py-2 sm:py-3 text-xs sm:text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.key
                   ? 'text-primary-600 dark:text-primary-400 border-primary-600'
@@ -189,18 +232,28 @@ function DashboardInner() {
             <SkeletonCard key={i} />
           ))}
         </div>
-      ) : error || !data ? (
+      ) : error ? (
         <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{error || t('dash.noData')}</p>
-          <button onClick={() => load(seed)} className="text-primary-600 hover:underline text-sm">{t('common.retry')}</button>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">{error}</p>
+          <button onClick={() => loadTab(activeTab, seed)} className="text-primary-600 hover:underline text-sm">{t('common.retry')}</button>
         </div>
       ) : (
-        <div className="space-y-8">
-          {activeTab === 'workbench' && (
-            <TodayRead data={data} reloading={reloading} onRefresh={() => setSeed((s) => s + 1)} />
+        <div className="space-y-8" role="tabpanel">
+          {activeTab === 'workbench' && dataByTab.workbench?.today_read && dataByTab.workbench?.mine && (
+            <TodayRead
+              data={dataByTab.workbench as DashboardData}
+              reloading={reloading}
+              seed={seed}
+              onRefresh={bumpSeed}
+              onFollowedChanged={() => setFollowVersion((v) => v + 1)}
+            />
           )}
-          {activeTab === 'briefing' && <Briefing data={data} />}
-          {activeTab === 'stack' && <MyStack data={data} />}
+          {activeTab === 'briefing' && dataByTab.briefing?.briefing && (
+            <Briefing data={dataByTab.briefing as DashboardData} />
+          )}
+          {activeTab === 'stack' && dataByTab.stack?.mine && (
+            <MyStack data={dataByTab.stack as DashboardData} />
+          )}
           {activeTab === 'prefs' && (
             <>
               <SuggestionBar onFollowChanged={() => setFollowVersion((v) => v + 1)} />
@@ -211,18 +264,35 @@ function DashboardInner() {
           )}
         </div>
       )}
+
+      {showColdstart && (
+        <ColdStartWizard
+          onDone={() => {
+            setShowColdstart(false);
+            setFollowVersion((v) => v + 1);
+            bumpSeed();
+          }}
+        />
+      )}
     </Layout>
   );
 }
 
-/** ① 研究工作台：今日值得读 */
-function TodayRead({ data, reloading, onRefresh }: { data: DashboardData; reloading: boolean; onRefresh: () => void }) {
+/** ① 研究工作台：进行中选题进度 + 今日值得读（反馈闭环）+ 新论文展开 + 稍后读队列 */
+function TodayRead({ data, reloading, seed, onRefresh, onFollowedChanged }: {
+  data: DashboardData;
+  reloading: boolean;
+  seed: number;
+  onRefresh: () => void;
+  onFollowedChanged: () => void;
+}) {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [readBusy, setReadBusy] = useState<string | null>(null);
+  const [fbBusy, setFbBusy] = useState<string | null>(null);
   const mine = data.mine as MineData;
 
-  // 「看过了」：记录阅读历史，后端下次推荐自动排除该论文
+  // 「看过了」：记录阅读历史，后端下次推荐自动排除该论文（入口在卡片「不感兴趣」菜单顶部）
   const handleMarkRead = async (p: PaperCardType) => {
     if (readBusy) return;
     setReadBusy(p.id);
@@ -237,8 +307,34 @@ function TodayRead({ data, reloading, onRefresh }: { data: DashboardData; reload
     }
   };
 
+  // 推荐反馈闭环：👍 多推这类（关注其关键词/子领域） / 👎 少推这类（屏蔽其关键词/子领域）
+  const handleFeedback = async (p: PaperCardType, action: 'more' | 'less') => {
+    if (fbBusy) return;
+    setFbBusy(`${p.id}:${action}`);
+    try {
+      const res = await personalApi.recommendFeedback(p.id, action);
+      if (!res.applied) {
+        toast(t('dash.feedbackAlready'), 'warning');
+      } else {
+        const typeLabel = t(res.entity_type === 'keyword' ? 'pref.type.keyword' : 'pref.type.subfield');
+        toast(
+          t(action === 'more' ? 'dash.feedbackMoreDone' : 'dash.feedbackLessDone', { type: typeLabel, value: res.entity_value || '' }),
+          'success',
+        );
+        if (action === 'less') await refreshPreferences();
+        onRefresh();
+      }
+    } catch {
+      toast(t('dash.feedbackFailed'), 'error');
+    } finally {
+      setFbBusy(null);
+    }
+  };
+
   return (
     <section>
+      <ProjectProgressStrip projects={mine.topic_projects} />
+
       <div className="flex items-center gap-2 mb-3">
         <BookOpen className="w-5 h-5 text-primary-600" />
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('dash.todayRead')}</h2>
@@ -269,9 +365,9 @@ function TodayRead({ data, reloading, onRefresh }: { data: DashboardData; reload
           </Link>
         </p>
       )}
-      <div className="grid grid-cols-1 gap-4 sm:gap-6">
-        {data.today_read.map((p) => (
-          <div key={p.id}>
+      <div className={`grid grid-cols-1 gap-4 sm:gap-6 transition-opacity duration-300 ${reloading ? 'opacity-50' : 'opacity-100'}`}>
+        {data.today_read.map((p, idx) => (
+          <div key={`${p.id}-${seed}`} className="pp-fade-slide-in" style={{ animationDelay: `${idx * 60}ms` }}>
             {p.reason && (
               <div className="flex items-center gap-2 mb-1.5">
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">
@@ -279,22 +375,342 @@ function TodayRead({ data, reloading, onRefresh }: { data: DashboardData; reload
                   {p.reason.label}
                 </span>
                 <button
-                  onClick={() => handleMarkRead(p)}
-                  disabled={readBusy === p.id}
-                  className="text-[11px] text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors disabled:opacity-50"
+                  onClick={() => handleFeedback(p, 'more')}
+                  disabled={!!fbBusy}
+                  title={t('dash.moreLikeThis')}
+                  aria-label={t('dash.moreLikeThis')}
+                  className="text-[11px] leading-none text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-colors disabled:opacity-50"
                 >
-                  {readBusy === p.id ? <Loader2 className="w-3 h-3 animate-spin inline-block" /> : t('dash.markRead')}
+                  👍
+                </button>
+                <button
+                  onClick={() => handleFeedback(p, 'less')}
+                  disabled={!!fbBusy}
+                  title={t('dash.lessLikeThis')}
+                  aria-label={t('dash.lessLikeThis')}
+                  className="text-[11px] leading-none text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                >
+                  👎
                 </button>
               </div>
             )}
-            <PaperCard paper={p} surface="dashboard_today_read" />
+            <PaperCard
+              paper={p}
+              surface="dashboard_today_read"
+              onMarkRead={() => handleMarkRead(p)}
+              markReadBusy={readBusy === p.id}
+            />
           </div>
         ))}
         {data.today_read.length === 0 && (
-          <p className="text-sm text-gray-400">{t('dash.noRecommendPapers')}</p>
+          <div className="text-sm text-gray-400">
+            <p className="mb-2">{t('dash.noRecommendPapers')}</p>
+            <Link href="/dashboard?tab=prefs" className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              {t('dash.goPrefs')}
+            </Link>
+          </div>
         )}
       </div>
+
+      <WatchNewList onPapersRead={onRefresh} />
+      <ReadLaterQueue onQueueChanged={onRefresh} />
     </section>
+  );
+}
+
+/** 进行中选题进度条：五步向导进度 + 文献集精读统计（打通"读论文"与"写论文"） */
+function ProjectProgressStrip({ projects }: { projects: DashboardData['mine']['topic_projects'] }) {
+  const { t } = useLanguage();
+  const active = projects.slice(0, 3);
+  if (active.length === 0) return null;
+  return (
+    <div className="mb-4 flex flex-wrap gap-2">
+      {active.map((tp) => (
+        <Link
+          key={tp.id}
+          href={`/topics?project=${tp.id}`}
+          className="group flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
+        >
+          <Target className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+          <span className="max-w-[180px] sm:max-w-[260px] truncate text-xs font-medium text-blue-800 dark:text-blue-200">
+            {tp.title}
+          </span>
+          <span className="shrink-0 rounded-full bg-blue-100 dark:bg-blue-900/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300">
+            {t('dash.stepN', { n: tp.current_step ?? 1 })}
+          </span>
+          {(tp.paper_count ?? 0) > 0 && (
+            <span className="shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
+              {t('dash.paperStat', { n: tp.paper_count ?? 0, m: tp.read_count ?? 0 })}
+            </span>
+          )}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** 关注子领域近 30 天新论文：就地展开（替代跳搜索页重拼筛选），支持「全部标为看过」 */
+function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
+  const { t } = useLanguage();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [papers, setPapers] = useState<PaperCardType[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    dashboardApi.getWatchNewPapers()
+      .then((res) => {
+        if (!cancelled) {
+          setPapers(res.papers || []);
+          setTotal(res.total);
+          setLoaded(true);
+        }
+      })
+      .catch(() => { if (!cancelled) setLoaded(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, reloadKey]);
+
+  const markAllRead = async () => {
+    if (busy || papers.length === 0) return;
+    setBusy(true);
+    try {
+      await personalApi.recordReadingBatch(papers.map((p) => p.id));
+      toast(t('dash.watchNewAllReadDone'), 'success');
+      onPapersRead();
+      setReloadKey((k) => k + 1);
+    } catch {
+      toast(t('pref.hideFailed'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+      >
+        <Clock className="w-4 h-4 text-primary-500" />
+        <span className="font-medium">{t('dash.watchNewTitle')}</span>
+        <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-4 pb-4">
+          {loading && !loaded ? (
+            <p className="text-xs text-gray-400 py-3">
+              <Loader2 className="w-3.5 h-3.5 animate-spin inline-block mr-1" />
+              {t('dash.watchNewLoading')}
+            </p>
+          ) : papers.length === 0 ? (
+            <p className="text-xs text-gray-400 py-3">{t('dash.watchNewEmpty')}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 mb-3">
+                <span className="text-xs text-gray-400">{t('dash.watchNewTotal', { n: total })}</span>
+                <button
+                  onClick={markAllRead}
+                  disabled={busy}
+                  className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                >
+                  {busy ? <Loader2 className="w-3 h-3 animate-spin inline-block mr-1" /> : <Check className="w-3 h-3 inline-block mr-1" />}
+                  {t('dash.watchNewAllRead')}
+                </button>
+              </div>
+              <div className="space-y-4">
+                {papers.map((p) => (
+                  <PaperCard key={p.id} paper={p} surface="dashboard_watch_new" />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 稍后读队列：论文卡片的时钟图标加入；这里集中消费（标记已读并移出 / 仅移出） */
+function ReadLaterQueue({ onQueueChanged }: { onQueueChanged: () => void }) {
+  const { t } = useLanguage();
+  const { toast } = useToast();
+  const [papers, setPapers] = useState<PaperCardType[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await personalApi.getReadLaterPapers();
+      setPapers(res.papers || []);
+    } catch { /* 静默失败，不阻塞页签 */ }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const done = async (pid: string) => {
+    setBusyId(pid);
+    try {
+      await personalApi.recordReading(pid);
+      await personalApi.toggleReadLater(pid); // 队列中 -> 移出
+      toast(t('dash.readLaterDoneMsg'), 'success');
+      await load();
+      onQueueChanged();
+    } catch {
+      toast(t('pref.hideFailed'), 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (pid: string) => {
+    setBusyId(pid);
+    try {
+      await personalApi.toggleReadLater(pid);
+      await load();
+    } catch {
+      toast(t('pref.hideFailed'), 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="mt-6 rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Clock className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('dash.readLaterTitle')}</h3>
+        {papers.length > 0 && <span className="text-xs text-gray-400">{t('dash.readLaterCount', { n: papers.length })}</span>}
+      </div>
+      {papers.length === 0 ? (
+        <p className="text-xs text-gray-400 mt-2">{t('dash.readLaterEmpty')}</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {papers.map((p) => (
+            <li key={p.id} className="flex items-center gap-2">
+              <Link href={`/paper/${p.id}`} className="flex-1 min-w-0 text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600 line-clamp-1">
+                {p.title}
+              </Link>
+              <button
+                onClick={() => done(p.id)}
+                disabled={busyId === p.id}
+                title={t('dash.readLaterDone')}
+                aria-label={t('dash.readLaterDone')}
+                className="shrink-0 text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-colors disabled:opacity-50"
+              >
+                {busyId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={() => remove(p.id)}
+                disabled={busyId === p.id}
+                title={t('dash.readLaterRemove')}
+                aria-label={t('dash.readLaterRemove')}
+                className="shrink-0 text-gray-300 dark:text-gray-600 hover:text-red-500 transition-colors disabled:opacity-50"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** 冷启动引导：首次进入工作台且未关注子领域时弹一次，选 ≥3 个方向开启个性化 */
+function ColdStartWizard({ onDone }: { onDone: () => void }) {
+  const { t } = useLanguage();
+  const { toast } = useToast();
+  const [distribution, setDistribution] = useState<Array<{ subfield: string; count: number }>>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { papersApi } = await import('@/lib/api');
+        const stats = await papersApi.getSubfieldDistribution();
+        setDistribution((stats.distribution || []).slice(0, 12));
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const toggle = (sf: string) =>
+    setSelected((prev) => (prev.includes(sf) ? prev.filter((x) => x !== sf) : [...prev, sf]));
+
+  const finish = () => {
+    localStorage.setItem('pp_coldstart_done', '1');
+    onDone();
+  };
+
+  const confirm = async () => {
+    setSaving(true);
+    try {
+      const { personalApi } = await import('@/lib/api');
+      await personalApi.setSubfields(selected);
+      toast(t('dash.coldstart.done'), 'success');
+      finish();
+    } catch {
+      toast(t('dash.coldstart.saveFailed'), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={t('dash.coldstart.title')}>
+      <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl p-5 sm:p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <Sparkles className="w-5 h-5 text-primary-500" />
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('dash.coldstart.title')}</h2>
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('dash.coldstart.subtitle')}</p>
+        <div className="flex flex-wrap gap-2 mb-4 max-h-56 overflow-y-auto">
+          {distribution.map((d) => {
+            const activeSel = selected.includes(d.subfield);
+            return (
+              <button
+                key={d.subfield}
+                onClick={() => toggle(d.subfield)}
+                className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
+                  activeSel
+                    ? 'bg-primary-600 text-white border-primary-600'
+                    : 'bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-primary-300'
+                }`}
+              >
+                {d.subfield}
+                <span className={`ml-1 text-[10px] ${activeSel ? 'text-primary-200' : 'text-gray-400'}`}>{d.count}</span>
+              </button>
+            );
+          })}
+          {distribution.length === 0 && <p className="text-xs text-gray-400">{t('follow.empty')}</p>}
+        </div>
+        <div className="flex items-center justify-between">
+          <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+            {t('dash.coldstart.skip')}
+          </button>
+          <button
+            onClick={confirm}
+            disabled={saving || selected.length < 3}
+            className="px-4 py-2 rounded-lg bg-primary-600 text-white text-sm disabled:opacity-50 hover:bg-primary-700 transition-colors"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : selected.length < 3 ? t('dash.coldstart.needMore', { n: 3 - selected.length }) : t('dash.coldstart.confirm')}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -349,7 +765,13 @@ function Briefing({ data }: { data: DashboardData }) {
           );
         })}
         {data.briefing.topics.length === 0 && (
-          <p className="text-sm text-gray-400">{t('dash.noTrendData')}</p>
+          <div className="text-sm text-gray-400">
+            <p className="mb-2">{t('dash.noTrendData')}</p>
+            <Link href="/trends" className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+              {t('dash.viewAll')}
+              <TrendingUp className="w-3 h-3" />
+            </Link>
+          </div>
         )}
       </div>
     </section>
@@ -793,118 +1215,6 @@ function SuggestionBar({ onFollowChanged }: { onFollowChanged?: () => void }) {
             </span>
           </button>
         ))}
-      </div>
-    </section>
-  );
-}
-
-const PREF_TYPES: Array<{ type: 'subfield' | 'journal' | 'keyword' | 'author'; labelKey: string }> = [
-  { type: 'subfield', labelKey: 'pref.type.subfield' },
-  { type: 'journal', labelKey: 'pref.type.journal' },
-  { type: 'keyword', labelKey: 'pref.type.keyword' },
-  { type: 'author', labelKey: 'pref.type.author' },
-];
-
-/** ⑤「不感兴趣」屏蔽管理：按类型增删领域/期刊/关键词/作者，全局列表过滤生效。 */
-function PreferencesPanel() {
-  const { t } = useLanguage();
-  const { toast } = useToast();
-  const { items, add, remove } = usePreferences();
-  const [activeType, setActiveType] = useState<'subfield' | 'journal' | 'keyword' | 'author'>('subfield');
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const activeItems = items.filter((p) => p.entity_type === activeType);
-
-  const handleAdd = async () => {
-    const value = input.trim();
-    if (!value) return;
-    setBusy(true);
-    try {
-      await add(activeType, value);
-      setInput('');
-      toast(t('pref.hideMsg'), 'success');
-    } catch {
-      toast(t('pref.hideFailed'), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRemove = async (value: string) => {
-    try {
-      await remove(activeType, value);
-      toast(t('pref.unhideMsg'), 'success');
-    } catch {
-      toast(t('pref.unhideFailed'), 'error');
-    }
-  };
-
-  return (
-    <section className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6" id="hide">
-      <div className="flex items-center gap-2 mb-3">
-        <EyeOff className="w-5 h-5 text-red-500" />
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('pref.title')}</h2>
-        <span className="text-xs text-gray-400">{t('pref.subtitle')}</span>
-      </div>
-
-      {/* 类型切换 */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {PREF_TYPES.map(({ type, labelKey }) => (
-          <button
-            key={type}
-            onClick={() => setActiveType(type)}
-            className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
-              activeType === type
-                ? 'bg-red-500 text-white border-red-500'
-                : 'bg-gray-50 dark:bg-gray-700/50 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-red-300'
-            }`}
-          >
-            {t(labelKey)}
-          </button>
-        ))}
-      </div>
-
-      {/* 已有屏蔽项 */}
-      {activeItems.length === 0 ? (
-        <p className="text-sm text-gray-400 mb-4">{t('pref.empty')}</p>
-      ) : (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {activeItems.map((p) => (
-            <span
-              key={`${p.entity_type}:${p.entity_value}`}
-              className="inline-flex items-center gap-1.5 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs px-2.5 py-1 rounded-full border border-red-200 dark:border-red-800"
-            >
-              <span className="max-w-[180px] truncate">{p.entity_value}</span>
-              <button
-                onClick={() => handleRemove(p.entity_value)}
-                className="hover:bg-red-100 dark:hover:bg-red-900/50 rounded-full p-0.5"
-                title={t('pref.remove')}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* 手动新增 */}
-      <div className="flex items-center gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-          placeholder={t('pref.addPlaceholder', { type: t(activeType === 'subfield' ? 'pref.type.subfield' : activeType === 'journal' ? 'pref.type.journal' : activeType === 'keyword' ? 'pref.type.keyword' : 'pref.type.author') })}
-          className="flex-1 min-w-0 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent"
-        />
-        <button
-          onClick={handleAdd}
-          disabled={busy || !input.trim()}
-          className="flex items-center gap-1 px-3 py-2 rounded-lg bg-red-500 text-white text-sm disabled:opacity-50 hover:bg-red-600 transition-colors"
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          {t('pref.add')}
-        </button>
       </div>
     </section>
   );

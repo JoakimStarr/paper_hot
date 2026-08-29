@@ -24,9 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, AsyncSessionLocal
 from app.models import Paper, PaperFeatures, ResearchGapReport, TopicProject
 from app.ai_service import ai_trend_service
+from app.skills import validate as validate_skill
+from app.routers.deps import _stream_llm_content
 from app.routers.deps import (
+    resolve_working_model,
     verify_token, _parse_json_list,
-    _get_ai_client, _resolve_model_provider, _stream_chat_response,
+    _get_ai_client, _resolve_model_provider, _get_default_model, _stream_chat_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -194,7 +197,7 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
             for g in gaps:
                 src, tgt = g.get("source", ""), g.get("target", "")
                 data_lines.append(
-                    f"- 「{src}」(词频{g.get('source_count', 0)}，近3个统计年度{trend_map.get(src, 0)}篇) × "
+                    f"#{len(data_lines) + 1} 「{src}」(词频{g.get('source_count', 0)}，近3个统计年度{trend_map.get(src, 0)}篇) × "
                     f"「{tgt}」(词频{g.get('target_count', 0)}，近3个统计年度{trend_map.get(tgt, 0)}篇)："
                     f"共现{g.get('cooccurrence', 0)}次，空白分{g.get('gap_score', 0):.3f}"
                 )
@@ -202,8 +205,9 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
 
             system_prompt = f"""你是一位资深的学术研究选题顾问。以下数据来自一个学术论文库的关键词共现分析：
 每个组合都是「两个关键词各自高频出现、但很少在同一篇论文中共现」的潜在研究空白。
+注意：「共现稀疏」不等于「从未共同出现」——共现次数可能是很小的正数（如 3 次、13 次），也可能是 0。
 
-数据（按空白分降序，空白分越高表示交叉越稀少）：
+数据（按空白分降序，空白分越高表示交叉越稀少；每行行首的 #编号 唯一标识该组合）：
 {data_text}
 
 请对以上研究空白逐一给出"空白假设卡片"，用 markdown 输出，每个组合包含：
@@ -214,6 +218,8 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
 5. **建议切入角度**：如果要研究，第一步可以做什么
 
 要求：
+- 数据引用必须逐字对应该行的 #编号 与数字，严禁把一个组合的数字写到另一个组合上（如把「A×C」的共现数写到「B×C」）
+- 共现次数 > 0 的组合，严禁使用「没有出现过」「从未共同出现」「零共现」等表述，必须写「共现仅 N 次，远低于两词热度下的预期水平」；仅当共现 = 0 时才可说「未检索到共现」
 - 诚实评估，宁可说"这可能是伪空白"也不要强行吹捧
 - 假设要具体到"什么方法×什么场景"，不要空泛
 - 最后给一个总结：按研究价值排序你最推荐的 3 个组合，并说明理由"""
@@ -223,11 +229,7 @@ async def _run_gap_analysis_background(report_id: int, model: Optional[str] = No
                 {"role": "user", "content": "请分析这些研究空白并输出空白假设卡片。"},
             ]
 
-            provider, bare_model = _resolve_model_provider(model)
-            client, provider = _get_ai_client(provider)
-            if not bare_model:
-                from app.routers.deps import _get_default_model
-                bare_model = _get_default_model(provider)
+            client, provider, bare_model = resolve_working_model(model)
 
             # 后台任务用非流式调用（简单可靠），SSE 只用于选题验证器。
             # sync 客户端调用经 to_thread 下放线程池，避免阻塞事件循环数分钟
@@ -291,6 +293,8 @@ async def get_gap_analysis(request: Request = None, db: AsyncSession = Depends(g
 class ValidateRequest(BaseModel):
     topic: str
     model: Optional[str] = None
+    # 提供时：流结束后服务端直接把评分/报告/状态落库到该项目（技能层回写）
+    project_id: Optional[int] = None
 
 
 @router.get("/topic-validator/status")
@@ -701,6 +705,9 @@ class TopicProjectUpdate(BaseModel):
     novelty: Optional[int] = None
     crowding: Optional[str] = None
     feasibility: Optional[int] = None
+    validation_report: Optional[str] = None
+    validation_evidence: Optional[dict] = None
+    search_keywords: Optional[list] = None
     research_questions: Optional[list] = None
     current_step: Optional[int] = None
     generated_topics: Optional[list] = None
@@ -754,6 +761,8 @@ def _project_out(p: TopicProject) -> dict:
         "feasibility": p.feasibility,
         "status": p.status,
         "validation_report": p.validation_report,
+        "validation_evidence": p.validation_evidence,
+        "search_keywords": p.search_keywords or [],
         "research_questions": p.research_questions or [],
         "current_step": p.current_step or 1,
         "generated_topics": p.generated_topics or [],
@@ -811,7 +820,9 @@ async def create_topic_project(
         feasibility=body.feasibility,
         research_questions=body.research_questions,
         current_step=body.current_step or 1,
-        status="validated",
+        # 状态机修正：只有携带验证报告的创建（旧验证器沉淀路径）才算已验证；
+        # 普通新建从「验证中」开始，由 validate 技能推动 to_validate -> validated
+        status="validated" if (body.validation_report or "").strip() else "to_validate",
     )
     db.add(p)
     await db.commit()
@@ -839,6 +850,7 @@ async def update_topic_project(
         p.status = body.status
     for field in (
         "title", "novelty", "crowding", "feasibility",
+        "validation_report", "validation_evidence", "search_keywords",
         "research_questions", "current_step", "generated_topics",
         "overview", "data_insights", "literature_review",
         "proposal", "journal_advice",
@@ -869,16 +881,24 @@ async def delete_topic_project(
 @router.post("/topic-validator/validate")
 async def validate_topic(
     body: ValidateRequest,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
-    """选题验证器：候选题目 -> 召回近似论文 -> 拥挤度统计 -> LLM 流式评估（SSE）。"""
+    """选题验证器（validate 技能）：两阶段召回 -> 预承诺评分标准 -> Script 证据 -> LLM 流式评估（SSE）。
+
+    输出以 ```json 头开始（novelty/crowding/feasibility/gate），后端在流中缓冲剥离该头：
+    - 剥离后的 markdown 实时转发给前端（前端看不到 JSON 噪声）；
+    - 带 project_id 时流结束后服务端直接把评分/报告/状态落库（技能层回写）；
+    - 无 JSON 头时降级为旧版纯 markdown 流程（前端正则解析仍生效）。
+    """
     topic = (body.topic or "").strip()
     if not topic:
         raise HTTPException(status_code=400, detail="Topic is required")
 
     papers, mode = await _retrieve_similar_papers(db, topic, k=30)
     stats = _crowding_stats(papers)
+    stats["mode"] = mode
     # P2-12b：竞争地图（谁在做 / 发到哪 / 近一年多少篇）
     try:
         competition = await _competition_map(db, [p["id"] for p in papers])
@@ -887,57 +907,11 @@ async def validate_topic(
         competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
     stats["competition"] = competition
 
-    papers_text = "\n".join([
-        f"[{i+1}] ({p['similarity']:.3f}) {p['title']} ({p['source']}, {p['published_at'][:10] if p['published_at'] else '?'})"
-        f" 关键词: {', '.join(p['keywords'][:5]) or '无'}"
-        for i, p in enumerate(papers[:30])
-    ]) or "（未召回近似论文：该题目的表述在库内近乎无匹配）"
-
-    stats_text = (
-        f"召回模式: {mode}\n"
-        f"Top30 平均相似度: {stats['top30_avg_similarity']}\n"
-        f"最高相似度: {stats.get('max_similarity', 0)}\n"
-        f"近似论文中近 3 个月发表: {stats['recent_3m_count']} 篇\n"
-        f"近似论文高频关键词: {', '.join([k['keyword'] for k in stats['keyword_overlap'][:8]]) or '无'}\n"
-        f"竞争地图——活跃作者: {', '.join(a['name'] for a in competition['top_authors']) or '无'}\n"
-        f"竞争地图——期刊分布: {', '.join(j['journal'] for j in competition['journal_distribution']) or '无'}\n"
-        f"竞争地图——近一年发表: {competition['recent_1y_count']} 篇"
-    )
-
-    system_prompt = f"""你是一位严格的学术选题评审专家。用户提出了一个候选研究选题，你需要基于论文库的检索证据评估它。
-
-候选选题：{topic}
-
-检索到的近似论文（按相似度降序）：
-{papers_text}
-
-定量统计：
-{stats_text}
-
-请用 markdown 输出一份选题验证报告，包含以下部分：
-## 新颖性评估
-基于最高相似度和近似论文列表，判断该选题与现有文献的重合程度。给出新颖性评分（1-10，10 最新颖）和依据。
-## 竞争拥挤度
-基于平均相似度、近 3 个月发表量和高频关键词，判断这个方向是否已经很拥挤。给出拥挤度（低/中/高）和依据。
-## 机会窗口
-综合以上分析，现在是进入这个方向的好时机吗？是蓝海、红海还是正在升温的方向？
-## 风险与盲区
-检索证据可能遗漏什么（关键词表述差异、跨领域文献）？用户需要警惕什么？
-## 建议切入角度
-如果要做，如何与已召回的这些论文差异化？给出 2-3 个具体切入点。
-
-要求：诚实、量化、不客套。如果证据显示这个选题已经非常拥挤，直接说。如果检索证据不足以下结论，明确说明置信度低。
-
-引用要求：涉及具体论文的判断/依据时，用方括号编号标注对应论文，如 [1]、[2][5]。编号即上面论文列表的序号。若某结论不依赖具体论文，则无需标注。"""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"请验证选题：「{topic}」"},
-    ]
+    # prompt 构造收敛到 skills.validate（预承诺评分标准 + Script 证据块 + 输出契约）
+    messages = validate_skill.build_messages(topic, papers, stats, competition)
 
     try:
-        provider, bare_model = _resolve_model_provider(body.model)
-        client, provider = _get_ai_client(provider)
+        client, provider, bare_model = resolve_working_model(body.model)
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
@@ -960,12 +934,69 @@ async def validate_topic(
             "stats": stats,
         }
 
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
     async def composed_stream():
-        yield f"data: {json.dumps(_papers_payload())}\n\n"
-        # 逐个转发 LLM 流事件（原始 SSE 行原样透传）
-        llm_resp = _stream_chat_response(client, provider, messages, model=bare_model)
-        async for chunk in llm_resp.body_iterator:
-            yield chunk
+        yield _sse(_papers_payload())
+
+        # JSON 头缓冲状态：判定期 content 暂缓下发（改写在 on_event 回调里完成）
+        buf = {"text": "", "decided": False, "scores": None, "md": []}
+
+        def on_event(ev: dict) -> None:
+            """_stream_llm_content 转发前回调：剥离 JSON 头、累积正文供落库。"""
+            c = ev.get("content")
+            if not c:
+                return
+            if not buf["decided"]:
+                buf["text"] += c
+                # 每帧尝试解析：JSON 对象完整（无论围栏是否闭合）即剥离
+                scores, rest = validate_skill.split_json_head(buf["text"])
+                if scores is not None:
+                    buf["decided"] = True
+                    buf["scores"] = scores
+                    buf["md"].append(rest)
+                    ev["content"] = rest  # 判定完成：本帧改写为剥头后的剩余正文
+                elif validate_skill.head_in_progress(buf["text"]):
+                    ev["content"] = ""  # 头仍在流式中，继续缓冲（空 content 帧前端忽略）
+                else:
+                    buf["decided"] = True
+                    buf["md"].append(buf["text"])
+                    ev["content"] = buf["text"]  # 不是 JSON 头：放行原文（旧格式降级）
+            else:
+                buf["md"].append(c)
+
+        # 推理模型（如 glm-5.2）的 reasoning_content 会大量占用 token 预算，
+        # 4096 会导致正文为空（与 workbench._llm_json 同因），验证报告放宽到 8192
+        llm_gen = _stream_llm_content(client, bare_model, messages, on_event=on_event, max_tokens=8192)
+        async for frame in llm_gen:
+            if not buf["decided"] and '"done"' in frame:
+                # done 帧前放行全部缓冲正文，保证 content 先于 done 到达前端
+                buf["decided"] = True
+                buf["scores"], rest = validate_skill.split_json_head(buf["text"])
+                buf["md"].append(rest)
+                if rest:
+                    yield _sse({"content": rest})
+            yield frame
+
+        # ---- 服务端落库：评分回填 + 报告正文 + 状态推进（仅限 to_validate） ----
+        if body.project_id:
+            try:
+                uid = _uid_from(request)
+                logger.info(f"validate persist begin: project={body.project_id}, uid={uid}")
+                p = await db.get(TopicProject, body.project_id)
+                if p and p.user_id == uid:
+                    md = "".join(buf["md"]).strip()
+                    if md:
+                        p.validation_report = md
+                    if buf["scores"] is not None:
+                        validate_skill.apply_scores(p, buf["scores"])
+                    if md or buf["scores"] is not None:
+                        await db.commit()
+                        logger.info(f"validate persisted for project {body.project_id}: "
+                                    f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
+            except Exception as e:
+                logger.warning(f"validate server-side persist failed: {e}")
 
     return StreamingResponse(composed_stream(), media_type="text/event-stream")
 
@@ -1031,11 +1062,7 @@ async def _generate_proposal_content(
         {"role": "user", "content": f"请为选题「{topic}」生成立项书。"},
     ]
 
-    provider, bare_model = _resolve_model_provider(model)
-    client, provider = _get_ai_client(provider)
-    if not bare_model:
-        from app.routers.deps import _get_default_model
-        bare_model = _get_default_model(provider)
+    client, provider, bare_model = resolve_working_model(model)
 
     response = await _asyncio.to_thread(
         client.chat.completions.create,

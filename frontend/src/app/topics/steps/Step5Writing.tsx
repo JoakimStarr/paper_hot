@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { FileText, Loader2, Sparkles, Building2, Download, BookMarked, RefreshCw } from 'lucide-react';
 import { workbenchApi, producerApi } from '@/lib/api';
+import { openAssistant } from '@/lib/assistantBus';
 import { downloadTextFile, downloadAsWord } from '@/lib/utils';
 import type { StepProps } from './types';
 
@@ -12,12 +13,14 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
   loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
 });
 
-export default function Step5Writing({ project, onPatch, onRefresh, runAi }: StepProps) {
+export default function Step5Writing({ project, onPatch, onRefresh, runAi, goStep }: StepProps) {
   const [journalBusy, setJournalBusy] = useState(false);
   const [proposalBusy, setProposalBusy] = useState(false);
+  const [exportAllBusy, setExportAllBusy] = useState(false);
 
   const aiRunning = project.ai_pending === 'literature_review';
   const papers = project.papers || [];
+  const insights = project.data_insights || null;
 
   const citations = useMemo(() => {
     const map: Record<number, { id: string; title?: string }> = {};
@@ -77,20 +80,79 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi }: Ste
     } catch { /* ignore */ }
   };
 
-  const exportAll = () => {
-    const parts: string[] = [];
-    parts.push(`# ${project.title}\n`);
-    if (project.literature_review) {
-      parts.push(`# 文献综述\n\n${project.literature_review}\n`);
+  /** 一键导出全部：五步全流程成果打包为单份 markdown 研究资料包，可直接写作或投喂 AI。 */
+  const exportAll = async () => {
+    setExportAllBusy(true);
+    try {
+      const ev = project.validation_evidence;
+      const parts: string[] = [];
+      // 项目概览
+      parts.push(`# 研究资料包：${project.title}\n`);
+      const meta: string[] = [];
+      meta.push(`- 来源：${project.source_type || 'manual'}${project.source_ref ? `（${project.source_ref}）` : ''}`);
+      meta.push(`- 状态：${project.status || 'to_validate'}`);
+      if (project.novelty != null) meta.push(`- 新颖性评分：${project.novelty}/10`);
+      if (project.crowding) meta.push(`- 竞争拥挤度：${project.crowding}`);
+      if (project.feasibility != null) meta.push(`- 可行性评分：${project.feasibility}/10`);
+      if (ev?.validated_at) meta.push(`- 验证时间：${new Date(ev.validated_at).toLocaleString()}`);
+      if (project.research_questions?.length) {
+        meta.push('- 研究问题：');
+        project.research_questions.forEach((q, i) => meta.push(`  ${i + 1}. ${q}`));
+      }
+      parts.push(`## 项目概览\n\n${meta.join('\n')}\n`);
+
+      if (project.validation_report) parts.push(`# 一、选题验证报告\n\n${project.validation_report}\n`);
+      if (project.overview) parts.push(`# 二、已有研究盘点\n\n${project.overview}\n`);
+
+      if (papers.length > 0) {
+        const lines = papers.map((p, i) => {
+          const status = p.read_status === 'read' ? '已读' : p.read_status === 'reading' ? '精读中' : '待读';
+          const note = p.note ? `｜笔记：${p.note}` : '';
+          return `${i + 1}. 《${p.title}》（${p.journal || '未知'}）［${status}］${note}`;
+        });
+        parts.push(`# 三、项目文献集（${papers.length} 篇）\n\n${lines.join('\n')}\n`);
+      }
+
+      if (project.literature_review) parts.push(`# 四、文献脉络综述\n\n${project.literature_review}\n`);
+
+      if (insights && (insights.data_sources?.length || insights.methods?.length || insights.advice || insights.my_notes)) {
+        const di: string[] = [];
+        if (insights.data_sources?.length) {
+          di.push('## 数据来源');
+          insights.data_sources.forEach((d) => di.push(`- ${d.name}${d.papers?.length ? `（用于 [${d.papers.join('][')}]）` : ''}${d.usage ? `：${d.usage}` : ''}`));
+        }
+        if (insights.methods?.length) {
+          di.push('## 研究方法');
+          insights.methods.forEach((m) => di.push(`- ${m.name}${m.papers?.length ? `（用于 [${m.papers.join('][')}]）` : ''}${m.note ? `：${m.note}` : ''}`));
+        }
+        if (insights.advice) di.push(`## 数据可得性建议\n\n${insights.advice}`);
+        if (insights.my_notes) di.push(`## 我的补充\n\n${insights.my_notes}`);
+        parts.push(`# 五、数据与方法\n\n${di.join('\n')}\n`);
+      }
+
+      if (project.proposal) parts.push(`# 六、选题立项书\n\n${project.proposal}\n`);
+      if (project.journal_advice) parts.push(`# 七、投稿期刊适配\n\n${project.journal_advice}\n`);
+
+      // 参考文献（GB/T 7714，来自论文库结构化数据）
+      if (papers.length > 0) {
+        try {
+          const snapshots = papers.map((p) => ({
+            title: p.title,
+            journal_name: p.journal,
+            authors: p.authors || [],
+            published_at: p.published_at,
+          }));
+          const res = await producerApi.exportCitations(snapshots, 'gbt7714');
+          if (res.citations?.length) {
+            parts.push(`# 八、参考文献（GB/T 7714）\n\n${res.citations.join('\n\n')}\n`);
+          }
+        } catch { /* 引用服务失败不阻塞导出 */ }
+      }
+
+      downloadTextFile(`${project.title}_研究资料包.md`, parts.join('\n---\n\n'), 'text/markdown;charset=utf-8');
+    } finally {
+      setExportAllBusy(false);
     }
-    if (project.proposal) {
-      parts.push(`\n# 选题立项书\n\n${project.proposal}\n`);
-    }
-    if (project.journal_advice) {
-      parts.push(`\n# 投稿期刊适配建议\n\n${project.journal_advice}\n`);
-    }
-    if (parts.length === 1) return;
-    downloadTextFile(`${project.title}_研究资料包.md`, parts.join('\n---\n'), 'text/markdown;charset=utf-8');
   };
 
   return (
@@ -150,6 +212,12 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi }: Ste
             <p className="text-xs text-gray-400 mt-0.5">研究问题/数据来源建议/方法论/研究步骤/预期贡献</p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => openAssistant({ contextText: project.title, autoPrompt: '请以期刊审稿人的视角审视这份选题立项书，指出方法论与贡献陈述上最容易被审稿人质疑的点' })}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-300 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> 问 AI
+            </button>
             <button
               onClick={regenerateProposal}
               disabled={proposalBusy}
@@ -220,10 +288,11 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi }: Ste
             </button>
             <button
               onClick={exportAll}
-              disabled={!project.literature_review && !project.proposal && !project.journal_advice}
+              disabled={exportAllBusy || (!project.validation_report && !project.overview && !project.literature_review && !project.proposal && !project.journal_advice && papers.length === 0)}
+              title="把验证报告、盘点、文献集、综述、数据方法、立项书、期刊建议、参考文献打包为单份 markdown，可直接写作或投喂 AI"
               className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-md transition-colors"
             >
-              <Download className="w-3.5 h-3.5" /> 打包导出全部
+              {exportAllBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} 一键导出全部
             </button>
           </div>
         </div>

@@ -17,9 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db, AsyncSessionLocal
+from app.skills import lit_review as lit_review_skill
 from app.models import Paper, ReviewReport
 from app.ai_service import ai_trend_service
 from app.routers.deps import (
+    resolve_working_model,
     verify_token, _get_ai_client, _resolve_model_provider, _get_default_model,
     _isoformat_utc,
 )
@@ -150,36 +152,15 @@ async def _run_review_background(review_id: int, topic: str, model: Optional[str
                 for i, p in enumerate(papers[:20])
             ])
 
-            system_prompt = f"""你是一位学术文献综述专家。请基于以下从论文库检索到的、与选题相关的论文，生成一份结构化的文献综述。
-选题：{topic}
+            # 综述 prompt 收敛到 skills.lit_review（与工作台综述同一五节契约）
+            messages = lit_review_skill.build_messages(
+                topic=topic,
+                papers_text=papers_text,
+                paper_count=len(papers[:20]),
+                context_note="从论文库检索到的",
+            )
 
-检索到的相关论文（{len(papers)}篇，按相关度排序，方括号为编号）：
-{papers_text}
-
-请用 markdown 输出，包含以下部分：
-## 研究脉络
-梳理该选题方向从早期到近期的研究演进，说明主线脉络与发展阶段。
-## 方法演进
-文献中采用的研究方法从简单到复杂的演进路径（概念界定、计量方法、数据来源等）。
-## 争议点
-现有文献中存在哪些分歧与争议（结论冲突、方法派别、测度差异等）。
-## 研究空白
-基于上述脉络，指出尚待填补的空隙，这正是新研究的切入机会。
-
-要求：
-1. 引用文献时用 [编号] 标注（对应检索列表序号，从 1 开始），结论必须有文献支撑
-2. 每个部分 2-5 段，结构清晰、观点明确
-3. 最后给一段「可进一步研究」的建议，指出 2-3 个可行切入点"""
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "请生成这份文献综述。"},
-            ]
-
-            provider, bare_model = _resolve_model_provider(model)
-            client, provider = _get_ai_client(provider)
-            if not bare_model:
-                bare_model = _get_default_model(provider)
+            client, provider, bare_model = resolve_working_model(model)
 
             response = await asyncio.to_thread(
                 client.chat.completions.create, messages=messages, model=bare_model,
@@ -288,10 +269,7 @@ async def _suggest_journal_content(
         return recommendation_block, fallback, False
 
     try:
-        provider, bare_model = _resolve_model_provider(model)
-        client, provider = _get_ai_client(provider)
-        if not bare_model:
-            bare_model = _get_default_model(provider)
+        client, provider, bare_model = resolve_working_model(model)
         system_prompt = f"""你是学术期刊投稿顾问。用户给出一个研究选题，请结合论文库中该方向的期刊分布与内置期刊画像，推荐 2-3 个投稿目标。
 
 内置期刊画像：

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Layout from '@/components/Layout';
 import { useToast } from '@/components/Toast';
+import ConfirmModal from '@/app/system/ConfirmModal';
 import { topicsApi, papersApi, personalApi, workbenchApi } from '@/lib/api';
 import { reportPageContext } from '@/lib/assistantBus';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -29,6 +30,19 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: '手动',
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  to_validate: '验证中',
+  validated: '已验证',
+  subscribed: '已立项',
+  abandoned: '已搁置',
+};
+const STATUS_STYLES: Record<string, string> = {
+  to_validate: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300',
+  validated: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300',
+  subscribed: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300',
+  abandoned: 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400',
+};
+
 const STEP_FILTERS = [
   { value: '', label: '全部步骤' },
   { value: '1', label: '选题定义(1)' },
@@ -47,6 +61,14 @@ const SOURCE_FILTERS = [
   { value: 'manual', label: '手动(manual)' },
 ];
 
+const STATUS_FILTERS = [
+  { value: '', label: '全部状态' },
+  { value: 'to_validate', label: '验证中' },
+  { value: 'validated', label: '已验证' },
+  { value: 'subscribed', label: '已立项' },
+  { value: 'abandoned', label: '已搁置' },
+];
+
 export default function ProjectList() {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -62,6 +84,10 @@ export default function ProjectList() {
   const [query, setQuery] = useState('');
   const [stepFilter, setStepFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  // 删除确认（ConfirmModal 替代原生 confirm）
+  const [deleteTarget, setDeleteTarget] = useState<TopicProject | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const filteredProjects = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -69,9 +95,10 @@ export default function ProjectList() {
       if (q && !(p.title || '').toLowerCase().includes(q)) return false;
       if (stepFilter && String(p.current_step || 1) !== stepFilter) return false;
       if (sourceFilter && (p.source_type || 'manual') !== sourceFilter) return false;
+      if (statusFilter && (p.status || 'to_validate') !== statusFilter) return false;
       return true;
     });
-  }, [projects, query, stepFilter, sourceFilter]);
+  }, [projects, query, stepFilter, sourceFilter, statusFilter]);
 
   // ---- 灵感区 ----
   const [gaps, setGaps] = useState<ResearchGap[]>([]);
@@ -166,11 +193,13 @@ export default function ProjectList() {
   };
 
   const deleteProject = async (id: number) => {
-    if (!window.confirm('确定删除该项目？其中文献集/综述/立项书将不可恢复')) return;
+    setDeleting(true);
     try {
       await topicsApi.deleteTopicProject(id);
       setProjects((prev) => prev.filter((x) => x.id !== id));
+      setDeleteTarget(null);
     } catch { /* ignore */ }
+    finally { setDeleting(false); }
   };
 
   const stepDots = (step: number) => (
@@ -397,6 +426,15 @@ export default function ProjectList() {
                 <option key={s.value || 'all'} value={s.value}>{s.label}</option>
               ))}
             </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              {STATUS_FILTERS.map((s) => (
+                <option key={s.value || 'all'} value={s.value}>{s.label}</option>
+              ))}
+            </select>
           </div>
 
           {filteredProjects.length === 0 ? (
@@ -414,22 +452,25 @@ export default function ProjectList() {
               <div className="flex items-start justify-between gap-2 mb-2">
                 <h3 className="font-medium text-gray-900 dark:text-white line-clamp-2 leading-snug flex-1">{p.title}</h3>
                 <button
-                  onClick={(e) => { e.stopPropagation(); deleteProject(p.id); }}
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(p); }}
                   className="p-1 text-gray-300 hover:text-red-500 transition-colors shrink-0"
                   title="删除项目"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-1.5 min-w-0">
+                  <span className={`inline-flex px-2 py-0.5 text-[11px] rounded-full font-medium shrink-0 ${STATUS_STYLES[p.status] || STATUS_STYLES.to_validate}`}>
+                    {STATUS_LABELS[p.status] || '验证中'}
+                  </span>
                   <span className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 shrink-0">
                     {SOURCE_LABELS[p.source_type || 'manual'] || '手动'}
                   </span>
                   {p.source_ref && p.source_ref !== p.title && (
                     <span
                       title={p.source_ref}
-                      className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 truncate max-w-[9rem]"
+                      className="inline-flex px-2 py-0.5 text-[11px] rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 truncate max-w-[7rem]"
                     >
                       {p.source_ref}
                     </span>
@@ -437,6 +478,28 @@ export default function ProjectList() {
                 </div>
                 {stepDots(p.current_step || 1)}
               </div>
+              {(p.novelty != null || p.crowding) && (
+                <div className="flex items-center gap-2 mb-2 text-[11px]">
+                  {p.novelty != null && (
+                    <span className="inline-flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                      新颖性
+                      <span className="inline-flex w-12 h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                        <span className="bg-primary-500 h-full" style={{ width: `${(p.novelty / 10) * 100}%` }} />
+                      </span>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{p.novelty}/10</span>
+                    </span>
+                  )}
+                  {p.crowding && (
+                    <span className={`inline-flex px-1.5 py-0.5 rounded ${
+                      p.crowding === '高' ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300'
+                      : p.crowding === '中' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
+                      : 'bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-300'
+                    }`}>
+                      拥挤度 {p.crowding}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>
                   {STEP_NAMES[p.current_step || 1] || '选题定义'}
@@ -453,6 +516,17 @@ export default function ProjectList() {
           )}
         </>
       )}
+
+      {/* 删除确认 */}
+      <ConfirmModal
+        open={!!deleteTarget}
+        danger
+        confirming={deleting}
+        title="删除研究项目？"
+        description={`「${deleteTarget?.title || ''}」的文献集、验证报告、综述与立项书将一并删除且不可恢复。`}
+        onConfirm={() => deleteTarget && deleteProject(deleteTarget.id)}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* 研究空白（常驻） */}
       <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg border border-purple-200 dark:border-purple-800 p-4 sm:p-6">

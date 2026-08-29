@@ -20,7 +20,7 @@ const STATUS_STYLE: Record<string, string> = {
   read: 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400',
 };
 
-export default function Step3Literature({ project, onPatch, runAi, onRefresh }: StepProps) {
+export default function Step3Literature({ project, onPatch, runAi, onRefresh, goStep }: StepProps) {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [candidates, setCandidates] = useState<ProjectSearchPaper[]>([]);
@@ -39,8 +39,10 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
   const aiRunning = project.ai_pending === 'literature_review';
   const papers = project.papers || [];
 
-  // 检索关键词：来自选题灵感快照 generated_topics[*].keywords，跨候选去重合并
+  // 检索关键词：优先 Step1 手动维护的 search_keywords，回退灵感快照 generated_topics[*].keywords
   const keywords = React.useMemo(() => {
+    const saved = (project.search_keywords || []).map((k) => (k || '').trim()).filter(Boolean);
+    if (saved.length > 0) return saved;
     const set = new Set<string>();
     for (const g of project.generated_topics || []) {
       for (const k of g.keywords || []) {
@@ -49,7 +51,7 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
       }
     }
     return Array.from(set);
-  }, [project.generated_topics]);
+  }, [project.search_keywords, project.generated_topics]);
 
   // 相关文献推荐：基于「选题方向 + 文献集」召回；文献集变化（加入/移除后 onRefresh）时自动重取
   const loadRecommendations = React.useCallback(async () => {
@@ -404,6 +406,14 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh }: 
         {!aiRunning && project.literature_review && (
           <div className="mt-4 prose prose-sm dark:prose-invert max-w-none">
             <MarkdownRenderer content={project.literature_review} citations={citations} />
+          </div>
+        )}
+        {!aiRunning && project.literature_review && (
+          <div className="mt-3 flex items-center gap-2 flex-wrap bg-blue-50/60 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800/50 rounded-lg p-3">
+            <span className="text-xs text-blue-700 dark:text-blue-300 flex-1">文献脉络已生成——下一步基于文献集提取数据来源与识别策略</span>
+            <button onClick={() => goStep(4)} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline shrink-0">
+              去第 4 步提取数据线索 →
+            </button>
           </div>
         )}
       </div>

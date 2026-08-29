@@ -357,3 +357,65 @@ if (typeof window !== 'undefined') {
   initPins().catch(() => {});
   initPreferences().catch(() => {});
 }
+// —— 稍后读队列（工作台优化）：服务端为事实源，内存 Set 同步快照 ——
+// 与收藏（长期沉淀）区分：队列强调"待办"，读完移出并计入阅读历史。
+const readLaterListeners = new Set<() => void>();
+let readLaterCache: Set<string> = new Set();
+let readLaterHydrated = false;
+let readLaterVersion = 0;
+
+function notifyReadLater() {
+  readLaterVersion++;
+  readLaterListeners.forEach((cb) => cb());
+}
+
+export function subscribeReadLater(cb: () => void): () => void {
+  readLaterListeners.add(cb);
+  return () => readLaterListeners.delete(cb);
+}
+
+/** 应用启动时调用一次：拉取服务端稍后读队列 paper_id。 */
+export async function initReadLater(): Promise<void> {
+  if (readLaterHydrated) return;
+  readLaterHydrated = true;
+  const { personalApi } = await import('./api');
+  try {
+    const res = await personalApi.getReadLater();
+    readLaterCache = new Set(res.paper_ids || []);
+  } catch {
+    readLaterCache = new Set();
+  }
+  notifyReadLater();
+}
+
+export function isQueuedReadLater(paperId: string): boolean {
+  return readLaterCache.has(paperId);
+}
+
+/** 切换稍后读（乐观更新 + 失败回滚），返回切换后的状态。 */
+export async function toggleReadLater(paperId: string): Promise<{ queued: boolean }> {
+  const { personalApi } = await import('./api');
+  const optimistic = !readLaterCache.has(paperId);
+  if (optimistic) readLaterCache.add(paperId);
+  else readLaterCache.delete(paperId);
+  notifyReadLater();
+  try {
+    const res = await personalApi.toggleReadLater(paperId);
+    if (res.queued) readLaterCache.add(paperId);
+    else readLaterCache.delete(paperId);
+    notifyReadLater();
+    return { queued: res.queued };
+  } catch (e) {
+    if (optimistic) readLaterCache.delete(paperId);
+    else readLaterCache.add(paperId);
+    notifyReadLater();
+    throw e;
+  }
+}
+
+// —— 推荐反馈写入后的缓存同步 ——
+/** 外部路径（如 /personal/recommend-feedback 的"少推这类"）改了服务端屏蔽项时强制重拉。 */
+export async function refreshPreferences(): Promise<void> {
+  prefHydrated = false;
+  await initPreferences();
+}

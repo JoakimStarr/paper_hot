@@ -7,11 +7,11 @@
 """
 import logging
 import asyncio
-from datetime import datetime, timedelta
-from typing import Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, Query
-from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func, or_ as sa_or
+from sqlalchemy import select as sa_select, desc as sa_desc, func as sa_func, or_ as sa_or, case as sa_case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,7 +20,7 @@ from app.database import get_db
 from app.models import (
     Paper, PaperScore, PaperFeatures, Favorite, ReadingHistory, TopicProject,
     AIAnalysisReport, PaperAnalysis, FollowedSubfield, FollowedKeyword, TopicTrend,
-    ReviewReport,
+    ReviewReport, ProjectPaper, PaperKeyword, UserEvent,
 )
 from app.crud import _hidden_paper_condition
 from app.routers.personal import _load_hidden_preferences
@@ -85,11 +85,15 @@ async def _briefing_ai_note(topics: List[str]) -> Optional[str]:
         return None
 
 
-async def _build_user_profile_vector(db: AsyncSession, uid: str) -> Optional[List[float]]:
-    """基于用户收藏+阅读历史构建画像向量（加权平均，收藏权重 2x 阅读）。
+async def _build_user_profile_vector(db: AsyncSession, uid: str) -> Optional[dict]:
+    """基于收藏+阅读+埋点点击构建画像向量（加权平均）。
 
-    结果按 (uid) 缓存 10 分钟，避免每次 dashboard 请求重新计算。
-    无行为数据或 embedding 不可用时返回 None（降级为纯分数排序）。
+    权重：收藏 2.0 / 阅读 1.0 / 埋点点击 1.0（与阅读同权，均按论文去重）；
+    曝光未点击 -0.2：按论文去重的弱负信号——曝光次数多不再叠加，避免高频展示的热门
+    论文被误杀（曝光量 >> 点击量，若按次累计负权重会主导整个画像）。
+    返回 {"vec": 归一化向量, "exemplar": {"paper_id", "source": fav|read}}；
+    exemplar 是行为论文中与画像余弦最高的一篇（收藏优先），用于推荐理由
+    「因为你收藏了《X》」。无行为数据或 embedding 不可用时返回 None。缓存 10 分钟。
     """
     cache_key = f"today_read:profile:{uid}"
 
@@ -119,6 +123,35 @@ async def _build_user_profile_vector(db: AsyncSession, uid: str) -> Optional[Lis
         for pid in fav_ids:
             weight_map[pid] = weight_map.get(pid, 0) + 2.0
 
+        # 埋点信号（UserEvent）：点击 +1.0，曝光未点击 -0.2，均按论文去重
+        clicked: set = set()
+        seen: set = set()
+        try:
+            ev_rows = (
+                await db.execute(
+                    sa_select(UserEvent.event_type, UserEvent.ref_id)
+                    .where(
+                        UserEvent.user_id == uid,
+                        UserEvent.event_type.in_(("click", "impression")),
+                        UserEvent.ref_id.isnot(None),
+                    )
+                    .order_by(UserEvent.id.desc())
+                    .limit(2000)
+                )
+            ).all()
+            for etype, pid in ev_rows:
+                if etype == "click":
+                    clicked.add(pid)
+                else:
+                    seen.add(pid)
+        except Exception as e:
+            logger.warning(f"load user_events for profile failed: {e}")
+        for pid in clicked:
+            weight_map[pid] = weight_map.get(pid, 0) + 1.0
+        for pid in seen:
+            if pid not in clicked:
+                weight_map[pid] = weight_map.get(pid, 0) - 0.2
+
         if not weight_map:
             return None
 
@@ -137,27 +170,44 @@ async def _build_user_profile_vector(db: AsyncSession, uid: str) -> Optional[Lis
 
         import numpy as np
 
+        # 归一化后加权求和（负权重向量做减法），再整体 L2 归一化：
+        # 不按 Σw 除平均，避免负权重把均值尺度拉歪
         vec_sum = None
-        total_weight = 0.0
+        unit_vecs: dict = {}
         for pid, emb_str in rows:
             try:
                 vec = np.asarray(_json.loads(emb_str), dtype=np.float64)
                 if vec.ndim != 1 or vec.size == 0:
                     continue
+                norm = np.linalg.norm(vec)
+                if norm == 0:
+                    continue
+                unit = vec / norm
                 w = weight_map.get(pid, 1.0)
-                vec_sum = vec * w if vec_sum is None else vec_sum + vec * w
-                total_weight += w
+                unit_vecs[pid] = (unit, w)
+                vec_sum = unit * w if vec_sum is None else vec_sum + unit * w
             except Exception:
                 continue
 
-        if vec_sum is None or total_weight == 0:
+        if vec_sum is None:
             return None
-
-        avg = vec_sum / total_weight
-        norm = np.linalg.norm(avg)
+        norm = np.linalg.norm(vec_sum)
         if norm == 0:
             return None
-        return (avg / norm).tolist()
+        profile = vec_sum / norm
+
+        # 样本论文：正权重行为论文中与画像余弦最高的一篇（收藏加分优先）
+        exemplar = None
+        best = -2.0
+        for pid, (unit, w) in unit_vecs.items():
+            if w <= 0:
+                continue
+            score = float(np.dot(unit, profile)) + (0.05 if w >= 2.0 else 0.0)
+            if score > best:
+                best = score
+                exemplar = {"paper_id": pid, "source": "fav" if w >= 2.0 else "read"}
+
+        return {"vec": profile.tolist(), "exemplar": exemplar}
 
     return await ttl_cache(cache_key, 600, _compute)
 
@@ -176,45 +226,53 @@ async def _embedding_recall_for_dashboard(
         return []
 
 
-def _diversity_filter(papers: List[Paper], max_sim: float = 0.92) -> List[Paper]:
-    """多样性约束：相邻论文 embedding 余弦相似度 > max_sim 时跳过，从后续候选补入。"""
+def _diversity_filter(papers: List[Paper], max_sim: float = 0.92, max_per_subfield: int = 2) -> List[Paper]:
+    """多样性约束（MMR 思想）：
+
+    - embedding 余弦与「全部已选」论文相似度 > max_sim 时跳过（旧版只比相邻两篇，
+      画像召回的扎堆论文隔位即可溜进列表）；
+    - 同一子领域最多 max_per_subfield 篇，避免单一方向刷屏；
+    - 无 embedding 的论文不受相似度约束，但仍受子领域上限约束。
+    """
     import json as _json
 
     selected: List[Paper] = []
     selected_vecs: List = []
+    subfield_count: dict = {}
 
     for p in papers:
-        if not p.features or not p.features.embedding:
-            selected.append(p)
+        sf = (p.economics_subfield or "").strip() or None
+        if sf and subfield_count.get(sf, 0) >= max_per_subfield:
             continue
-        try:
-            vec = _json.loads(p.features.embedding)
-            if not vec:
-                selected.append(p)
+
+        vec = None
+        if p.features and p.features.embedding:
+            try:
+                raw = _json.loads(p.features.embedding)
+                if raw:
+                    import numpy as np
+
+                    v = np.asarray(raw, dtype=np.float32)
+                    norm = np.linalg.norm(v)
+                    if norm > 0:
+                        vec = v / norm
+            except Exception:
+                vec = None
+
+        if vec is not None:
+            too_similar = False
+            for sv in selected_vecs:
+                if float(np.dot(vec, sv)) > max_sim:
+                    too_similar = True
+                    break
+            if too_similar:
                 continue
-        except Exception:
-            selected.append(p)
-            continue
 
-        import numpy as np
-
-        v = np.asarray(vec, dtype=np.float32)
-        norm = np.linalg.norm(v)
-        if norm == 0:
-            selected.append(p)
-            continue
-        v = v / norm
-
-        too_similar = False
-        for sv in selected_vecs:
-            sim = float(np.dot(v, sv))
-            if sim > max_sim:
-                too_similar = True
-                break
-        if not too_similar:
-            selected.append(p)
-            selected_vecs.append(v)
-
+        selected.append(p)
+        if vec is not None:
+            selected_vecs.append(vec)
+        if sf:
+            subfield_count[sf] = subfield_count.get(sf, 0) + 1
     return selected
 
 
@@ -224,34 +282,47 @@ async def get_dashboard(
     token: bool = Depends(verify_token),
     x_user_id: str = Header(default=None),
     seed: int = Query(default=0, ge=0),
+    sections: str = Query(default="", description="逗号分隔的子集：today_read,briefing,mine；空=全部（向后兼容）"),
 ):
+    """工作台聚合数据。sections 支持按页签只取所需子集：
+
+    前端「研究工作台」页签只拉 today_read+mine，领域快讯/研究栈页签各取所需，
+    避免旧版一次请求把三个子集（含 briefing 的 LLM 结论）全部算完。
+    """
     uid = _uid(x_user_id)
+    wanted = {s.strip() for s in (sections or "").split(",") if s.strip()} or {"today_read", "briefing", "mine"}
 
-    # ---- 关注子领域：决定"今日值得读"是否个性化 ----
-    followed = await db.execute(
-        sa_select(FollowedSubfield.subfield)
-        .where(FollowedSubfield.user_id == uid)
-    )
-    followed_subfields = [r[0] for r in followed.all()]
-
-    # ---- 关注关键词：驱动"今日值得读"关键词召回 ----
-    kw_result = await db.execute(
-        sa_select(FollowedKeyword.keyword).where(FollowedKeyword.user_id == uid)
-    )
-    followed_keywords = [r[0] for r in kw_result.all()]
-
-    # ---- "不感兴趣"屏蔽（P2）：工作台推荐同样全局过滤，命中任一屏蔽项的论文不出现 ----
+    followed_subfields: List[str] = []
+    followed_keywords: List[str] = []
     hidden: dict = {}
-    try:
-        hidden = await _load_hidden_preferences(db, uid)
-    except Exception:
-        hidden = {}
+    if "today_read" in wanted or "mine" in wanted:
+        # ---- 关注子领域：决定"今日值得读"是否个性化 ----
+        followed = await db.execute(
+            sa_select(FollowedSubfield.subfield)
+            .where(FollowedSubfield.user_id == uid)
+        )
+        followed_subfields = [r[0] for r in followed.all()]
+    if "today_read" in wanted:
+        # ---- 关注关键词：驱动"今日值得读"关键词召回 ----
+        kw_result = await db.execute(
+            sa_select(FollowedKeyword.keyword).where(FollowedKeyword.user_id == uid)
+        )
+        followed_keywords = [r[0] for r in kw_result.all()]
 
-    return {
-        "today_read": await _today_read(db, uid, followed_subfields, followed_keywords, hidden, seed=seed),
-        "briefing": await _briefing(db),
-        "mine": await _mine(db, uid, has_followed=bool(followed_subfields)),
-    }
+        # ---- "不感兴趣"屏蔽（P2）：工作台推荐同样全局过滤，命中任一屏蔽项的论文不出现 ----
+        try:
+            hidden = await _load_hidden_preferences(db, uid)
+        except Exception:
+            hidden = {}
+
+    resp: dict = {}
+    if "today_read" in wanted:
+        resp["today_read"] = await _today_read(db, uid, followed_subfields, followed_keywords, hidden, seed=seed)
+    if "briefing" in wanted:
+        resp["briefing"] = await _briefing(db)
+    if "mine" in wanted:
+        resp["mine"] = await _mine(db, uid, has_followed=bool(followed_subfields))
+    return resp
 
 
 async def _today_read(
@@ -265,57 +336,60 @@ async def _today_read(
     """今日值得读：向量召回 + 综合评分混排，多样性约束去重，共 6 篇。
 
     四路候选合并：
-    1. 向量召回：用户画像向量 FAISS 检索语义相似论文（最多 10 篇）
-    2. 子领域匹配：关注子领域按 final_score 降序（最多 6 篇）
-    3. 关键词匹配：关注关键词按 final_score 降序（最多 6 篇）
+    1. 向量召回：用户画像向量 FAISS 检索语义相似论文（最多 10 篇），
+       理由落到具体论文（"因为你收藏了《X》"）
+    2. 子领域匹配：关注子领域按 final_score 降序（最多 6 篇），理由带命中的子领域
+    3. 关键词匹配：优先走 paper_keywords 平表（索引查找；表空回退 json_each 全表扫描），
+       理由带命中的关键词
     4. 全局高分：全库 final_score 降序补位
 
-    合并后统一按 final_score 排序；seed 非 0 时轮转候选池（「换一批」）；
-    最后过多样性过滤（embedding 余弦 > 0.92 跳过）。已读论文（阅读历史）
-    不参与推荐（「看过了」闭环）。每篇附推荐理由 reason。
+    合并后统一按 final_score 排序；seed 非 0 时按偏移轮转候选池（「换一批」换的是
+    不同窗口而非同一池子的排列）；已读论文（近 30 天阅读历史，NOT EXISTS 反连接）
+    不参与推荐；多样性过滤 = 全选集余弦去重 + 每子领域最多 2 篇。
     """
     hidden_cond = _hidden_paper_condition(hidden or {})
 
-    # 已读排除：打开过详情 / 做过 AI 分析的论文不再重复推荐
-    read_ids: set = set()
-    try:
-        read_result = await db.execute(
-            sa_select(ReadingHistory.paper_id)
-            .where(ReadingHistory.user_id == uid)
-            .order_by(sa_desc(ReadingHistory.id))
-            .limit(500)
+    # 已读排除：近 30 天读过的论文不再推荐（NOT EXISTS 走 reading_history 的
+    # unique(user_id, paper_id) 索引，替代旧版 500 条 id 的 not_in 参数列表；
+    # 更早的历史阅读不拦截，允许自然回顾）
+    read_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    recent_read_exists = (
+        sa_select(ReadingHistory.id)
+        .where(
+            ReadingHistory.user_id == uid,
+            ReadingHistory.paper_id == Paper.id,
+            ReadingHistory.read_at >= read_cutoff,
         )
-        read_ids = {r[0] for r in read_result.all()}
-    except Exception as e:
-        logger.warning(f"load reading history in today_read failed: {e}")
+        .exists()
+    )
 
     existing_ids: set = set()
     candidates: List[Paper] = []
     reason_map: dict = {}
 
-    def _add_candidates(papers: List[Paper], reason: dict) -> None:
+    def _add_candidates(papers: List[Paper], reason: Union[dict, Callable[[Paper], dict]]) -> None:
         for p in papers:
             if p.id in existing_ids:
                 continue
             existing_ids.add(p.id)
             candidates.append(p)
-            reason_map[p.id] = reason
+            reason_map[p.id] = reason(p) if callable(reason) else reason
 
     def _base_query() -> Any:
         q = (
             sa_select(Paper)
             .options(selectinload(Paper.features), selectinload(Paper.scores))
             .join(PaperScore, PaperScore.paper_id == Paper.id)
+            .where(~recent_read_exists)
         )
-        if read_ids:
-            q = q.where(Paper.id.not_in(read_ids))
         if hidden_cond is not None:
             q = q.where(hidden_cond)
         return q
 
     # ---- 路线 1：向量召回（用户画像相似） ----
     try:
-        profile_vec = await _build_user_profile_vector(db, uid)
+        profile = await _build_user_profile_vector(db, uid)
+        profile_vec = (profile or {}).get("vec")
         if profile_vec:
             recall_ids = await _embedding_recall_for_dashboard(db, profile_vec, k=10)
             if recall_ids:
@@ -325,9 +399,22 @@ async def _today_read(
                     .order_by(sa_desc(PaperScore.final_score))
                     .limit(10)
                 )
-                _add_candidates(result.scalars().all(), {"type": "profile", "label": "与你的阅读/收藏画像相似"})
+                ex = (profile or {}).get("exemplar")
+                ex_label = None
+                if ex:
+                    trow = (await db.execute(sa_select(Paper.title).where(Paper.id == ex["paper_id"]))).first()
+                    if trow and trow[0]:
+                        short = trow[0][:24] + ("…" if len(trow[0]) > 24 else "")
+                        ex_label = f"因为你{'收藏' if ex.get('source') == 'fav' else '读'}过《{short}》"
+                _add_candidates(
+                    result.scalars().all(),
+                    {"type": "profile", "label": ex_label or "与你的阅读/收藏画像相似"},
+                )
     except Exception as e:
         logger.warning(f"embedding recall in today_read failed: {e}")
+
+    # ---- 「换一批」偏移：seed 每次把各路召回窗口向后推，换的是不同论文而非排列 ----
+    off = (seed % 6) * 6
 
     # ---- 路线 2：子领域匹配（关注方向优先） ----
     if followed_subfields:
@@ -335,36 +422,63 @@ async def _today_read(
             _base_query()
             .where(Paper.economics_subfield.in_(followed_subfields))
             .order_by(sa_desc(PaperScore.final_score))
+            .offset(off)
             .limit(6)
         )
-        _add_candidates(result.scalars().all(), {"type": "subfield", "label": "你关注的子领域"})
+        _add_candidates(
+            result.scalars().all(),
+            lambda p: {"type": "subfield", "label": f"你关注的子领域：{p.economics_subfield}"},
+        )
 
     # ---- 路线 3：关键词匹配（关注关键词） ----
     if followed_keywords:
-        from sqlalchemy import text as sa_text
+        kw_set = set(followed_keywords)
+        kw_subq = None
+        try:
+            kw_count = (
+                await db.execute(sa_select(sa_func.count()).select_from(PaperKeyword))
+            ).scalar_one()
+            if kw_count:
+                # 平表：keyword 有索引，召回走索引查找（O(log n)）
+                kw_subq = sa_select(PaperKeyword.paper_id).where(
+                    PaperKeyword.keyword.in_(followed_keywords)
+                )
+        except Exception as e:
+            logger.warning(f"paper_keywords lookup failed, fallback to json_each: {e}")
+        if kw_subq is None:
+            # 未回填的库回退 json_each 全表展开
+            from sqlalchemy import text as sa_text
 
-        kw_placeholders = ", ".join(f":fk{i}" for i in range(len(followed_keywords)))
-        kw_params = {f"fk{i}": kw for i, kw in enumerate(followed_keywords)}
-        kw_subq = (
-            sa_select(sa_text("p.id"))
-            .select_from(sa_text("papers p, json_each(p.keywords_cn)"))
-            .where(sa_text(f"json_each.value IN ({kw_placeholders})"))
-            .params(**kw_params)
-        )
+            kw_placeholders = ", ".join(f":fk{i}" for i in range(len(followed_keywords)))
+            kw_params = {f"fk{i}": kw for i, kw in enumerate(followed_keywords)}
+            kw_subq = (
+                sa_select(sa_text("p.id"))
+                .select_from(sa_text("papers p, json_each(p.keywords_cn)"))
+                .where(sa_text(f"json_each.value IN ({kw_placeholders})"))
+                .params(**kw_params)
+            )
         result = await db.execute(
             _base_query()
             .where(Paper.id.in_(kw_subq))
             .order_by(sa_desc(PaperScore.final_score))
+            .offset(off)
             .limit(6)
         )
-        _add_candidates(result.scalars().all(), {"type": "keyword", "label": "命中你关注的关键词"})
 
-    # ---- 路线 4：全局高分补位 ----
+        def _kw_reason(p: Paper) -> dict:
+            matched = [kw for kw in (p.keywords_cn or []) if kw in kw_set][:2]
+            label = f"命中你关注的关键词：{'、'.join(matched)}" if matched else "命中你关注的关键词"
+            return {"type": "keyword", "label": label}
+
+        _add_candidates(result.scalars().all(), _kw_reason)
+
+    # ---- 路线 4：全局高分补位（偏移窗口更大，保证「换一批」有新面孔） ----
     remaining = 20 - len(candidates)
     if remaining > 0:
         result = await db.execute(
             _base_query()
             .order_by(sa_desc(PaperScore.final_score))
+            .offset((seed % 8) * 20)
             .limit(remaining)
         )
         _add_candidates(result.scalars().all(), {"type": "top", "label": "全库高分推荐"})
@@ -375,13 +489,8 @@ async def _today_read(
         reverse=True,
     )
 
-    # ---- 「换一批」：按 seed 轮转排序后的候选池，换取不同的展示窗口 ----
-    if seed and len(candidates) > 1:
-        rot = seed % len(candidates)
-        candidates = candidates[rot:] + candidates[:rot]
-
-    # ---- 多样性过滤：相邻论文 embedding 余弦 > 0.92 跳过 ----
-    diversified = _diversity_filter(candidates, max_sim=0.92)
+    # ---- 多样性过滤：全选集余弦去重 + 每子领域最多 2 篇 ----
+    diversified = _diversity_filter(candidates, max_sim=0.92, max_per_subfield=2)
 
     return [_paper_to_card(p, reason=reason_map.get(p.id)) for p in diversified[:6]]
 
@@ -514,21 +623,44 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"recent_analyses failed: {e}")
 
-    # 进行中的选题（非 abandoned）
+    # 进行中的选题（非 abandoned）：带五步向导进度与文献集精读统计（工作台进度条用）
     projects = await db.execute(
         sa_select(TopicProject)
         .where(TopicProject.user_id == uid, TopicProject.status != "abandoned")
         .order_by(sa_desc(TopicProject.updated_at))
         .limit(5)
     )
+    proj_rows = projects.scalars().all()
+    proj_stat: dict = {}
+    if proj_rows:
+        stat_rows = await db.execute(
+            sa_select(
+                ProjectPaper.project_id,
+                sa_func.count(),
+                sa_func.coalesce(
+                    sa_func.sum(sa_case((ProjectPaper.read_status == "read", 1), else_=0)), 0
+                ),
+            )
+            .where(
+                ProjectPaper.user_id == uid,
+                ProjectPaper.project_id.in_([p.id for p in proj_rows]),
+            )
+            .group_by(ProjectPaper.project_id)
+        )
+        for pid, total, read in stat_rows.all():
+            proj_stat[pid] = (int(total or 0), int(read or 0))
     proj_out = []
-    for p in projects.scalars():
+    for p in proj_rows:
+        paper_total, paper_read = proj_stat.get(p.id, (0, 0))
         proj_out.append({
             "id": p.id,
             "title": p.title,
             "status": p.status,
             "novelty": p.novelty,
             "crowding": p.crowding,
+            "current_step": p.current_step or 1,
+            "paper_count": paper_total,
+            "read_count": paper_read,
         })
 
     # 最近成功报告
@@ -661,3 +793,64 @@ async def get_today_brief(
         return await _build_today_brief(db, uid)
 
     return await ttl_cache(f"today-brief:{uid}", _TODAY_BRIEF_TTL_SECONDS, _compute)
+
+@router.get("/dashboard/watch-new-papers")
+async def get_watch_new_papers(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+    limit: int = Query(default=10, ge=1, le=30),
+):
+    """关注子领域近 30 天新论文列表（工作台「新论文提醒」就地展开，替代跳搜索页重拼条件）。
+
+    与 _mine.watch_subfield_count 同口径：published_at >= 30 天前 + economics_subfield 命中
+    关注集合，按发表时间降序；屏蔽项与全站列表一致过滤。total 为命中总数（供「还有 N 篇」）。
+    """
+    uid = _uid(x_user_id)
+    sf_result = await db.execute(
+        sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid)
+    )
+    subfields = [r[0] for r in sf_result.all()]
+    if not subfields:
+        return {"papers": [], "total": 0}
+
+    try:
+        hidden = await _load_hidden_preferences(db, uid)
+    except Exception:
+        hidden = {}
+    hidden_cond = _hidden_paper_condition(hidden or {})
+
+    cutoff = datetime.now() - timedelta(days=30)
+    filters = [
+        Paper.economics_subfield.in_(subfields),
+        Paper.published_at >= cutoff,
+    ]
+    if hidden_cond is not None:
+        filters.append(hidden_cond)
+
+    total = (
+        await db.execute(
+            sa_select(sa_func.count())
+            .select_from(Paper)
+            .join(PaperScore, PaperScore.paper_id == Paper.id)
+            .where(*filters)
+        )
+    ).scalar() or 0
+
+    result = await db.execute(
+        sa_select(Paper)
+        .options(selectinload(Paper.features), selectinload(Paper.scores))
+        .join(PaperScore, PaperScore.paper_id == Paper.id)
+        .where(*filters)
+        .order_by(sa_desc(Paper.published_at), sa_desc(PaperScore.final_score))
+        .limit(limit)
+    )
+    papers = result.scalars().all()
+    cards = [
+        _paper_to_card(
+            p,
+            reason={"type": "watch", "label": f"你关注的 {p.economics_subfield} 新论文"},
+        )
+        for p in papers
+    ]
+    return {"papers": cards, "total": int(total)}

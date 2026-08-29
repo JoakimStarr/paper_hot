@@ -4,12 +4,13 @@ import React, { useState, useEffect, memo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PaperCard as PaperCardType } from '@/types/paper';
-import { ExternalLink, Calendar, TrendingUp, Bookmark, Sparkles, Pin, EyeOff } from 'lucide-react';
+import { ExternalLink, Calendar, TrendingUp, Bookmark, Sparkles, Pin, EyeOff, Clock, Check, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { getIssuePeriod, topicColors } from '@/lib/utils';
 import { useBookmarks } from '@/lib/useBookmarks';
 import { usePins } from '@/lib/usePins';
 import { usePreferences } from '@/lib/usePreferences';
+import { useReadLater } from '@/lib/useReadLater';
 import { useToast } from '@/components/Toast';
 import { useTrack } from '@/lib/useTrack';
 import { openAssistant } from '@/lib/assistantBus';
@@ -24,6 +25,9 @@ interface PaperCardProps {
   read?: boolean;
   /** 埋点来源位置 */
   surface?: string;
+  /** 提供时在「不感兴趣」菜单顶部显示「看过了」（研究工作台推荐闭环用） */
+  onMarkRead?: () => void;
+  markReadBusy?: boolean;
 }
 
 // 卡片级「不感兴趣」快捷屏蔽的类型
@@ -39,7 +43,7 @@ const subfieldColors: Record<string, string> = {
   '国际经济学': 'bg-pink-100 text-pink-800',
 };
 
-function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, surface }: PaperCardProps) {
+function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, surface, onMarkRead, markReadBusy }: PaperCardProps) {
   const { t } = useLanguage();
   const router = useRouter();
   const score = paper.final_score;
@@ -48,8 +52,22 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
   const bookmarked = isBookmarkedNow(paper.id);
   const { has: isPinnedNow, toggle: togglePinState } = usePins();
   const pinned = isPinnedNow(paper.id);
+  const { has: isQueuedNow, toggle: toggleReadLaterState } = useReadLater();
+  const queued = isQueuedNow(paper.id);
   const { toast } = useToast();
   const { track } = useTrack();
+
+  // —— 稍后读：与收藏/置顶平行的轻量"待办"清单，工作台展示队列 ——
+  const handleToggleReadLater = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const res = await toggleReadLaterState(paper.id);
+      toast(t(res.queued ? 'paper.readLaterAdded' : 'paper.readLaterRemoved'), 'success');
+    } catch {
+      toast(t('paper.bookmarkFailed'), 'error');
+    }
+  };
 
   // 埋点：曝光
   useEffect(() => {
@@ -103,10 +121,10 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
   if (paper.journal_name) {
     quickHideOptions.push({ type: 'journal', value: paper.journal_name, label: `${t('pref.type.journal')}：${paper.journal_name}` });
   }
-  (paper.keywords_cn || []).slice(0, 2).forEach((kw) => {
+  (paper.keywords_cn || []).slice(0, 4).forEach((kw) => {
     if (kw) quickHideOptions.push({ type: 'keyword', value: kw, label: `${t('pref.type.keyword')}：${kw}` });
   });
-  (paper.authors || []).slice(0, 2).forEach((au) => {
+  (paper.authors || []).slice(0, 3).forEach((au) => {
     if (au && au.trim()) quickHideOptions.push({ type: 'author', value: au.trim(), label: `${t('pref.type.author')}：${au.trim()}` });
   });
   // 过滤已在屏蔽表中的项，避免重复提示
@@ -183,6 +201,15 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
               className={`w-4 h-4 sm:w-5 sm:h-5 ${pinned ? 'fill-indigo-500 text-indigo-500' : ''}`}
             />
           </button>
+          <button
+            onClick={handleToggleReadLater}
+            className={`transition-colors p-1 ${queued ? 'text-amber-500 hover:text-amber-600' : 'text-gray-400 dark:text-gray-500 hover:text-amber-500'}`}
+            title={queued ? t('paper.readLaterRemove') : t('paper.readLater')}
+          >
+            <Clock
+              className={`w-4 h-4 sm:w-5 sm:h-5 ${queued ? 'fill-amber-500 text-amber-500' : ''}`}
+            />
+          </button>
           {quickHideOptions.length > 0 && (
             <div className="relative">
               <button
@@ -193,19 +220,33 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
                 }}
                 className="transition-colors p-1 text-gray-400 dark:text-gray-500 hover:text-red-500"
                 title={t('pref.title')}
+                aria-label={t('pref.title')}
+                aria-expanded={hideOpen}
               >
                 <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
               {hideOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setHideOpen(false); }} />
-                  <div className="absolute right-0 z-50 mt-1 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1">
+                  <div className="absolute right-0 z-50 mt-1 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1" role="menu">
+                    {onMarkRead && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setHideOpen(false); onMarkRead(); }}
+                        disabled={markReadBusy}
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 truncate flex items-center gap-1.5 disabled:opacity-50"
+                        role="menuitem"
+                      >
+                        {markReadBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 text-green-500" />}
+                        {t('paper.markReadMenu')}
+                      </button>
+                    )}
                     <p className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">{t('pref.title')}</p>
                     {quickHideOptions.map((o) => (
                       <button
                         key={`${o.type}:${o.value}`}
                         onClick={(e) => handleHide(o, e)}
                         className="w-full text-left px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 truncate"
+                        role="menuitem"
                       >
                         {o.label}
                       </button>

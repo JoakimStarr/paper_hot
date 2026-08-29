@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Favorite, PinnedPaper, MAX_PINNED_PAPERS, HiddenPreference, ReadingHistory, FollowedSubfield, FollowedKeyword, Paper, PaperFeatures
+from app.models import (
+    Favorite, PinnedPaper, MAX_PINNED_PAPERS, HiddenPreference, ReadingHistory,
+    FollowedSubfield, FollowedKeyword, Paper, PaperFeatures, ReadLater, UserEvent,
+)
 from app.routers.deps import verify_token, _paper_to_card, _isoformat_utc
 
 logger = logging.getLogger(__name__)
@@ -496,3 +499,189 @@ async def get_suggestions(
     ][:5]
 
     return {"subfields": subfield_suggestions, "keywords": keyword_suggestions}
+
+# ---------- 推荐反馈闭环（工作台优化）：多推这类 / 少推这类 ----------
+
+class RecommendFeedbackRequest(BaseModel):
+    paper_id: str
+    action: str  # more | less
+
+
+@router.post("/personal/recommend-feedback")
+async def recommend_feedback(
+    body: RecommendFeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """对某篇推荐论文一键反馈（「今日值得读」reason 行的 👍/👎）。
+
+    more：把论文的第一个未关注关键词加入关注（无可用关键词则关注其子领域）；
+    less：把第一个未屏蔽关键词加入屏蔽（无可用关键词则屏蔽其子领域）。
+    目标全部已配置时 applied=False（幂等）。同时写一条 user_events 埋点供推荐效果统计。
+    """
+    uid = _user_id(x_user_id)
+    pid = (body.paper_id or "").strip()
+    action = (body.action or "").strip()
+    if action not in ("more", "less"):
+        raise HTTPException(status_code=400, detail="action must be more|less")
+    paper = await db.get(Paper, pid)
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    keywords = [k.strip() for k in (paper.keywords_cn or []) if (k or "").strip()]
+    subfield = (paper.economics_subfield or "").strip()
+
+    if action == "more":
+        followed_kw = {
+            r[0] for r in (
+                await db.execute(sa_select(FollowedKeyword.keyword).where(FollowedKeyword.user_id == uid))
+            ).all()
+        }
+        followed_sf = {
+            r[0] for r in (
+                await db.execute(sa_select(FollowedSubfield.subfield).where(FollowedSubfield.user_id == uid))
+            ).all()
+        }
+        target = next((("keyword", k) for k in keywords if k not in followed_kw), None)
+        if target is None and subfield and subfield not in followed_sf:
+            target = ("subfield", subfield)
+        if target is None:
+            return {"applied": False}
+        ttype, tvalue = target
+        if ttype == "keyword":
+            db.add(FollowedKeyword(user_id=uid, keyword=tvalue[:100]))
+        else:
+            db.add(FollowedSubfield(user_id=uid, subfield=tvalue[:100]))
+    else:
+        hidden_kw = {
+            r[0] for r in (
+                await db.execute(
+                    sa_select(HiddenPreference.entity_value).where(
+                        HiddenPreference.user_id == uid,
+                        HiddenPreference.entity_type == "keyword",
+                    )
+                )
+            ).all()
+        }
+        hidden_sf = {
+            r[0] for r in (
+                await db.execute(
+                    sa_select(HiddenPreference.entity_value).where(
+                        HiddenPreference.user_id == uid,
+                        HiddenPreference.entity_type == "subfield",
+                    )
+                )
+            ).all()
+        }
+        target = next((("keyword", k) for k in keywords if k not in hidden_kw), None)
+        if target is None and subfield and subfield not in hidden_sf:
+            target = ("subfield", subfield)
+        if target is None:
+            return {"applied": False}
+        ttype, tvalue = target
+        db.add(HiddenPreference(user_id=uid, entity_type=ttype, entity_value=tvalue[:200]))
+
+    db.add(UserEvent(
+        user_id=uid, event_type="recommend_feedback", surface="dashboard_today_read",
+        ref_id=pid, meta={"action": action, "target_type": ttype, "target_value": tvalue},
+    ))
+    await db.commit()
+    return {"applied": True, "entity_type": ttype, "entity_value": tvalue}
+
+
+# ---------- 批量已读（工作台「全部标为看过」） ----------
+
+class ReadingBatchRequest(BaseModel):
+    paper_ids: List[str]
+
+
+@router.post("/personal/reading/batch")
+async def record_reading_batch(
+    body: ReadingBatchRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """批量记录阅读（幂等 upsert：已存在的跳过），返回本次新增条数。"""
+    uid = _user_id(x_user_id)
+    ids = [p.strip() for p in (body.paper_ids or []) if (p or "").strip()]
+    if not ids:
+        return {"recorded": 0}
+    existing_rows = await db.execute(
+        sa_select(ReadingHistory.paper_id).where(
+            ReadingHistory.user_id == uid, ReadingHistory.paper_id.in_(ids)
+        )
+    )
+    existing = {r[0] for r in existing_rows.all()}
+    added = 0
+    for pid in ids:
+        if pid in existing:
+            continue
+        existing.add(pid)
+        db.add(ReadingHistory(user_id=uid, paper_id=pid))
+        added += 1
+    await db.commit()
+    return {"recorded": added}
+
+
+# ---------- 稍后读队列（工作台优化） ----------
+
+@router.get("/personal/read-later")
+async def get_read_later(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """稍后读队列 paper_id 列表（最新加入在前，至多 200），供前端缓存水合。"""
+    uid = _user_id(x_user_id)
+    ids = await _paper_ids_by_status(db, uid, ReadLater, limit=200)
+    return {"paper_ids": ids}
+
+
+@router.post("/personal/read-later/toggle")
+async def toggle_read_later(
+    body: PaperIdRequest,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """切换稍后读：已在队列则移出，不在则加入。返回 { queued: bool }。"""
+    uid = _user_id(x_user_id)
+    pid = (body.paper_id or "").strip()
+    if not pid:
+        raise HTTPException(status_code=400, detail="paper_id is required")
+    exists = await db.execute(
+        sa_select(ReadLater.id).where(ReadLater.user_id == uid, ReadLater.paper_id == pid)
+    )
+    if exists.scalar_one_or_none():
+        await db.execute(
+            sa_delete(ReadLater).where(ReadLater.user_id == uid, ReadLater.paper_id == pid)
+        )
+        await db.commit()
+        return {"queued": False}
+    db.add(ReadLater(user_id=uid, paper_id=pid))
+    await db.commit()
+    return {"queued": True}
+
+
+@router.get("/personal/read-later/papers")
+async def get_read_later_papers(
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+    x_user_id: str = Header(default=None),
+):
+    """稍后读队列论文卡片（队首在前，至多 50），供工作台队列区块渲染。"""
+    uid = _user_id(x_user_id)
+    ids = await _paper_ids_by_status(db, uid, ReadLater, limit=50)
+    if not ids:
+        return {"papers": [], "total": 0}
+    result = await db.execute(
+        sa_select(Paper).options(
+            selectinload(Paper.features),
+            selectinload(Paper.scores),
+        ).where(Paper.id.in_(ids))
+    )
+    by_id = {p.id: p for p in result.scalars().all()}
+    cards = [_paper_to_card(by_id[pid]) for pid in ids if pid in by_id]
+    return {"papers": cards, "total": len(cards)}

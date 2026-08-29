@@ -52,6 +52,10 @@ async def lifespan(app: FastAPI):
     # P0 遗留#2/#3：无论定时器是否开启，启动即刷新趋势数据 + 补齐存量 embedding
     spawn_background_task(scheduler.run_startup_maintenance())
 
+    # paper_keywords 平表：空表时后台回填（工作台关键词召回走索引查找；幂等）
+    from app.crud import backfill_paper_keywords
+    spawn_background_task(backfill_paper_keywords(only_if_empty=True))
+
     if settings.scheduler_enabled:
         scheduler.start()
         # 初始抓取放后台执行，避免阻塞服务启动（外部网络慢时接口迟迟不可用）

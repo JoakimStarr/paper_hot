@@ -16,6 +16,21 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
   const [title, setTitle] = useState(project.title);
   const [questions, setQuestions] = useState<string[]>(project.research_questions || []);
   const [newQuestion, setNewQuestion] = useState('');
+  // 检索关键词：优先已保存的 search_keywords，否则从灵感快照 generated_topics 派生默认值
+  const defaultKeywords = React.useMemo(() => {
+    const saved = project.search_keywords || [];
+    if (saved.length > 0) return saved;
+    const set = new Set<string>();
+    for (const g of project.generated_topics || []) {
+      for (const k of g.keywords || []) {
+        const t = k.trim();
+        if (t) set.add(t);
+      }
+    }
+    return Array.from(set);
+  }, [project.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [keywords, setKeywords] = useState<string[]>(defaultKeywords);
+  const [newKeyword, setNewKeyword] = useState('');
   const [saving, setSaving] = useState(false);
   const [adopted, setAdopted] = useState(false);
 
@@ -25,7 +40,11 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
     const t = title.trim();
     if (!t) return;
     setSaving(true);
-    await onPatch({ title: t, research_questions: questions.filter((q) => q.trim()) });
+    await onPatch({
+      title: t,
+      research_questions: questions.filter((q) => q.trim()),
+      search_keywords: keywords.map((k) => k.trim()).filter(Boolean),
+    });
     setSaving(false);
   };
 
@@ -34,6 +53,13 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
     if (!q) return;
     setQuestions((prev) => [...prev, q]);
     setNewQuestion('');
+  };
+
+  const addKeyword = () => {
+    const k = newKeyword.trim();
+    if (!k || keywords.includes(k)) return;
+    setKeywords((prev) => [...prev, k]);
+    setNewKeyword('');
   };
 
   const applyTopic = async (g: GeneratedTopic) => {
@@ -45,6 +71,15 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
     });
     setTitle(g.title);
     setQuestions(g.research_questions || []);
+    // 采纳候选时把其检索关键词合并进编辑器（去重），供第 2/3 步直接使用
+    setKeywords((prev) => {
+      const set = new Set(prev);
+      for (const k of g.keywords || []) {
+        const t = k.trim();
+        if (t) set.add(t);
+      }
+      return Array.from(set);
+    });
     setTimeout(() => setAdopted(false), 2000);
   };
 
@@ -118,6 +153,59 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
             <Plus className="w-3.5 h-3.5" /> 添加
           </button>
         </div>
+
+        {/* 检索关键词：驱动第 2 步验证检索与第 3 步文献召回 */}
+        <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+              检索关键词
+              <span className="ml-1.5 font-normal text-gray-400">驱动第 2 步验证与第 3 步文献召回</span>
+            </label>
+            <button
+              onClick={saveBasic}
+              disabled={saving || !title.trim()}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white rounded-md transition-colors"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              保存
+            </button>
+          </div>
+          {keywords.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {keywords.map((k) => (
+                <span
+                  key={k}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full"
+                >
+                  {k}
+                  <button
+                    onClick={() => setKeywords((prev) => prev.filter((x) => x !== k))}
+                    className="text-gray-400 hover:text-red-500 transition-colors"
+                    title="移除关键词"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              value={newKeyword}
+              onChange={(e) => setNewKeyword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') addKeyword(); }}
+              placeholder="添加检索关键词，Enter 确认（如：耐心资本、PSM-DID）"
+              className="flex-1 px-2.5 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-1 focus:ring-primary-400"
+            />
+            <button
+              onClick={addKeyword}
+              disabled={!newKeyword.trim()}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> 添加
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* AI 选题建议 */}
@@ -184,7 +272,7 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
             ))}
             {adopted && (
               <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 已应用到项目，可点击下一步继续验证
+                <CheckCircle2 className="w-3.5 h-3.5" /> 已应用到项目，点下方「下一步：选题验证」继续
               </p>
             )}
           </div>

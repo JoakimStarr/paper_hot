@@ -284,6 +284,12 @@ export const papersApi = {
   /** 被引查询：库内哪些论文的参考文献引用了该论文。 */
   getPaperCitedBy: async (paperId: string): Promise<PaperCitedByResponse> =>
     request(`/papers/${paperId}/cited-by`),
+  /** 智能批量补抓：按 置顶>收藏>已读>评分 优先级自动选出未抓取论文队列（复用 references 后台任务）。 */
+  backfillReferencesCrawl: async (opts: { limit?: number; max_items?: number; interval?: number }): Promise<{ status: string; queued?: number; message?: string; paper_title?: string }> =>
+    request('/crawl/references/backfill', { method: 'POST', body: opts }),
+  /** 参考文献覆盖率：已抓论文数 / 有效链接论文总数。 */
+  getReferencesCoverage: async (): Promise<{ papers_with_refs: number; papers_total: number }> =>
+    request('/crawl/references/coverage'),
   sendFeedback: async (body: { surface: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
     request('/ai/feedback', { method: 'POST', body }),
 
@@ -313,6 +319,75 @@ export const papersApi = {
 
   analyzePaper: async (paperId: string, model?: string, signal?: AbortSignal): Promise<{ analysis: string | null; status: string; model?: string }> =>
     request(`/papers/${paperId}/analyze`, { method: 'POST', body: model ? { model } : {}, signal }),
+
+  /**
+   * 单篇论文 AI 分析——SSE 流式版（POST /papers/{id}/analyze/stream）。
+   * 帧格式对齐后端 _stream_llm_content：{"content": "..."} | {"error": "..."} | {"done": true}。
+   * 若后端返回 JSON（如已有新鲜 pending 分析，HTTP 200 非 SSE），经 onDone({status:'pending'}) 通知调用方退回轮询。
+   */
+  streamPaperAnalysis: async (
+    paperId: string,
+    cb: { onContent: (delta: string) => void; onError: (msg: string) => void; onDone: (result?: { status?: string; analysis?: string | null }) => void },
+    model?: string,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/papers/${paperId}/analyze/stream`, {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify(model ? { model } : {}),
+        signal,
+      });
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      cb.onError(String(e?.message || 'Request failed'));
+      return;
+    }
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Request failed' }));
+      const rawDetail = err.detail || 'Request failed';
+      const message = typeof rawDetail === 'string'
+        ? rawDetail
+        : Array.isArray(rawDetail)
+          ? rawDetail.map((e: any) => `${e?.loc?.join('.') ?? ''}: ${e?.msg ?? String(e)}`).filter(Boolean).join('; ')
+          : JSON.stringify(rawDetail);
+      cb.onError(message);
+      return;
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      // 非 SSE：pending 等 JSON 语义，交调用方处理
+      const data = await response.json().catch(() => ({}));
+      cb.onDone({ status: data.status, analysis: data.analysis });
+      return;
+    }
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let errored = false;
+    for (;;) {
+      const { done: readerDone, value } = await reader.read();
+      if (readerDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.error) {
+            errored = true;
+            cb.onError(String(data.error));
+            break;
+          }
+          if (data.content) cb.onContent(String(data.content));
+        } catch { /* 跳过不完整帧 */ }
+      }
+      if (errored) break;
+    }
+    if (!errored) cb.onDone();
+  },
 
   getLatestAnalysis: async (paperId: string): Promise<{ analysis: string | null; status: string | null; model?: string; created_at?: string }> =>
     request(`/papers/${paperId}/analyses/latest`),
@@ -427,6 +502,23 @@ export const personalApi = {
 
   getSuggestions: async (): Promise<{ subfields: Array<{ name: string; reason: string; paper_count: number }>; keywords: Array<{ name: string; reason: string; paper_count: number }> }> =>
     request('/personal/suggestions'),
+
+  // —— 推荐反馈闭环（工作台优化）：多推这类 / 少推这类 ——
+  recommendFeedback: async (paperId: string, action: 'more' | 'less'): Promise<{ applied: boolean; entity_type?: string; entity_value?: string }> =>
+    request('/personal/recommend-feedback', { method: 'POST', body: { paper_id: paperId, action } }),
+
+  recordReadingBatch: async (paperIds: string[]): Promise<{ recorded: number }> =>
+    request('/personal/reading/batch', { method: 'POST', body: { paper_ids: paperIds } }),
+
+  // —— 稍后读队列 ——
+  getReadLater: async (): Promise<{ paper_ids: string[] }> =>
+    request('/personal/read-later'),
+
+  toggleReadLater: async (paperId: string): Promise<{ queued: boolean }> =>
+    request('/personal/read-later/toggle', { method: 'POST', body: { paper_id: paperId } }),
+
+  getReadLaterPapers: async (): Promise<{ papers: PaperCard[]; total: number }> =>
+    request('/personal/read-later/papers'),
 };
 
 // —— 研究工作台（P1-7）——
@@ -439,7 +531,7 @@ export interface DashboardData {
   mine: {
     favorites: PaperCard[];
     recent_analyses: Array<{ paper_id: string; title: string; status: string | null; created_at: string | null }>;
-    topic_projects: Array<{ id: number; title: string; status: string; novelty: number | null; crowding: number | null }>;
+    topic_projects: Array<{ id: number; title: string; status: string; novelty: number | null; crowding: number | null; current_step?: number; paper_count?: number; read_count?: number }>;
     reviews: Array<{ id: number; topic: string; paper_count: number; created_at: string | null }>;
     latest_report_summary: string | null;
     latest_report_id: number | null;
@@ -456,9 +548,25 @@ export interface TodayBrief {
   generated_at: string;
 }
 
+// —— 技能层（skills）：方法手册等系统预置能力 ——
+export const skillsApi = {
+  getMethodPlaybook: async (): Promise<{ entries: MethodPlaybookEntry[] }> =>
+    request('/skills/method-playbook'),
+};
+
 export const dashboardApi = {
-  getDashboard: async (seed = 0): Promise<DashboardData> =>
-    request<DashboardData>(seed ? `/dashboard?seed=${seed}` : '/dashboard'),
+  // sections：按页签只取所需子集（today_read/briefing/mine），降低首屏与切页成本
+  getDashboard: async (seed = 0, sections?: Array<'today_read' | 'briefing' | 'mine'>): Promise<Partial<DashboardData>> => {
+    const params = new URLSearchParams();
+    if (seed) params.set('seed', String(seed));
+    if (sections?.length) params.set('sections', sections.join(','));
+    const qs = params.toString();
+    return request<Partial<DashboardData>>(`/dashboard${qs ? `?${qs}` : ''}`);
+  },
+
+  // 关注子领域近 30 天新论文（工作台「新论文提醒」就地展开）
+  getWatchNewPapers: async (limit = 10): Promise<{ papers: PaperCard[]; total: number }> =>
+    request(`/dashboard/watch-new-papers?limit=${limit}`),
 
   getTodayBrief: async (): Promise<TodayBrief> => request<TodayBrief>('/dashboard/today-brief'),
 };
@@ -645,14 +753,16 @@ export const topicIdeasApi = {
     request(`/topic-ideas/generate/${taskId}`),
 };
 
-/** 选题验证器（SSE 流式，带 token）。 */
+/** 选题验证器（SSE 流式，带 token）。projectId：服务端流结束后直接落库评分/报告/状态。 */
 export function streamValidateTopic(
   topic: string,
   model: string | undefined,
   cb: ChatStreamCallbacks,
   signal?: AbortSignal,
+  projectId?: number,
 ): Promise<void> {
-  return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal, { topic });
+  return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal,
+    projectId ? { topic, project_id: projectId } : { topic });
 }
 
 /** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */

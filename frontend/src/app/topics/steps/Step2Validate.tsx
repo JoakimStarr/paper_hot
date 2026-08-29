@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, FileText } from 'lucide-react';
 import { streamValidateTopic, workbenchApi } from '@/lib/api';
-import type { RetrievedPaper } from '@/types/paper';
+import { parseValidationScores } from '@/lib/topicReport';
+import { openAssistant } from '@/lib/assistantBus';
+import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
 import type { StepProps } from './types';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -12,7 +14,7 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
   loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
 });
 
-export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
+export default function Step2Validate({ project, onPatch, runAi, goStep }: StepProps) {
   const [validating, setValidating] = useState(false);
   const [reportContent, setReportContent] = useState('');
   const [reportError, setReportError] = useState<string | null>(null);
@@ -20,6 +22,8 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
   const [reasoningOpen, setReasoningOpen] = useState(true);
   const [retrievedPapers, setRetrievedPapers] = useState<RetrievedPaper[]>([]);
   const [retrievedMode, setRetrievedMode] = useState('');
+  // 本次验证解析出的结构化评分（驱动完成后的跨步引导卡）
+  const [parsed, setParsed] = useState<ReturnType<typeof parseValidationScores>>({});
   const [competition, setCompetition] = useState<{
     top_authors: Array<{ name: string; count: number }>;
     journal_distribution: Array<{ journal: string; count: number }>;
@@ -31,8 +35,10 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
   const aiRunning = project.ai_pending === 'overview';
   const hasReport = !!(project.validation_report || reportContent);
 
-  // 检索关键词：来自选题灵感快照（generated_topics），跨候选去重，仅只读展示
+  // 检索关键词：优先 Step1 手动维护的 search_keywords，回退灵感快照 generated_topics[*].keywords
   const keywords = useMemo(() => {
+    const saved = (project.search_keywords || []).map((k) => (k || '').trim()).filter(Boolean);
+    if (saved.length > 0) return saved;
     const set = new Set<string>();
     for (const g of project.generated_topics || []) {
       for (const k of g.keywords || []) {
@@ -41,7 +47,7 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
       }
     }
     return Array.from(set);
-  }, [project.generated_topics]);
+  }, [project.search_keywords, project.generated_topics]);
 
   const citations = useMemo(() => {
     const map: Record<number, { id: string; title?: string }> = {};
@@ -50,6 +56,17 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
     }
     return map;
   }, [retrievedPapers]);
+
+  // 进入步骤时恢复上一次验证记录的证据（召回列表/模式/竞争地图随报告一起沉淀在项目上）
+  const lastEvidence = project.validation_evidence as ValidationEvidence | null | undefined;
+  useEffect(() => {
+    if (!lastEvidence?.papers?.length) return;
+    setRetrievedPapers(lastEvidence.papers);
+    setRetrievedMode(lastEvidence.mode || '');
+    if (lastEvidence.competition) setCompetition(lastEvidence.competition);
+    // 仅在进入该步骤（项目切换）时恢复一次；重新验证由流式回调解覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
 
   const handleValidate = async () => {
     const topic = project.title.trim();
@@ -61,29 +78,51 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
     setRetrievedPapers([]);
     setRetrievedMode('');
     setCompetition(null);
+    setParsed({});
     const controller = new AbortController();
     abortRef.current = controller;
-    let full = '';
+    // 流式期间的证据暂存（onDone 时随报告一起落库）
+    let metaPapers: RetrievedPaper[] = [];
+    let metaMode = '';
+    let metaCompetition: ValidationEvidence['competition'] = null;
     await streamValidateTopic(
       topic,
       undefined,
       {
-        onContent: (text) => { full += text; setReportContent(full); },
-        onReasoning: (text) => setReportReasoning((prev) => prev + text),
+        // streamChat 的 onContent/onReasoning 传的是「已累积全文」（与 trends 页一致），
+        // 不能再本地累加，否则报告会随流式片段成倍重复
+        onContent: (text) => setReportContent(text),
+        onReasoning: (text) => setReportReasoning(text),
         onMeta: (data) => {
           if (data && typeof data === 'object' && 'papers' in data) {
             const meta = data as any;
-            setRetrievedPapers(Array.isArray(meta.papers) ? meta.papers : []);
-            setRetrievedMode(typeof meta.mode === 'string' ? meta.mode : '');
-            if (meta.stats?.competition) setCompetition(meta.stats.competition);
+            metaPapers = Array.isArray(meta.papers) ? meta.papers : [];
+            metaMode = typeof meta.mode === 'string' ? meta.mode : '';
+            metaCompetition = meta.stats?.competition || null;
+            setRetrievedPapers(metaPapers);
+            setRetrievedMode(metaMode);
+            if (metaCompetition) setCompetition(metaCompetition);
           }
         },
-        onDone: () => {
+        onDone: (fullContent) => {
           setValidating(false);
-          // 验证报告沉淀回项目 + 自动生成立项书
-          if (full) {
-            onPatch({ validation_report: full, novelty: undefined, crowding: undefined, feasibility: undefined });
-            autoProposal(full);
+          // 验证报告 + 证据快照 + 结构化评分一并沉淀回项目（评分驱动列表展示与状态）
+          if (fullContent) {
+            const scores = parseValidationScores(fullContent);
+            setParsed(scores);
+            onPatch({
+              validation_report: fullContent,
+              validation_evidence: {
+                papers: metaPapers,
+                mode: metaMode,
+                competition: metaCompetition,
+                validated_at: new Date().toISOString(),
+              },
+              novelty: scores.novelty ?? undefined,
+              crowding: scores.crowding ?? undefined,
+              feasibility: undefined,
+            });
+            autoProposal(fullContent);
           }
         },
         onError: (msg) => {
@@ -92,6 +131,7 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
         },
       },
       controller.signal,
+      project.id,
     );
   };
 
@@ -254,8 +294,24 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
       {hasReport && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">验证报告</h3>
-            {validating && <Loader2 className="w-4 h-4 animate-spin text-primary-500" />}
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">验证报告</h3>
+              {lastEvidence?.validated_at && (
+                <span className="text-[11px] text-gray-400">
+                  上次验证：{new Date(lastEvidence.validated_at).toLocaleString()}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => openAssistant({ contextText: project.title, autoPrompt: '请帮我解读这份选题验证报告的关键结论，并指出最值得注意的风险' })}
+                disabled={validating}
+                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-purple-200 dark:border-purple-800 text-purple-600 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors disabled:opacity-50"
+              >
+                <Sparkles className="w-3 h-3" /> 问 AI 解读
+              </button>
+              {validating && <Loader2 className="w-4 h-4 animate-spin text-primary-500" />}
+            </div>
           </div>
           {reportError ? (
             <div className="text-sm text-red-500 py-2">{reportError}</div>
@@ -267,7 +323,13 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
           {(proposalBusy || project.proposal) && (
             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <h4 className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5">
-                <FileIcon /> 立项书（自动生成，见第 5 步写作输出）
+                <FileText className="w-3.5 h-3.5" /> 立项书（自动生成）
+                <button
+                  onClick={() => goStep(5)}
+                  className="ml-1 inline-flex items-center gap-0.5 text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  去第 5 步查看/下载 →
+                </button>
               </h4>
               {proposalBusy ? (
                 <div className="flex items-center gap-2 text-xs text-gray-400"><Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在生成立项书…</div>
@@ -276,6 +338,21 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
               ) : null}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 验证完成后的跨步引导卡（评分由后端结构化落库；正则结果仅用于展示） */}
+      {!validating && reportContent && (
+        <div className="flex items-center gap-2 flex-wrap bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800/60 rounded-lg p-3">
+          <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+          <span className="text-xs text-green-700 dark:text-green-300">
+            验证完成
+            {parsed.novelty != null && <> · 新颖性 <strong>{parsed.novelty}/10</strong></>}
+            {parsed.crowding && <> · 拥挤度：<strong>{parsed.crowding}</strong></>}
+          </span>
+          <button onClick={() => goStep(3)} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+            去第 3 步召回文献 →
+          </button>
         </div>
       )}
 
@@ -315,8 +392,4 @@ export default function Step2Validate({ project, onPatch, runAi }: StepProps) {
       </div>
     </div>
   );
-}
-
-function FileIcon() {
-  return <span className="text-gray-400">📄</span>;
 }
