@@ -50,6 +50,7 @@ from cnki_crawler.storage import (
 from cnki_crawler.captcha_solver import CaptchaSolver, DDDDOCR_AVAILABLE
 from cnki_crawler.browser import _launch_kwargs
 from cnki_crawler.captcha_gate import is_verify_url, wait_clean
+from cnki_crawler.navigation import navigate, wait_cnki_host
 from cnki_crawler import progress
 
 # —— 详情抓取与搜索的防检测常量（原单文件脚本散落常量收敛于此）——
@@ -163,8 +164,8 @@ class JournalCrawler:
         if not self.page:
             return
         try:
-            await _pacing_wait()
-            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+            await navigate(self.page, 'https://www.cnki.net/', tag=f"    [线程{self.thread_id}]",
+                           headless=self.headless, solver=self.captcha_solver)
             await asyncio.sleep(random.uniform(2, 4))
             await self.random_scroll()
             await self.save_storage_state()
@@ -201,10 +202,8 @@ class JournalCrawler:
     async def get_year_issues(self, journal_url: str) -> list:
         """获取期刊的年份期次列表"""
         print(f"  [线程{self.thread_id}] 访问期刊页面: {journal_url[:60]}...")
-        await _pacing_wait()
-        await self.page.goto(journal_url, wait_until='domcontentloaded', timeout=60000)
-
-        if not await self.wait_for_page_stable(journal_url):
+        if not await navigate(self.page, journal_url, tag=f"  [线程{self.thread_id}]",
+                              headless=self.headless, solver=self.captcha_solver):
             return []
 
         # 事件驱动：等期次树容器出现再解析，替代固定 8s 等待
@@ -551,10 +550,9 @@ class JournalCrawler:
         page = page or self.page
         for attempt in range(DETAIL_MAX_RETRIES + 1):
             try:
-                await _pacing_wait()
-                await page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
-
-                if not await self.wait_for_page_stable(paper_url, page=page):
+                if not await navigate(page, paper_url, tag=f"    [线程{self.thread_id}]",
+                                      headless=self.headless, solver=self.captcha_solver,
+                                      captcha_timeout=300):
                     return None, 'verify_page'
 
                 await self.random_scroll(page=page)
@@ -1105,8 +1103,8 @@ class JournalCrawler:
         page = self.page
         try:
             print("访问期刊导航页...")
-            await _pacing_wait()
-            await page.goto(f'{BASE_URL}/knavi/journals/index', wait_until='domcontentloaded', timeout=60000)
+            await navigate(page, f'{BASE_URL}/knavi/journals/index', tag=f"  [线程{self.thread_id}]",
+                           headless=self.headless, solver=self.captcha_solver)
 
             print("点击'经济与管理科学'按钮...")
             try:
@@ -1810,19 +1808,15 @@ class KeywordSearchCrawler(JournalCrawler):
             if self.search_url:
                 # 复用已保存的检索结果页 URL，跳过首页检索/主题/类型筛选
                 print(f"{tag} 直接打开已保存的检索结果页: {self.search_url}")
-                await _pacing_wait()
-                await self.page.goto(self.search_url, wait_until='domcontentloaded', timeout=60000)
-                await self._ensure_no_captcha(timeout=180)
+                await navigate(self.page, self.search_url, tag=tag,
+                               headless=self.headless, solver=self.captcha_solver)
                 await asyncio.sleep(random.uniform(2, 4))
             else:
                 # 1. 打开知网首页（校外经登录态直接进，否则等待手动登录跳回）
                 print(f"{tag} 打开知网首页...")
-                await _pacing_wait()
-                await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
-                for _ in range(90):
-                    if 'cnki.net' in self.page.url:
-                        break
-                    await asyncio.sleep(2)
+                await navigate(self.page, 'https://www.cnki.net/', tag=tag,
+                               headless=self.headless, solver=self.captcha_solver)
+                await wait_cnki_host(self.page)
 
                 # 2. 等待搜索框
                 box = self.page.locator(self.SEARCH_SELECTOR)
@@ -1868,10 +1862,9 @@ class KeywordSearchCrawler(JournalCrawler):
                         await asyncio.sleep(random.uniform(5, 9))
                         if nav_url:
                             # 表单提交被拦：改用直连导航（crossids/korder/kw 已由页面 JS 拼好）
-                            await _pacing_wait()
                             try:
-                                await self.page.goto(nav_url, wait_until='domcontentloaded', timeout=60000)
-                                await self._ensure_no_captcha(timeout=180)
+                                await navigate(self.page, nav_url, tag=tag,
+                                               headless=self.headless, solver=self.captcha_solver)
                                 if not await self._search_navigation_failed(timeout=20):
                                     search_ok = True
                                     break
@@ -1879,9 +1872,9 @@ class KeywordSearchCrawler(JournalCrawler):
                                 print(f"{tag} 直连重试失败: {e}")
                         # 回到首页准备下一次尝试
                         await asyncio.sleep(random.uniform(3, 6))
-                        await _pacing_wait()
                         try:
-                            await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+                            await navigate(self.page, 'https://www.cnki.net/', tag=tag,
+                                           headless=self.headless, solver=self.captcha_solver)
                         except Exception:
                             pass
                         box = self.page.locator(self.SEARCH_SELECTOR)
@@ -2158,12 +2151,10 @@ class ReferenceCrawler(KeywordSearchCrawler):
                     else:
                         print(f"{tag} 直接打开论文详情页: {paper_url}")
 
-                    await _pacing_wait()
-                    await self.page.goto(paper_url, wait_until='domcontentloaded', timeout=60000)
-                    if not await self.wait_for_page_stable(paper_url):
+                    if not await navigate(self.page, paper_url, tag=tag,
+                                          headless=self.headless, solver=self.captcha_solver):
                         print(f"{tag} ✗ 详情页遇到安全验证且未通过，跳过")
                         continue
-                    await self._ensure_no_captcha(timeout=120)
                     # 模拟真人浏览：先随机滚动再点页签，降低风控敏感度
                     await self.random_scroll()
                     await asyncio.sleep(random.uniform(MIN_DETAIL_DELAY, MAX_DETAIL_DELAY))
@@ -2220,12 +2211,9 @@ class ReferenceCrawler(KeywordSearchCrawler):
     async def _locate_paper_by_title(self, tag: str):
         """按论文标题搜索知网并定位详情页：默认取第一条结果，其余候选打印到日志供人工核对。"""
         print(f"{tag} 按标题检索: {self.paper_title}")
-        await _pacing_wait()
-        await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
-        for _ in range(90):
-            if 'cnki.net' in self.page.url:
-                break
-            await asyncio.sleep(2)
+        await navigate(self.page, 'https://www.cnki.net/', tag=tag,
+                       headless=self.headless, solver=self.captcha_solver)
+        await wait_cnki_host(self.page)
         box = self.page.locator(self.SEARCH_SELECTOR).first
         await box.wait_for(state='visible', timeout=60000)
         # 检索触发可能被风控以 403 拦截（页面落到 chrome-error）：退避重试，
@@ -2244,8 +2232,8 @@ class ReferenceCrawler(KeywordSearchCrawler):
             print(f"{tag} 检索被风控拦截（第 {attempt}/{SEARCH_MAX_RETRIES} 次），退避后重试...")
             await asyncio.sleep(random.uniform(5, 9))
             try:
-                await _pacing_wait()
-                await self.page.goto('https://www.cnki.net/', wait_until='domcontentloaded', timeout=60000)
+                await navigate(self.page, 'https://www.cnki.net/', tag=tag,
+                               headless=self.headless, solver=self.captcha_solver)
                 box = self.page.locator(self.SEARCH_SELECTOR).first
                 await box.wait_for(state='visible', timeout=60000)
             except Exception as e:
