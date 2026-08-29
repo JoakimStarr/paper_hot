@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from cnki_crawler.paths import CACHE_DIR, ensure_cache_dir
+from cnki_crawler.paths import CACHE_DIR, CNKI_STATE_FILE, ensure_cache_dir
 from cnki_crawler.parsing import CNKI_SEARCH_FIELDS
 from cnki_crawler.logging_setup import setup as _setup_logging
 from cnki_crawler.captcha_solver import probe as _probe_ocr
@@ -44,6 +44,10 @@ async def main():
                         help='年份区间，如 2024-2026（仅检索模式，按结果行年份过滤，可选）')
     parser.add_argument('--no-login-state', action='store_true',
                         help='禁用登录态复用（默认自动复用 .cache/cnki_state.json）')
+    parser.add_argument('--login', action='store_true',
+                        help='交互式登录：打开有头浏览器让用户手动登录知网，回车后保存会话态到 .cache/cnki_state.json 供后续复用')
+    parser.add_argument('--state-file', type=str, default=None,
+                        help='会话态文件路径（配合 --login 使用；默认 .cache/cnki_state.json）')
     parser.add_argument('--urls-only', action='store_true',
                         help='只收集论文 URL 写入文件，不抓详情入库（仅检索模式）')
     parser.add_argument('--urls-file', type=str, default=None,
@@ -73,6 +77,15 @@ async def main():
     parser.add_argument('--ref-detail-max', type=int, default=None,
                         help='参考文献模式：每篇最多抓多少条参考文献的详情（默认不限；先小批量试跑可设 2）')
     args = parser.parse_args()
+
+    # —— 交互式登录：--login 与 --no-login-state 语义冲突（一个要写会话态、一个禁用会话态）——
+    if args.login:
+        if args.no_login_state:
+            print("[ERROR] --login 与 --no-login-state 语义冲突，不能同时使用")
+            sys.exit(2)
+        from cnki_crawler.login import interactive_login
+        state_path = Path(args.state_file) if args.state_file else CNKI_STATE_FILE
+        sys.exit(await interactive_login(state_path))
 
     if args.detail_refs and args.detail_workers > 2:
         print("[提示] --detail-refs 开启时建议 --detail-workers ≤ 2：每个 tab 都可能翻参考文献页，请求经全局导航闸排队，并发多会更慢且更易触发风控")
