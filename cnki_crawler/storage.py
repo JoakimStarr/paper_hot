@@ -14,6 +14,7 @@ from cnki_crawler.paths import (
     PAPERS_HISTORY_FILE,
     SEARCH_CHECKPOINT_FILE,
 )
+from cnki_crawler.parsing import SKIP_KEYWORDS
 
 JOURNAL_CACHE_DAYS = 7
 PAPER_CACHE_DAYS = 30
@@ -122,19 +123,7 @@ class HistoryManager:
         if year not in papers[journal_name]:
             return []
 
-        skip_keywords = [
-            '征稿启事', '征稿', '征文', '征订', '稿约', '投稿须知', '投稿指南',
-            '总目录', '目录', '索引', '内容提要',
-            '编辑部公告', '编辑部关于', '编辑部声明', '公告', '声明', '启事', '通知', '更正', '勘误', '补遗',
-            '书评', '评介', '学院简介', '中心简介', '新书介绍', '新书评介',
-            '会议纪要', '会议综述', '会议报道', '会议简报',
-            '新闻', '消息', '简讯', '报道',
-            '广告', '致谢名单', '致谢专家', '鸣谢',
-            '卷首语', '编者按', '导读', '操作指南', '使用指南', '手册',
-            '人才招聘', '全球人才招聘', '招生', '培训', '课程', '讲座',
-            '版权声明', '著作权', '授权声明',
-            '欢迎订阅', '订阅杂志', '订购', '欢迎购买',
-        ]
+        skip_keywords = SKIP_KEYWORDS
 
         all_papers = []
         for issue_num, issue_data in papers[journal_name][year].items():

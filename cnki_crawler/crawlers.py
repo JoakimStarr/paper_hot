@@ -35,6 +35,7 @@ from cnki_crawler.pacing import (
 from cnki_crawler.parsing import (
     BASE_URL,
     SEARCH_FIELD_GROUP_MAP,
+    SKIP_KEYWORDS,
     TARGET_YEARS,
     _is_cnki_detail_url,
     _norm_title,
@@ -85,6 +86,8 @@ class JournalCrawler:
         self.captcha_solver = CaptchaSolver(thread_id=thread_id)
         # 检索结果页调试 HTML 落点（原 KeywordSearchCrawler 独有，上提后三种模式共用）
         self.debug_html = CACHE_DIR / 'debug_page1.html'
+        # SQLite 写锁：并发 worker 串行化写操作（原两处 hasattr 懒建，收拢为单例）
+        self._db_lock = asyncio.Lock()
 
     async def init_browser(self):
         """初始化浏览器"""
@@ -377,19 +380,7 @@ class JournalCrawler:
         if not catalog:
             catalog = soup.find('div', id='originalCatalogview')
 
-        skip_keywords = [
-            '征稿启事', '征稿', '征文', '征订', '稿约', '投稿须知', '投稿指南',
-            '总目录', '目录', '索引', '内容提要',
-            '编辑部公告', '编辑部关于', '编辑部声明', '公告', '声明', '启事', '通知', '更正', '勘误', '补遗',
-            '书评', '评介', '学院简介', '中心简介', '新书介绍', '新书评介',
-            '会议纪要', '会议综述', '会议报道', '会议简报',
-            '新闻', '消息', '简讯', '报道',
-            '广告', '致谢名单', '致谢专家', '鸣谢',
-            '卷首语', '编者按', '导读', '操作指南', '使用指南', '手册',
-            '人才招聘', '全球人才招聘', '招生', '培训', '课程', '讲座',
-            '版权声明', '著作权', '授权声明',
-            '欢迎订阅', '订阅杂志', '订购', '欢迎购买',
-        ]
+        skip_keywords = SKIP_KEYWORDS
 
         if catalog:
             rows = catalog.find_all('dd', class_='row')
@@ -669,19 +660,7 @@ class JournalCrawler:
                 if h1_elem:
                     title = h1_elem.get_text(strip=True)
 
-            skip_keywords = [
-                '征稿启事', '征稿', '征文', '征订', '稿约', '投稿须知', '投稿指南',
-                '总目录', '目录', '索引', '内容提要',
-                '编辑部公告', '编辑部关于', '编辑部声明', '公告', '声明', '启事', '通知', '更正', '勘误', '补遗',
-                '书评', '评介', '学院简介', '中心简介', '新书介绍', '新书评介',
-                '会议纪要', '会议综述', '会议报道', '会议简报',
-                '新闻', '消息', '简讯', '报道',
-                '广告', '致谢名单', '致谢专家', '鸣谢',
-                '卷首语', '编者按', '导读', '操作指南', '使用指南', '手册',
-                '人才招聘', '全球人才招聘', '招生', '培训', '课程', '讲座',
-                '版权声明', '著作权', '授权声明',
-                '欢迎订阅', '订阅杂志', '订购', '欢迎购买',
-            ]
+            skip_keywords = SKIP_KEYWORDS
             if any(keyword in title for keyword in skip_keywords):
                 print(f"    [线程{self.thread_id}] ✗ 跳过非论文条目: {title[:40]}...")
                 return {'error': 'filtered_non_paper'}
@@ -777,6 +756,7 @@ class JournalCrawler:
     async def _db_paper_exists(self, paper_url: str) -> bool:
         """按 URL 判断论文是否已在库中。"""
         try:
+            await self._ensure_db()
             from app.crud import PaperCRUD
             from app.database import AsyncSessionLocal
             async with AsyncSessionLocal() as db:
@@ -787,6 +767,7 @@ class JournalCrawler:
     async def _db_existing_urls(self) -> set:
         """批量获取库中全部论文 URL（详情阶段开始时调用一次，避免逐篇 roundtrip）。"""
         try:
+            await self._ensure_db()
             from app.crud import PaperCRUD
             from app.database import AsyncSessionLocal
             async with AsyncSessionLocal() as db:
@@ -802,6 +783,7 @@ class JournalCrawler:
         标题是跨入口稳定的判重键，这里一次取全量避免逐条查库。
         """
         try:
+            await self._ensure_db()
             from sqlalchemy import select
             from app.models import Paper
             from app.database import AsyncSessionLocal
@@ -815,6 +797,7 @@ class JournalCrawler:
     async def _create_crawl_log(self, journal_name: str) -> Optional[int]:
         """创建爬取日志，返回 crawl_log_id。"""
         try:
+            await self._ensure_db()
             from app.schemas import CrawlLogCreate
             from app.crud import CrawlLogCRUD
             from app.database import AsyncSessionLocal
@@ -844,8 +827,6 @@ class JournalCrawler:
     async def save_to_database(self, paper_data: dict, journal_name: str = None, year: str = None, issue: str = None):
         """异步保存到数据库"""
         # 多 worker 并发写库会撞 SQLite 写锁：实例级锁串行化写操作
-        if not hasattr(self, "_db_lock"):
-            self._db_lock = asyncio.Lock()
         async with self._db_lock:
             try:
                 import re
@@ -1071,8 +1052,6 @@ class JournalCrawler:
             [{"index": i, "text": (r.get('text') or '')[:2000], "url": r.get('url')}
              for i, r in enumerate(refs, start=1)],
             ensure_ascii=False)
-        if not hasattr(self, "_db_lock"):
-            self._db_lock = asyncio.Lock()
         async with self._db_lock:
             try:
                 await self._ensure_db()
