@@ -1185,10 +1185,34 @@ class PaperReferenceCRUD:
         return len(rows)
 
     @staticmethod
-    async def get_paper_references(db: AsyncSession, paper_url: str) -> List[PaperReference]:
+    async def get_paper_references(
+        db: AsyncSession, paper_url: str, paper_title: Optional[str] = None
+    ) -> List[PaperReference]:
+        """按 URL 取参考文献；URL 查不到时按论文标题兜底。
+
+        知网 kcms2 详情页 URL 的 v 令牌随入口/会话变化，同一论文的 papers.url
+        与参考文献任务所用 URL 可能不同；标题兜底取最近一次抓取那份
+        （同标题可能有多份历史 URL 记录，避免新旧条目混排）。
+        """
         result = await db.execute(
             select(PaperReference)
             .where(PaperReference.paper_url == paper_url)
+            .order_by(PaperReference.ref_index)
+        )
+        refs = list(result.scalars().all())
+        if refs or not (paper_title or "").strip():
+            return refs
+        latest_url = (await db.execute(
+            select(PaperReference.paper_url)
+            .where(PaperReference.paper_title == paper_title.strip())
+            .order_by(PaperReference.created_at.desc())
+            .limit(1)
+        )).scalar()
+        if not latest_url or latest_url == paper_url:
+            return []
+        result = await db.execute(
+            select(PaperReference)
+            .where(PaperReference.paper_url == latest_url)
             .order_by(PaperReference.ref_index)
         )
         return list(result.scalars().all())
