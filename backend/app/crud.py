@@ -372,8 +372,10 @@ class PaperCRUD:
         # 置顶置序（P2）：传入置顶集合时置顶论文始终排最前，置顶之间按置顶时间倒序
         # （pinned_ids 已由路由按 created_at 倒序排好）；其余按所选排序。
         if pinned_ids:
+            # case(*whens)：必须解包，否则整个元组被当成单个 when 项，
+            # 编译时把 (cond, val) 元组绑定为 SQL 参数 → 置顶 ≥2 篇后列表 500
             pinned_rank = case(
-                tuple((Paper.id == pid, idx) for idx, pid in enumerate(pinned_ids)),
+                *((Paper.id == pid, idx) for idx, pid in enumerate(pinned_ids)),
                 else_=len(pinned_ids),
             )
             query = query.order_by(pinned_rank, desc(order_col), desc(Paper.id))

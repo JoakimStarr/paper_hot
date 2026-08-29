@@ -593,6 +593,9 @@ function ReadLaterQueue({ onQueueChanged }: { onQueueChanged: () => void }) {
         <Clock className="w-4 h-4 text-amber-500" />
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('dash.readLaterTitle')}</h3>
         {papers.length > 0 && <span className="text-xs text-gray-400">{t('dash.readLaterCount', { n: papers.length })}</span>}
+        <Link href="/read-later" className="ml-auto text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+          查看全部 →
+        </Link>
       </div>
       {papers.length === 0 ? (
         <p className="text-xs text-gray-400 mt-2">{t('dash.readLaterEmpty')}</p>
@@ -1083,6 +1086,17 @@ function FollowKeywords({ version = 0 }: { version?: number }) {
     .filter((d) => !filter || d.keyword.toLowerCase().includes(filter.toLowerCase()))
     .sort((a, b) => b.count - a.count);
 
+  // 折叠：默认仅展示前 50 个高频词（已关注的始终可见），避免上百个 chips 刷屏
+  const KEYWORD_PREVIEW_LIMIT = 50;
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded
+    ? sorted
+    : [
+        ...sorted.filter((d) => keywords.includes(d.keyword)),
+        ...sorted.filter((d) => !keywords.includes(d.keyword)).slice(0, KEYWORD_PREVIEW_LIMIT),
+      ];
+  const hiddenCount = Math.max(0, sorted.length - visible.length);
+
   if (!loaded) return null;
 
   return (
@@ -1102,7 +1116,7 @@ function FollowKeywords({ version = 0 }: { version?: number }) {
         />
       )}
       <div className="flex flex-wrap gap-2">
-        {sorted.map((d) => {
+        {visible.map((d) => {
           const active = keywords.includes(d.keyword);
           return (
             <button
@@ -1125,6 +1139,14 @@ function FollowKeywords({ version = 0 }: { version?: number }) {
           <p className="text-sm text-gray-400">{t('follow.empty')}</p>
         )}
       </div>
+      {hiddenCount > 0 && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-3 text-xs text-amber-600 dark:text-amber-400 hover:underline"
+        >
+          {expanded ? '收起' : `展开其余 ${hiddenCount} 个关键词`}
+        </button>
+      )}
     </section>
   );
 }

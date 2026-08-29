@@ -707,7 +707,7 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
                     .select_from(Paper)
                     .where(
                         Paper.economics_subfield.in_(subfields),
-                        Paper.published_at >= month_start,
+                        Paper.created_at >= month_start,
                     )
                 )
             ).scalar() or 0
@@ -737,12 +737,12 @@ async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = now - timedelta(days=30)
 
-    # 速览条展示「新发表」论文数，按论文发表时间 published_at 统计
+    # 速览条展示「新收录」论文数，按入库时间 created_at 统计（期刊 published_at 有滞后，按发表统计长期为 0）
     today_count = (
         await db.execute(
             sa_select(sa_func.count())
             .select_from(Paper)
-            .where(Paper.published_at >= today_start)
+            .where(Paper.created_at >= today_start)
         )
     ).scalar() or 0
 
@@ -750,7 +750,7 @@ async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
         await db.execute(
             sa_select(sa_func.count())
             .select_from(Paper)
-            .where(Paper.published_at >= month_start)
+            .where(Paper.created_at >= month_start)
         )
     ).scalar() or 0
 
@@ -767,7 +767,7 @@ async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
                 .select_from(Paper)
                 .where(
                     Paper.economics_subfield.in_(subfields),
-                    Paper.published_at >= month_start,
+                    Paper.created_at >= month_start,
                 )
             )
         ).scalar() or 0
@@ -786,7 +786,7 @@ async def get_today_brief(
     token: bool = Depends(verify_token),
     x_user_id: str = Header(default=None),
 ):
-    """今日速览：今日/近一个月新发表论文数 + 关注子领域近一个月数（60s TTL 缓存，按用户隔离）。"""
+    """今日速览：今日/近一个月新收录论文数（created_at）+ 关注子领域近一个月数（60s TTL 缓存，按用户隔离）。"""
     uid = _uid(x_user_id)
 
     async def _compute() -> dict:
@@ -803,7 +803,7 @@ async def get_watch_new_papers(
 ):
     """关注子领域近 30 天新论文列表（工作台「新论文提醒」就地展开，替代跳搜索页重拼条件）。
 
-    与 _mine.watch_subfield_count 同口径：published_at >= 30 天前 + economics_subfield 命中
+    与 _mine.watch_subfield_count 同口径：created_at >= 30 天前 + economics_subfield 命中
     关注集合，按发表时间降序；屏蔽项与全站列表一致过滤。total 为命中总数（供「还有 N 篇」）。
     """
     uid = _uid(x_user_id)
@@ -823,7 +823,7 @@ async def get_watch_new_papers(
     cutoff = datetime.now() - timedelta(days=30)
     filters = [
         Paper.economics_subfield.in_(subfields),
-        Paper.published_at >= cutoff,
+        Paper.created_at >= cutoff,
     ]
     if hidden_cond is not None:
         filters.append(hidden_cond)
@@ -842,7 +842,7 @@ async def get_watch_new_papers(
         .options(selectinload(Paper.features), selectinload(Paper.scores))
         .join(PaperScore, PaperScore.paper_id == Paper.id)
         .where(*filters)
-        .order_by(sa_desc(Paper.published_at), sa_desc(PaperScore.final_score))
+        .order_by(sa_desc(Paper.created_at), sa_desc(PaperScore.final_score))
         .limit(limit)
     )
     papers = result.scalars().all()

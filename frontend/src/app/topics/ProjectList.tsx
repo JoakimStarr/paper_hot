@@ -7,13 +7,14 @@ import Layout from '@/components/Layout';
 import { useToast } from '@/components/Toast';
 import ConfirmModal from '@/app/system/ConfirmModal';
 import { topicsApi, papersApi, personalApi, workbenchApi } from '@/lib/api';
+import { downloadTextFile } from '@/lib/utils';
 import { reportPageContext } from '@/lib/assistantBus';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { TopicProject, ResearchGap, TrendingTopic, GapAnalysisResponse } from '@/types/paper';
 import IdeaWizard from './IdeaWizard';
 import {
   Compass, Sparkles, Loader2, Plus, Lightbulb, Flame, BookmarkCheck,
-  ChevronRight, Wand2, Trash2, ArrowRight, Brain,
+  ChevronRight, Wand2, Trash2, ArrowRight, Brain, Download,
 } from 'lucide-react';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
@@ -87,6 +88,7 @@ export default function ProjectList() {
   const [statusFilter, setStatusFilter] = useState('');
   // 删除确认（ConfirmModal 替代原生 confirm）
   const [deleteTarget, setDeleteTarget] = useState<TopicProject | null>(null);
+  const [exportingAll, setExportingAll] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const filteredProjects = useMemo(() => {
@@ -200,6 +202,55 @@ export default function ProjectList() {
       setDeleteTarget(null);
     } catch { /* ignore */ }
     finally { setDeleting(false); }
+  };
+
+  /** 一键导出全部研究项目：逐项打包为单份 markdown 研究资料包（可直接写作或投喂 AI）。 */
+  const exportAllProjects = async () => {
+    if (exportingAll || projects.length === 0) return;
+    setExportingAll(true);
+    try {
+      const details = await Promise.all(projects.map((p) => workbenchApi.getProject(p.id).catch(() => null)));
+      const parts: string[] = [`# 研究项目全集（${projects.length} 个）\n`];
+      details.forEach((d, idx) => {
+        if (!d) return;
+        const statusLabel = { to_validate: '验证中', validated: '已验证', subscribed: '已立项', abandoned: '已搁置' }[d.status] || d.status;
+        const sec: string[] = [`# ${idx + 1}. ${d.title}\n`];
+        const meta: string[] = [];
+        meta.push(`- 来源：${d.source_type || 'manual'}${d.source_ref ? `（${d.source_ref}）` : ''}｜状态：${statusLabel}｜当前步骤：第 ${d.current_step || 1}/5 步`);
+        if (d.novelty != null) meta.push(`- 新颖性 ${d.novelty}/10${d.crowding ? `｜拥挤度：${d.crowding}` : ''}${d.feasibility != null ? `｜可行性 ${d.feasibility}/10` : ''}`);
+        if (d.updated_at) meta.push(`- 更新时间：${String(d.updated_at).slice(0, 10)}`);
+        sec.push(`## 项目概览\n\n${meta.join('\n')}\n`);
+        if (d.research_questions?.length) {
+          sec.push('## 研究问题\n');
+          d.research_questions.forEach((q, i) => sec.push(`${i + 1}. ${q}`));
+          sec.push('');
+        }
+        if (d.validation_report) sec.push(`## 选题验证报告\n\n${d.validation_report}\n`);
+        if (d.overview) sec.push(`## 已有研究盘点\n\n${d.overview}\n`);
+        if (d.literature_review) sec.push(`## 文献脉络综述\n\n${d.literature_review}\n`);
+        if (d.data_insights) {
+          const di: string[] = ['## 数据与方法'];
+          (d.data_insights.data_sources || []).forEach((x: any) => di.push(`- 数据源：${x.name}${x.usage ? `：${x.usage}` : ''}`));
+          (d.data_insights.methods || []).forEach((x: any) => di.push(`- 方法：${x.name}${x.note ? `：${x.note}` : ''}`));
+          if (d.data_insights.advice) di.push(`- 建议：${d.data_insights.advice}`);
+          if (d.data_insights.my_notes) di.push(`- 我的补充：${d.data_insights.my_notes}`);
+          if (di.length > 1) sec.push(di.join('\n') + '\n');
+        }
+        if (d.proposal) sec.push(`## 选题立项书\n\n${d.proposal}\n`);
+        if (d.journal_advice) sec.push(`## 投稿期刊适配\n\n${d.journal_advice}\n`);
+        if (d.papers?.length) {
+          sec.push(`## 文献集（${d.papers.length} 篇）\n`);
+          d.papers.forEach((pp: any, i: number) => sec.push(`${i + 1}. 《${pp.title}》${pp.journal ? `（${pp.journal}）` : ''}`));
+          sec.push('');
+        }
+        parts.push(sec.join('\n---\n\n'));
+      });
+      downloadTextFile(`研究项目全集_${new Date().toISOString().slice(0, 10)}.md`, parts.join('\n\n———\n\n'), 'text/markdown;charset=utf-8');
+    } catch (e: any) {
+      toast(`导出失败：${e?.message || '未知错误'}`, 'error');
+    } finally {
+      setExportingAll(false);
+    }
   };
 
   const stepDots = (step: number) => (
@@ -388,6 +439,17 @@ export default function ProjectList() {
           我的研究项目
           <span className="text-xs font-normal text-gray-400">{projects.length}</span>
         </h2>
+        {projects.length > 0 && (
+          <button
+            onClick={exportAllProjects}
+            disabled={exportingAll}
+            title="把所有项目的验证报告、综述、立项书等打包为单份 markdown"
+            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50 transition-colors"
+          >
+            {exportingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            导出全部项目
+          </button>
+        )}
       </div>
 
       {loading ? (

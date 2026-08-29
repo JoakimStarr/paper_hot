@@ -27,5 +27,5 @@ export function usePins() {
     return togglePinStore(paperId);
   }, []);
 
-  return { ready, has, toggle };
+  return { ready, has, toggle, version: getPinsVersion() };
 }

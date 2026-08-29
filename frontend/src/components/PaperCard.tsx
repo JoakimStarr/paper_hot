@@ -203,11 +203,11 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
           </button>
           <button
             onClick={handleToggleReadLater}
-            className={`transition-colors p-1 ${queued ? 'text-amber-500 hover:text-amber-600' : 'text-gray-400 dark:text-gray-500 hover:text-amber-500'}`}
+            className={`transition-colors p-1 ${queued ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500 hover:text-amber-500'}`}
             title={queued ? t('paper.readLaterRemove') : t('paper.readLater')}
           >
             <Clock
-              className={`w-4 h-4 sm:w-5 sm:h-5 ${queued ? 'fill-amber-500 text-amber-500' : ''}`}
+              className="w-4 h-4 sm:w-5 sm:h-5"
             />
           </button>
           {quickHideOptions.length > 0 && (
@@ -324,14 +324,29 @@ function PaperCardInner({ paper, selectable, selected, onToggleSelect, read, sur
           </span>
         )}
         {paper.economics_subfield && (
-          <span className={`text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              router.push(`/search?search=${encodeURIComponent(paper.economics_subfield!)}&search_field=keyword`);
+            }}
+            title={`按「${paper.economics_subfield}」快速筛选`}
+            className={`text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded cursor-pointer hover:opacity-80 transition-opacity ${subfieldColors[paper.economics_subfield] || 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+          >
             {paper.economics_subfield}
-          </span>
+          </button>
         )}
         {paper.cnki_subject && paper.cnki_subject.split(';').filter(Boolean).slice(0, 2).map((subject, idx) => (
-          <span key={idx} className="text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
+          <button
+            key={idx}
+            onClick={(e) => {
+              e.preventDefault();
+              router.push(`/search?search=${encodeURIComponent(subject.trim())}&search_field=keyword`);
+            }}
+            title={`按「${subject.trim()}」快速筛选`}
+            className="text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300 cursor-pointer hover:opacity-80 transition-opacity"
+          >
             {subject.trim()}
-          </span>
+          </button>
         ))}
         {paper.keywords_cn?.slice(0, 2).map((keyword, index) => (
           <button

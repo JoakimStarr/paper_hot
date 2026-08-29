@@ -16,8 +16,9 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { getBookmarks } from '@/lib/cache';
 import { usePapersPage } from '@/lib/usePapersPage';
 import { usePreferences } from '@/lib/usePreferences';
+import { usePins } from '@/lib/usePins';
 import { useToast } from '@/components/Toast';
-import { papersApi, producerApi, dashboardApi, TodayBrief } from '@/lib/api';
+import { papersApi, personalApi, producerApi, dashboardApi, TodayBrief } from '@/lib/api';
 import type { PaperCard as PaperCardType } from '@/types/paper';
 import { downloadTextFile } from '@/lib/utils';
 
@@ -102,6 +103,8 @@ function HomePageInner() {
 
   // 「不感兴趣」屏蔽版本号：新增/删除屏蔽项时列表需重取（后端已在列表层过滤）
   const { version: prefVersion } = usePreferences();
+  // 置顶变化后重取列表（后端把置顶论文恒排最前）
+  const { version: pinVersion } = usePins();
 
   // —— 批量操作（P1-8 / P2-11）：多选 -> AI 综述摘要 / 引用导出 ——
   const [selectionMode, setSelectionMode] = useState(false);
@@ -152,7 +155,7 @@ function HomePageInner() {
     page, pageSize, handlePageChange, handlePageSizeChange, readIds,
   } = usePapersPage({
     buildParams,
-    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, searchQuery, searchField, prefVersion],
+    deps: [sortBy, sortOrder, minScore, selectedSubfield, selectedCnkiSubject, selectedJournal, searchQuery, searchField, prefVersion, pinVersion],
     cacheBust: prefVersion,
     prefetch: 3,
   });
@@ -167,25 +170,16 @@ function HomePageInner() {
     if (!showBookmarksOnly) { setAllPapersForBookmarks([]); return; }
     let cancelled = false;
     setBookmarksLoading(true);
-    // 并发加载所有页（上限 20 页 = 400 篇 @pageSize=20）
-    const maxPages = Math.min(totalPages, 20);
-    Promise.all(
-      Array.from({ length: maxPages }, (_, i) =>
-        papersApi.getPapers(buildParams(i + 1, pageSize))
-      )
-    ).then((results) => {
-      if (cancelled) return;
-      const merged = results.flatMap((r) => r.papers);
-      setAllPapersForBookmarks(merged);
-      setBookmarksLoading(false);
-    }).catch(() => {
-      if (!cancelled) setBookmarksLoading(false);
-    });
+    // 直连服务端收藏列表（此前按页扫描全库，大库且收藏靠后时会「筛选不出来」）
+    personalApi.getFavorites()
+      .then((res) => { if (!cancelled) setAllPapersForBookmarks(res.papers || []); })
+      .catch(() => { /* 忽略，保持空列表 */ })
+      .finally(() => { if (!cancelled) setBookmarksLoading(false); });
     return () => { cancelled = true; };
-  }, [showBookmarksOnly, buildParams, pageSize, totalPages]);
+  }, [showBookmarksOnly, prefVersion]);
 
   const displayedPapers = showBookmarksOnly
-    ? allPapersForBookmarks.filter(p => getBookmarks().includes(p.id))
+    ? allPapersForBookmarks
     : papers;
 
   // 命中数提示：仅在真实影响服务端命中的筛选/搜索激活时显示（不含纯客户端「仅看收藏」）

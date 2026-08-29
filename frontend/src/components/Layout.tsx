@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { FileText, TrendingUp, Home, Settings, Share2, WifiOff, Sun, Moon, Menu, Compass, LayoutDashboard, History, User, ChevronDown } from 'lucide-react';
+import { FileText, TrendingUp, Home, Settings, Share2, WifiOff, Sun, Moon, Menu, Compass, LayoutDashboard, History, User, ChevronDown, Clock } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { initBookmarks, initPins } from '@/lib/cache';
@@ -59,7 +59,7 @@ export default function Layout({ children }: LayoutProps) {
   const mineMenuRef = useRef<HTMLDivElement>(null);
 
   // 我的三个子页任一激活时，导航「我的」保持高亮
-  const isMineActive = ['/dashboard', '/reading', '/system'].some((p) => pathname.startsWith(p));
+  const isMineActive = ['/dashboard', '/reading', '/read-later', '/system'].some((p) => pathname.startsWith(p));
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -175,6 +175,19 @@ export default function Layout({ children }: LayoutProps) {
                     >
                       <History className="w-4 h-4" />
                       <span>{t('nav.reading')}</span>
+                    </Link>
+                    <Link
+                      href="/read-later"
+                      onMouseEnter={() => prefetchRoute('/read-later')}
+                      onClick={() => setMineMenuOpen(false)}
+                      className={`flex items-center gap-2 px-3 py-2 text-sm ${
+                        pathname.startsWith('/read-later')
+                          ? 'text-primary-600 dark:text-primary-400 font-medium bg-primary-50 dark:bg-gray-700/40'
+                          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-primary-600 dark:hover:text-primary-400'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span>{t('nav.readLater')}</span>
                     </Link>
                     <Link
                       href="/system"
