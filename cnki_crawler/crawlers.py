@@ -50,6 +50,7 @@ from cnki_crawler.storage import (
 )
 from cnki_crawler.captcha_solver import CaptchaSolver, DDDDOCR_AVAILABLE
 from cnki_crawler.browser import _launch_kwargs
+from cnki_crawler import progress
 
 # —— 详情抓取与搜索的防检测常量（原单文件脚本散落常量收敛于此）——
 MIN_DETAIL_DELAY = 0.5
@@ -972,7 +973,7 @@ class JournalCrawler:
                 seen.add(key)
                 refs.append(it)
                 new_count += 1
-            print(f"{tag} 参考文献 第 {page_no} 页获取 {len(items)} 条（新增 {new_count}），累计 {len(refs)} 条")
+            progress.emit_refs_page_progress(tag, page_no, len(items), new_count, len(refs))
             if self.max_items and len(refs) >= self.max_items:
                 print(f"{tag} 已达上限 {self.max_items} 条，停止翻页")
                 break
@@ -1050,11 +1051,12 @@ class JournalCrawler:
                             update(Paper).where(Paper.title == paper_title.strip()).values(references_cn=payload))
                     await db.commit()
                     if result.rowcount:
-                        print(f"    [线程{self.thread_id}] ✓ 参考文献已写入论文 {len(refs)} 条 -> {(paper_title or paper_url)[:60]}")
+                        progress.emit_refs_saved(f"    [线程{self.thread_id}]", len(refs),
+                                                 extra=f" -> {(paper_title or paper_url)[:60]}")
                     else:
                         print(f"    [线程{self.thread_id}] ⚠ 该论文不在库中，参考文献未保存（可先入库再抓取）: {(paper_title or paper_url)[:60]}")
             except Exception as e:
-                print(f"    [线程{self.thread_id}] ✗ 参考文献写入失败: {e}")
+                progress.emit_refs_failed(f"    [线程{self.thread_id}]", e)
                 import traceback
                 traceback.print_exc()
 
@@ -1341,11 +1343,11 @@ class JournalCrawler:
 
         # 汇总输出（按原因统计，便于定位问题）
         print(f"\n{tag} {'=' * 60}")
-        print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
-              f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+        progress.emit_detail_summary(tag, ok, total, stats['already_exists'],
+                                     stats['filtered'], stats['verify_failed'], stats['failed'])
         if getattr(self, '_refs_done', 0) or getattr(self, '_refs_failed', 0):
-            print(f"{tag} 参考文献（--detail-refs）：成功 {getattr(self, '_refs_done', 0)} 篇 | "
-                  f"失败 {getattr(self, '_refs_failed', 0)} 篇")
+            progress.emit_refs_detail_summary(tag, getattr(self, '_refs_done', 0),
+                                              getattr(self, '_refs_failed', 0))
         print(f"{tag} {'=' * 60}")
 
         # 更新各期刊爬取日志
@@ -2033,7 +2035,7 @@ class KeywordSearchCrawler(JournalCrawler):
                 page_papers = await self._collect_papers_from_rows()
                 page_papers = [p for p in page_papers if self._within_year_range(p.get('year'))]
                 all_papers.extend(page_papers)
-                print(f"{tag} 第 {page_no} 页获取 {len(page_papers)} 条，累计 {len(all_papers)} 条")
+                progress.emit_page_collected(tag, page_no, len(page_papers), len(all_papers))
                 # 每页收集完写断点：停止/崩溃后可从下一页续跑
                 _save_search_checkpoint({
                     'keyword': self.keyword, 'search_field': self.search_field,
@@ -2099,7 +2101,7 @@ class KeywordSearchCrawler(JournalCrawler):
                         break
                 page_no += 1
 
-            print(f"{tag} 共收集 {len(all_papers)} 篇待处理论文")
+            progress.emit_collected_total(tag, len(all_papers))
 
             # —— 分支：只收集 URL vs 抓详情入库 ——
             if self.urls_only:
@@ -2166,14 +2168,14 @@ class KeywordSearchCrawler(JournalCrawler):
                         pass
 
             n = max(1, self.detail_workers)
-            print(f"{tag} 详情并发数: {n}，待抓 {total} 篇（已在库跳过 {skipped}）")
+            progress.emit_detail_concurrency(tag, n, total, skipped)
             await asyncio.gather(*[detail_worker(i) for i in range(n)])
 
-            print(f"{tag} 完成：成功 {ok}/{total} 篇 | 已在库 {stats['already_exists']} | "
-                  f"被过滤 {stats['filtered']} | 验证码未过 {stats['verify_failed']} | 失败 {stats['failed']}")
+            progress.emit_detail_summary(tag, ok, total, stats['already_exists'],
+                                         stats['filtered'], stats['verify_failed'], stats['failed'])
             if getattr(self, '_refs_done', 0) or getattr(self, '_refs_failed', 0):
-                print(f"{tag} 参考文献（--detail-refs）：成功 {getattr(self, '_refs_done', 0)} 篇 | "
-                      f"失败 {getattr(self, '_refs_failed', 0)} 篇")
+                progress.emit_refs_detail_summary(tag, getattr(self, '_refs_done', 0),
+                                                  getattr(self, '_refs_failed', 0))
             _clear_search_checkpoint()
             print(f"{tag} 断点已清除")
         except Exception as e:
@@ -2306,7 +2308,7 @@ class ReferenceCrawler(KeywordSearchCrawler):
             await self.close_browser()
 
         print(f"\n{tag} {'=' * 60}")
-        print(f"{tag} 全部完成：{ok_papers}/{len(tasks)} 篇论文，共入库参考文献 {total_refs} 条")
+        progress.emit_refs_all_done(tag, ok_papers, len(tasks), total_refs)
         if total_detail_stats:
             print(f"{tag} 参考文献详情累计：入库 {total_detail_stats.get('saved', 0)} 篇，"
                   f"本地已有跳过 {total_detail_stats.get('dup_local', 0)} 条，"

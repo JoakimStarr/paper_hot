@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cnki_crawler.paths import CACHE_DIR, ensure_cache_dir
 from cnki_crawler.parsing import CNKI_SEARCH_FIELDS
+from cnki_crawler.logging_setup import setup as _setup_logging
 from cnki_crawler.captcha_solver import probe as _probe_ocr
 from cnki_crawler.crawlers import (
     KeywordSearchCrawler,
@@ -21,7 +22,9 @@ from cnki_crawler.crawlers import (
 
 
 async def main():
-    # 可选 OCR 依赖探测 + .cache 目录准备（原单文件脚本在模块顶层做，这里收口成显式调用）
+    # 行缓冲（进度面板实时）+ 统一日志前缀；原单文件脚本在模块顶层做，这里收口成显式调用
+    _setup_logging()
+    # 可选 OCR 依赖探测 + .cache 目录准备
     _probe_ocr()
     ensure_cache_dir()
     # allow_abbrev=False：杜绝 --ref-paper 这类前缀缩写被静默当作 --ref-paper-url
