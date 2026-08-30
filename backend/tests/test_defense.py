@@ -158,10 +158,15 @@ class TestDefenseStreamPersist:
             scores_idx = frames.index(scores_frame)
             assert scores_idx < frames.index(done_frames[0]), "defense_scores 必须先于 done"
 
-            # 落库：4 轴分数回填（verdict 无存储列，仅透传）
+            # 落库：4 轴分数回填（verdict 无存储列，仅透传）+ 完整记录快照一起落库
             p = await db.get(TopicProject, 1)
             assert p.novelty == 8 and p.crowding == "中" and p.feasibility == 7
             assert p.status == "validated"
+            assert p.debate_transcript is not None
+            assert p.debate_transcript["surface"] == "defense"
+            assert len(p.debate_transcript["rounds"]) == 6
+            assert p.debate_transcript["rounds"][0]["id"] == "candidate_0"
+            assert p.debate_transcript["scores"]["verdict"] == "修改后通过"
             return True
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)

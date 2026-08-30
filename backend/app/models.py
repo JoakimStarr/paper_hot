@@ -261,6 +261,10 @@ class TopicProject(Base):
     literature_review = Column(Text, nullable=True)        # Step3 文献脉络 / Step5 综述
     proposal = Column(Text, nullable=True)                 # 立项书
     journal_advice = Column(Text, nullable=True)           # 期刊适配结果
+    # 辩论/答辩完整记录快照：{surface: debate|defense, rounds: [{id,label,model,text}],
+    # scores: {novelty,crowding,feasibility,gate[,verdict]}, rounds_per_side, created_at}
+    # —— 与 validation_evidence 同理：重进步骤时随项目一起恢复，组件内存态不丢
+    debate_transcript = Column(UnicodeJSON, nullable=True)
     ai_pending = Column(String(50), nullable=True)         # 正在执行的后台 AI 任务名；空=空闲
     ai_error = Column(Text, nullable=True)                 # 最近一次 AI 任务错误信息（成功后清空）
     status = Column(String(20), default="to_validate", index=True)

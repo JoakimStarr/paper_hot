@@ -437,6 +437,7 @@ export interface TopicProject {
   status: 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
   validation_report?: string | null;
   validation_evidence?: ValidationEvidence | null;
+  debate_transcript?: DebateTranscript | null;
   search_keywords?: string[] | null;
   research_questions?: string[];
   current_step?: number;
@@ -463,6 +464,15 @@ export interface ValidationEvidence {
     recent_1y_count: number;
   } | null;
   validated_at: string;
+}
+
+/** 辩论/答辩完整记录快照：随项目一起持久化，重进步骤时恢复全文与裁决（同 validation_evidence 思路）。 */
+export interface DebateTranscript {
+  surface: 'debate' | 'defense';
+  rounds_per_side?: number;
+  rounds: Array<{ id: string; label: string; model?: string; text: string }>;
+  scores?: Record<string, unknown> | null;
+  created_at?: string;
 }
 
 export interface TopicProjectPayload {

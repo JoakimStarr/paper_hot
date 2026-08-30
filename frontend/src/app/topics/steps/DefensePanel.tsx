@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Loader2, ChevronDown, Gavel, MessageSquareText, CheckCircle2 } from 'lucide-react';
 import { streamDefenseTopic, papersApi, getLastModel, rememberModel } from '@/lib/api';
+import type { DebateTranscript } from '@/types/paper';
 import DebateModelSelect from './DebateModelSelect';
 import StreamBubble from './StreamBubble';
 
@@ -30,10 +31,11 @@ function defenseRoundMeta(roundId: string): { label: string; role: DefenseRole }
 }
 
 /** 模拟答辩（选题向导 Step5：模拟开题答辩）。自包含，仅依赖选题标题与 projectId。 */
-export default function DefensePanel({ topic, projectId, goStep }: {
+export default function DefensePanel({ topic, projectId, goStep, initialTranscript }: {
   topic: string;
   projectId?: number;
   goStep?: (n: number) => void;
+  initialTranscript?: DebateTranscript | null;
 }) {
   const [defending, setDefending] = useState(false);
   const [defenseError, setDefenseError] = useState<string | null>(null);
@@ -81,6 +83,24 @@ export default function DefensePanel({ topic, projectId, goStep }: {
       defenseScrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [defenseRounds, defending]);
+
+  // 进入时恢复上次答辩记录（全文 + 合议 + 轮数；随项目 debate_transcript 一起持久化）
+  useEffect(() => {
+    const t = initialTranscript;
+    if (!t || t.surface !== 'defense' || !t.rounds?.length) return;
+    setDefenseRounds(t.rounds.map((r) => ({
+      id: r.id,
+      label: r.label,
+      role: defenseRoundMeta(r.id).role,
+      text: r.text,
+      reasoning: '',
+      model: r.model,
+    })));
+    setDefenseScores(t.scores || null);
+    if (t.rounds_per_side) setDefenseRoundsPerSide(t.rounds_per_side);
+    // 仅在选题变化（重新挂载）时恢复一次；重新答辩由 handleDefense 覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic]);
 
   const citations = React.useMemo(() => {
     const map: Record<number, { id: string; title?: string }> = {};

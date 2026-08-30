@@ -257,7 +257,7 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi, goSte
       </div>
 
       {/* 模拟答辩（基于选题做开题答辩演练） */}
-      <DefensePanel topic={project.title} projectId={project.id} goStep={goStep} />
+      <DefensePanel topic={project.title} projectId={project.id} goStep={goStep} initialTranscript={project.debate_transcript} />
 
       {/* 期刊适配 + 引用 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800 p-4 sm:p-6">

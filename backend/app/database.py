@@ -125,6 +125,7 @@ async def init_db():
             ("journal_advice", "TEXT"),
             ("ai_pending", "VARCHAR(50)"),
             ("ai_error", "TEXT"),
+            ("debate_transcript", "TEXT"),
         ]
         for col, ddl in _tp_new_cols:
             if col not in tp_cols:

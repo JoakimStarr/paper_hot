@@ -191,6 +191,12 @@ class TestDebateStreamPersist:
             p = await db.get(TopicProject, 1)
             assert p.novelty == 7 and p.crowding == "中" and p.feasibility == 6
             assert p.status == "validated"
+            # 完整记录快照一起落库（重进步骤时随项目恢复辩论全文）
+            assert p.debate_transcript is not None
+            assert p.debate_transcript["surface"] == "debate"
+            assert len(p.debate_transcript["rounds"]) == 5
+            assert p.debate_transcript["rounds"][0]["id"] == "pro_1"
+            assert p.debate_transcript["scores"]["novelty"] == 7
             return True
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)

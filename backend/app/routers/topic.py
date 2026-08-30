@@ -783,6 +783,8 @@ class TopicProjectOut(BaseModel):
     feasibility: Optional[int] = None
     status: str
     validation_report: Optional[str] = None   # 验证报告 markdown（选题库回看决策依据）
+    validation_evidence: Optional[dict] = None
+    debate_transcript: Optional[dict] = None  # 辩论/答辩完整记录快照
     research_questions: Optional[list] = None
     current_step: Optional[int] = 1
     generated_topics: Optional[list] = None
@@ -815,6 +817,7 @@ def _project_out(p: TopicProject) -> dict:
         "status": p.status,
         "validation_report": p.validation_report,
         "validation_evidence": p.validation_evidence,
+        "debate_transcript": p.debate_transcript,
         "search_keywords": p.search_keywords or [],
         "research_questions": p.research_questions or [],
         "current_step": p.current_step or 1,
@@ -1181,6 +1184,8 @@ async def debate_topic(
 
         history: list = []  # [(轮次标签, 该轮全文), ...] 注入下一轮上下文
         debate_scores = None
+        # 完整记录快照（随项目一起落库，重进步骤恢复）
+        transcript_rounds: list = []
         # 裁决轮 JSON 头缓冲状态（同 validate 端点 :945-969）
         buf = {"text": "", "decided": False, "scores": None, "md": []}
 
@@ -1210,7 +1215,8 @@ async def debate_topic(
             # 每轮按角色取模型：pro/con 用各自模型，judge 用评审模型
             role = _side
             r_client, r_provider, r_bare = resolve_role_model(role)
-            yield _sse({"round": round_name, "model": f"{r_provider}/{r_bare}"})
+            model_str = f"{r_provider}/{r_bare}"
+            yield _sse({"round": round_name, "model": model_str})
 
             messages = debate_skill.build_messages(
                 topic, papers, stats, competition, history, round_name, rounds_per_side
@@ -1231,6 +1237,10 @@ async def debate_topic(
                         debate_scores = buf["scores"]
                         yield _sse({"debate_scores": debate_scores})
                     yield frame
+                transcript_rounds.append({
+                    "id": round_name, "label": label, "model": model_str,
+                    "text": "".join(buf["md"]),
+                })
             else:
                 round_text: list = []
 
@@ -1250,20 +1260,33 @@ async def debate_topic(
                         continue
                     yield frame
                 # 空轮兜底：模型只输出思考没输出正文时，注入提示帧避免空气泡（下一轮 meta 之前）
-                if not "".join(round_text):
-                    yield _sse({"content": "\n\n> ⚠️ 本轮模型未输出正文，已跳过。"})
-                history.append((label, "".join(round_text)))
+                text = "".join(round_text)
+                if not text:
+                    text = "\n\n> ⚠️ 本轮模型未输出正文，已跳过。"
+                    yield _sse({"content": text})
+                history.append((label, text))
+                transcript_rounds.append({
+                    "id": round_name, "label": label, "model": model_str, "text": text,
+                })
 
-        # ---- 服务端落库：裁决分数回填（仅限 to_validate；报告正文不覆盖，前端另行展示辩论全文） ----
-        if body.project_id and debate_scores is not None:
+        # ---- 服务端落库：完整记录快照 + 裁决分数回填（重进步骤时随项目一起恢复） ----
+        if body.project_id and transcript_rounds:
             try:
                 uid = _uid_from(request)
                 p = await db.get(TopicProject, body.project_id)
                 if p and p.user_id == uid:
-                    validate_skill.apply_scores(p, debate_scores)
+                    if debate_scores is not None:
+                        validate_skill.apply_scores(p, debate_scores)
+                    p.debate_transcript = {
+                        "surface": "debate",
+                        "rounds_per_side": rounds_per_side,
+                        "rounds": transcript_rounds,
+                        "scores": debate_scores,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
                     await db.commit()
-                    logger.info(f"debate scores persisted for project {body.project_id}: "
-                                f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
+                    logger.info(f"debate transcript persisted for project {body.project_id}: "
+                                f"rounds={len(transcript_rounds)}, novelty={getattr(p, 'novelty', None)}")
             except Exception as e:
                 logger.warning(f"debate server-side persist failed: {e}")
 
@@ -1341,6 +1364,7 @@ async def defense_topic(
 
         history: list = []  # [(环节标签, 该轮全文), ...]
         defense_scores = None
+        transcript_rounds: list = []
         buf = {"text": "", "decided": False, "scores": None, "md": []}
 
         def on_panel(ev: dict) -> None:
@@ -1367,7 +1391,8 @@ async def defense_topic(
         for round_name in round_sequence:
             label, role = defense_skill.round_label(round_name)
             r_client, r_provider, r_bare = resolve_role_model(role)
-            yield _sse({"round": round_name, "model": f"{r_provider}/{r_bare}"})
+            model_str = f"{r_provider}/{r_bare}"
+            yield _sse({"round": round_name, "model": model_str})
 
             messages = defense_skill.build_messages(
                 topic, papers, stats, competition, history, round_name, rounds_per_side
@@ -1387,6 +1412,10 @@ async def defense_topic(
                         defense_scores = buf["scores"]
                         yield _sse({"defense_scores": defense_scores})
                     yield frame
+                transcript_rounds.append({
+                    "id": round_name, "label": label, "model": model_str,
+                    "text": "".join(buf["md"]),
+                })
             else:
                 round_text: list = []
 
@@ -1402,20 +1431,33 @@ async def defense_topic(
                     if '"done"' in frame:
                         continue
                     yield frame
-                if not "".join(round_text):
-                    yield _sse({"content": "\n\n> ⚠️ 本环节模型未输出正文，已跳过。"})
-                history.append((label, "".join(round_text)))
+                text = "".join(round_text)
+                if not text:
+                    text = "\n\n> ⚠️ 本环节模型未输出正文，已跳过。"
+                    yield _sse({"content": text})
+                history.append((label, text))
+                transcript_rounds.append({
+                    "id": round_name, "label": label, "model": model_str, "text": text,
+                })
 
-        # ---- 服务端落库：合议分数回填（verdict 随 JSON 头透传，无存储列） ----
-        if body.project_id and defense_scores is not None:
+        # ---- 服务端落库：完整记录快照 + 合议分数回填（verdict 随 JSON 头透传，无存储列） ----
+        if body.project_id and transcript_rounds:
             try:
                 uid = _uid_from(request)
                 p = await db.get(TopicProject, body.project_id)
                 if p and p.user_id == uid:
-                    validate_skill.apply_scores(p, defense_scores)
+                    if defense_scores is not None:
+                        validate_skill.apply_scores(p, defense_scores)
+                    p.debate_transcript = {
+                        "surface": "defense",
+                        "rounds_per_side": rounds_per_side,
+                        "rounds": transcript_rounds,
+                        "scores": defense_scores,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
                     await db.commit()
-                    logger.info(f"defense scores persisted for project {body.project_id}: "
-                                f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
+                    logger.info(f"defense transcript persisted for project {body.project_id}: "
+                                f"rounds={len(transcript_rounds)}, novelty={getattr(p, 'novelty', None)}")
             except Exception as e:
                 logger.warning(f"defense server-side persist failed: {e}")
 

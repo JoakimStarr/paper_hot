@@ -154,6 +154,24 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
+  // 进入步骤时恢复辩论记录（全文 + 裁决 + 轮数；与 validation_evidence 同理，组件内存态不丢）
+  useEffect(() => {
+    const t = project.debate_transcript;
+    if (!t || t.surface !== 'debate' || !t.rounds?.length) return;
+    setDebateRounds(t.rounds.map((r) => ({
+      id: r.id,
+      label: r.label,
+      side: debateRoundMeta(r.id).side,
+      text: r.text,
+      reasoning: '',
+      model: r.model,
+    })));
+    setDebateScores(t.scores || null);
+    if (t.rounds_per_side) setDebateRoundsPerSide(t.rounds_per_side);
+    // 仅在进入该步骤（项目切换）时恢复一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
+
   const handleValidate = async () => {
     const topic = project.title.trim();
     if (!topic || validating) return;
