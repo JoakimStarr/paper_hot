@@ -2,12 +2,12 @@
 
 import React, { useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { FileText, Loader2, Sparkles, Building2, Download, BookMarked, RefreshCw, MessageSquareText } from 'lucide-react';
+import { FileText, Loader2, Sparkles, Building2, Download, BookMarked, RefreshCw } from 'lucide-react';
 import { workbenchApi, producerApi } from '@/lib/api';
 import { openAssistant } from '@/lib/assistantBus';
 import { downloadTextFile, downloadAsWord } from '@/lib/utils';
 import type { StepProps } from './types';
-import AssistantChatBox from '@/components/AssistantChatBox';
+import DefensePanel from './DefensePanel';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -256,24 +256,8 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi, goSte
         )}
       </div>
 
-      {/* 模拟答辩（内嵌 AI 对话：直连后端流式，候选人/评委/合议由模型自主呈现，可追问） */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-emerald-200 dark:border-emerald-800 p-4 sm:p-6">
-        <AssistantChatBox
-          title="模拟答辩"
-          subtitle="模拟开题答辩 · 自述 + 质询 + 合议"
-          page="topics"
-          contextText={project.title}
-          autoPrompt={`请为选题「${project.title}」模拟一场开题答辩：
-1. 以候选人身份自述研究设计（研究问题/方法/数据/创新点）；
-2. 以评委身份质询 2 轮（新颖性差异、识别策略、数据可得性、竞争状况）；
-3. 候选人逐一应答；
-4. 最后合议裁定：新颖性/拥挤度/可行性/门控 4 项评分 + 结论（通过/修改后通过/不通过）+ 修改意见。
-涉及论文库数据请先用工具检索并基于结果作答。`}
-          startLabel="开始答辩"
-          accentBtn="bg-emerald-600 hover:bg-emerald-700"
-          icon={<MessageSquareText className="w-4 h-4 text-emerald-600" />}
-        />
-      </div>
+      {/* 模拟答辩（基于选题做开题答辩演练） */}
+      <DefensePanel topic={project.title} projectId={project.id} goStep={goStep} initialTranscript={project.debate_transcript} />
 
       {/* 期刊适配 + 引用 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800 p-4 sm:p-6">

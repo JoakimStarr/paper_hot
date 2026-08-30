@@ -2,18 +2,52 @@
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel } from 'lucide-react';
-import { streamValidateTopic } from '@/lib/api';
+import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel, MessageSquareText } from 'lucide-react';
+import { streamValidateTopic, streamDebateTopic, papersApi, getLastModel } from '@/lib/api';
 import { parseValidationScores } from '@/lib/topicReport';
 import { openAssistant } from '@/lib/assistantBus';
 import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
 import type { StepProps } from './types';
-import AssistantChatBox from '@/components/AssistantChatBox';
+import DebateModelSelect from './DebateModelSelect';
+import StreamBubble from './StreamBubble';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
   loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
 });
+
+type DebateSide = 'pro' | 'con' | 'judge';
+
+interface DebateRound {
+  id: string;
+  label: string;
+  side: DebateSide;
+  text: string;
+  reasoning: string;
+  model?: string;
+}
+
+// 默认五轮（每方 2 轮）的展示标签（与后端 skills/debate.py 对齐）
+const DEBATE_ROUNDS: Record<string, { label: string; side: DebateSide }> = {
+  pro_1: { label: '正方陈述', side: 'pro' },
+  con_1: { label: '反方反驳', side: 'con' },
+  pro_2: { label: '正方再回应', side: 'pro' },
+  con_2: { label: '反方再回应', side: 'con' },
+  judge: { label: '评审裁决', side: 'judge' },
+};
+
+// 多轮自适应标签（后端 build_round_sequence 可产生 pro_3/con_3 等）
+function debateRoundMeta(roundId: string): { label: string; side: DebateSide } {
+  const known = DEBATE_ROUNDS[roundId];
+  if (known) return known;
+  const m = /^(pro|con)_(\d+)$/.exec(roundId);
+  if (m) {
+    const i = Number(m[2]);
+    if (m[1] === 'pro') return { label: i === 1 ? '正方陈述' : `正方第${i}轮`, side: 'pro' };
+    return { label: i === 1 ? '反方反驳' : `反方第${i}轮`, side: 'con' };
+  }
+  return { label: roundId || '辩论', side: 'pro' };
+}
 
 export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   const [validating, setValidating] = useState(false);
@@ -34,6 +68,56 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   const [useTools, setUseTools] = useState(true);
   const [toolProgress, setToolProgress] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+
+  // —— 选题评估辩论状态 ——
+  const [debating, setDebating] = useState(false);
+  const [debateError, setDebateError] = useState<string | null>(null);
+  const [debateRounds, setDebateRounds] = useState<DebateRound[]>([]);
+  const [debateScores, setDebateScores] = useState<Record<string, unknown> | null>(null);
+  const debateAbortRef = useRef<AbortController | null>(null);
+  // onContent/onReasoning 传「全局累积全文」，用前缀差取当前轮增量
+  const debateFullTextRef = useRef('');
+  const debateReasoningRef = useRef('');
+  // 辩论设置：每方轮数、按角色模型（'provider/model'，''=默认）、统一模型开关
+  const [debateRoundsPerSide, setDebateRoundsPerSide] = useState(2);
+  const [debateModels, setDebateModels] = useState<Record<'pro' | 'con' | 'judge', string>>({ pro: '', con: '', judge: '' });
+  const [debateUnified, setDebateUnified] = useState(false);
+  const [debateUnifiedModel, setDebateUnifiedModel] = useState('');
+  const [debateAiModels, setDebateAiModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [debateSettingsOpen, setDebateSettingsOpen] = useState(true);
+  const debateScrollRef = useRef<HTMLDivElement | null>(null);
+  // 先配置后开跑：辩论 Tab 展开后调好轮数/模型，点「开始辩论」才启动
+  const [step2Tab, setStep2Tab] = useState<'validate' | 'debate'>('validate');
+
+  // 加载可用模型列表 + 恢复辩论/答辩各角色的模型记忆
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await papersApi.getAIAnalysisModels();
+        const bare = (n: string) => (n.includes('/') ? n.split('/').slice(1).join('/') : n);
+        const list = (res.models || [])
+          .filter((m) => m.available)
+          .map((m) => ({ id: m.name, label: `${m.provider ? `${m.provider} · ` : ''}${bare(m.name)}` }));
+        if (cancelled) return;
+        setDebateAiModels(list);
+        const restored: Record<'pro' | 'con' | 'judge', string> = { pro: '', con: '', judge: '' };
+        (['pro', 'con', 'judge'] as const).forEach((role) => {
+          const last = getLastModel(`debate_${role}`);
+          if (last && list.some((m) => m.id === last)) restored[role] = last;
+        });
+        setDebateModels(restored);
+      } catch { /* 模型列表加载失败：仍可用默认模型 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 自动滚动到最新一轮
+  useEffect(() => {
+    if (debating && debateScrollRef.current) {
+      debateScrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [debateRounds, debating]);
 
   const hasReport = !!(project.validation_report || reportContent);
 
@@ -67,6 +151,24 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     setRetrievedMode(lastEvidence.mode || '');
     if (lastEvidence.competition) setCompetition(lastEvidence.competition);
     // 仅在进入该步骤（项目切换）时恢复一次；重新验证由流式回调解覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id]);
+
+  // 进入步骤时恢复辩论记录（全文 + 裁决 + 轮数；与 validation_evidence 同理，组件内存态不丢）
+  useEffect(() => {
+    const t = project.debate_transcript;
+    if (!t || t.surface !== 'debate' || !t.rounds?.length) return;
+    setDebateRounds(t.rounds.map((r) => ({
+      id: r.id,
+      label: r.label,
+      side: debateRoundMeta(r.id).side,
+      text: r.text,
+      reasoning: '',
+      model: r.model,
+    })));
+    setDebateScores(t.scores || null);
+    if (t.rounds_per_side) setDebateRoundsPerSide(t.rounds_per_side);
+    // 仅在进入该步骤（项目切换）时恢复一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 
@@ -147,11 +249,127 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     setValidating(false);
   };
 
+  const handleDebateAbort = () => {
+    debateAbortRef.current?.abort();
+    setDebating(false);
+  };
+
+  const handleDebate = async () => {
+    const topic = project.title.trim();
+    if (!topic || debating) return;
+    setDebating(true);
+    setDebateError(null);
+    setDebateRounds([]);
+    setDebateScores(null);
+    debateFullTextRef.current = '';
+    debateReasoningRef.current = '';
+    const controller = new AbortController();
+    debateAbortRef.current = controller;
+    let metaPapers: RetrievedPaper[] = [];
+    let metaMode = '';
+    let metaCompetition: ValidationEvidence['competition'] = null;
+    // 按角色模型载荷（统一开关时三键同值；'' 默认项省略，走全局默认）
+    const modelsPayload: Record<string, string> = {};
+    if (debateUnified) {
+      if (debateUnifiedModel) {
+        modelsPayload.pro = debateUnifiedModel;
+        modelsPayload.con = debateUnifiedModel;
+        modelsPayload.judge = debateUnifiedModel;
+      }
+    } else {
+      (['pro', 'con', 'judge'] as const).forEach((role) => {
+        if (debateModels[role]) modelsPayload[role] = debateModels[role];
+      });
+    }
+    await streamDebateTopic(
+      topic,
+      project.id,
+      {
+        onContent: (text) => {
+          const delta = text.slice(debateFullTextRef.current.length);
+          debateFullTextRef.current = text;
+          if (!delta) return;
+          setDebateRounds((prev) => {
+            const arr = [...prev];
+            const last = arr[arr.length - 1];
+            if (!last) return arr; // 首个 round 元帧到达前丢弃正文增量
+            arr[arr.length - 1] = { ...last, text: last.text + delta };
+            return arr;
+          });
+        },
+        onReasoning: (text) => {
+          const delta = text.slice(debateReasoningRef.current.length);
+          debateReasoningRef.current = text;
+          if (!delta) return;
+          setDebateRounds((prev) => {
+            const arr = [...prev];
+            const last = arr[arr.length - 1];
+            if (!last) return arr;
+            arr[arr.length - 1] = { ...last, reasoning: (last.reasoning || '') + delta };
+            return arr;
+          });
+        },
+        onMeta: (data) => {
+          if (!data || typeof data !== 'object') return;
+          const d = data as Record<string, unknown>;
+          if ('round' in d) {
+            const roundId = String(d.round ?? '');
+            const meta = debateRoundMeta(roundId);
+            const model = typeof d.model === 'string' ? d.model : undefined;
+            setDebateRounds((prev) => [...prev, { id: roundId, label: meta.label, side: meta.side, text: '', reasoning: '', model }]);
+          } else if ('debate_scores' in d) {
+            setDebateScores((d.debate_scores as Record<string, unknown>) || null);
+          } else if ('papers' in d) {
+            const p = d.papers as any[];
+            metaPapers = Array.isArray(p) ? p : [];
+            metaMode = typeof d.mode === 'string' ? d.mode : '';
+            metaCompetition = (d as any).stats?.competition || null;
+            setRetrievedPapers(metaPapers);
+            setRetrievedMode(metaMode);
+            if (metaCompetition) setCompetition(metaCompetition);
+          }
+        },
+        onDone: () => {
+          setDebating(false);
+        },
+        onError: (msg) => {
+          setDebateError(msg);
+          setDebating(false);
+        },
+      },
+      controller.signal,
+      debateRoundsPerSide,
+      modelsPayload,
+    );
+  };
+
   // 验证用的初始报告：优先当前流式内容，其次项目已保存的
   const displayReport = reportContent || project.validation_report || '';
 
   return (
     <div className="space-y-5">
+      {/* Tab：选题验证 | 进阶评估·辩论 */}
+      <div className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1 w-fit">
+        {([
+          { key: 'validate', label: '选题验证' },
+          { key: 'debate', label: '进阶评估 · 辩论' },
+        ] as const).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setStep2Tab(t.key)}
+            className={`px-3.5 py-1.5 text-sm rounded-md transition-colors ${
+              step2Tab === t.key
+                ? 'bg-primary-600 text-white font-medium'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {step2Tab === 'validate' && (
+      <>
       {/* 验证操作区 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -303,7 +521,183 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
           </div>
         )}
       </div>
+      </>
+      )}
 
+      {step2Tab === 'debate' && (
+      <>
+      {/* 选题辩论：正方/反方各 N 轮（左右双栏）+ 评审裁决（跨栏居中） */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-violet-200 dark:border-violet-800 p-4 sm:p-6">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
+              <MessageSquareText className="w-4 h-4 text-violet-600" /> 选题辩论
+              <span className="text-[11px] font-normal text-gray-400">
+                正反交锋 · 基于论文库证据 · 每方 {debateRoundsPerSide} 轮
+              </span>
+            </h3>
+            {debating && (
+              <span className="inline-flex items-center gap-1 text-xs text-violet-600 dark:text-violet-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> 辩论进行中…
+              </span>
+            )}
+          </div>
+
+          {/* 辩论设置（可折叠） */}
+          <div className="mb-3">
+            <button
+              onClick={() => setDebateSettingsOpen((v) => !v)}
+              className="flex items-center gap-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            >
+              <Gavel className="w-3 h-3" /> 辩论设置
+              <ChevronDown className={`w-3 h-3 transition-transform ${debateSettingsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {debateSettingsOpen && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-600 p-3">
+                {/* 每方轮数 */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">每方轮数</span>
+                  <div className="inline-flex rounded-md border border-gray-200 dark:border-gray-600 overflow-hidden">
+                    {[1, 2, 3].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setDebateRoundsPerSide(n)}
+                        disabled={debating}
+                        className={`px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${
+                          debateRoundsPerSide === n
+                            ? 'bg-violet-600 text-white'
+                            : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 统一模型快捷开关 */}
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none" title="所有角色用同一个模型">
+                  <input
+                    type="checkbox"
+                    checked={debateUnified}
+                    onChange={(e) => setDebateUnified(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-violet-600"
+                  />
+                  统一使用同一模型
+                </label>
+                {/* 模型选择：统一开关时单个下拉，否则三角色各一个 */}
+                {debateUnified ? (
+                  <DebateModelSelect
+                    roleLabel="模型"
+                    memKey="debate_unified"
+                    value={debateUnifiedModel}
+                    models={debateAiModels}
+                    onChange={setDebateUnifiedModel}
+                  />
+                ) : (
+                  <>
+                    <DebateModelSelect roleLabel="正方" memKey="debate_pro" value={debateModels.pro} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, pro: v }))} />
+                    <DebateModelSelect roleLabel="反方" memKey="debate_con" value={debateModels.con} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, con: v }))} />
+                    <DebateModelSelect roleLabel="评审" memKey="debate_judge" value={debateModels.judge} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, judge: v }))} />
+                  </>
+                )}
+                {/* 先配置后开跑：调好轮数/模型后点此启动 */}
+                {!debating && (
+                  <button
+                    onClick={handleDebate}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs rounded-lg transition-colors ml-auto"
+                  >
+                    <Gavel className="w-3.5 h-3.5" /> 开始辩论（{debateRoundsPerSide} 轮）
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
+
+          {/* 左右双栏：正方 / 反方，评审跨栏居中 */}
+          {(() => {
+            const proRounds = debateRounds.filter((r) => r.side === 'pro');
+            const conRounds = debateRounds.filter((r) => r.side === 'con');
+            const judgeRounds = debateRounds.filter((r) => r.side === 'judge');
+            const isLatest = (r: DebateRound) => debateRounds[debateRounds.length - 1]?.id === r.id;
+
+            const colorCls = (side: DebateSide) =>
+              side === 'pro'
+                ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
+                : side === 'con'
+                  ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
+                  : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
+
+            // StreamBubble：流式中纯文本逐 token 渲染，结束后切 Markdown；
+            // React.memo 保证增量只重渲染当前轮（已完成轮次不重解析 markdown）
+            const bubble = (r: DebateRound) => (
+              <StreamBubble key={r.id} r={r} colorCls={colorCls(r.side)} streaming={debating && isLatest(r)} citations={citations} />
+            );
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-5 gap-y-4">
+                {/* 正方列 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" /> 正方 · 支持
+                  </div>
+                  {proRounds.length === 0 && debating && (
+                    <div className="text-xs text-gray-400 animate-pulse">正方尚未发言…</div>
+                  )}
+                  {proRounds.map(bubble)}
+                </div>
+                {/* 反方列 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-red-600 dark:text-red-400">
+                    <span className="w-2 h-2 rounded-full bg-red-500" /> 反方 · 质疑
+                  </div>
+                  {conRounds.length === 0 && debating && (
+                    <div className="text-xs text-gray-400 animate-pulse">反方尚未发言…</div>
+                  )}
+                  {conRounds.map(bubble)}
+                </div>
+                {/* 评审轮：跨栏居中 */}
+                {judgeRounds.length > 0 && (
+                  <div className="lg:col-span-2 space-y-3">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
+                      <Gavel className="w-3 h-3" /> 评审裁决
+                    </div>
+                    <div className="max-w-2xl mx-auto">{judgeRounds.map(bubble)}</div>
+                  </div>
+                )}
+                <div ref={debateScrollRef} className="lg:col-span-2" />
+              </div>
+            );
+          })()}
+
+          {/* 裁决分数（复用 validate 评分轴；前端解析展示，服务端已落库） */}
+          {debateScores && !debating && (
+            <div className="mt-4 flex items-center gap-2 flex-wrap bg-violet-50 dark:bg-violet-900/15 border border-violet-200 dark:border-violet-800/60 rounded-lg p-3">
+              <CheckCircle2 className="w-4 h-4 text-violet-600 shrink-0" />
+              <span className="text-xs text-violet-700 dark:text-violet-300">
+                裁决
+                {debateScores.novelty != null && <> · 新颖性 <strong>{String(debateScores.novelty)}/10</strong></>}
+                {!!debateScores.crowding && <> · 拥挤度 <strong>{String(debateScores.crowding)}</strong></>}
+                {debateScores.feasibility != null && <> · 可行性 <strong>{String(debateScores.feasibility)}/10</strong></>}
+                {!!debateScores.gate && <> · 门控 <strong>{String(debateScores.gate)}</strong></>}
+              </span>
+              <button onClick={() => goStep(1)} className="text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline">
+                带着结论去改题 →
+              </button>
+              <button onClick={() => goStep(3)} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+                去第 3 步召回文献 →
+              </button>
+            </div>
+          )}
+        </div>
+      </>
+      )}
+
+      {step2Tab === 'validate' && (
+      <>
       {/* 验证报告 */}
       {hasReport && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
@@ -329,11 +723,6 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
           </div>
           {reportError ? (
             <div className="text-sm text-red-500 py-2">{reportError}</div>
-          ) : validating ? (
-            // 流式中用纯文本渲染（逐 token 零 markdown 开销），结束后再切 Markdown 成文
-            <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-300 min-h-[2em]">
-              {reportContent || '…'}
-            </div>
           ) : (
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <MarkdownRenderer content={displayReport || '...'} citations={citations} />
@@ -371,25 +760,8 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
           </button>
         </div>
       )}
-
-      {/* 进阶评估 · 辩论（内嵌 AI 对话：直连后端流式，正方/反方/评审由模型自主呈现，可追问） */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-violet-200 dark:border-violet-800 p-4 sm:p-6">
-        <AssistantChatBox
-          title="进阶评估 · 辩论"
-          subtitle="正反交锋 + 评审裁决"
-          page="topics"
-          contextText={project.title}
-          autoPrompt={`请对选题「${project.title}」发起一场正方/反方辩论并给出评审裁决：
-1. 正方陈述：论证该选题的研究价值、可行性与创新空位；
-2. 反方反驳：质疑其与最相似文献的实质重合、竞争拥挤度、数据与方法可行性；
-3. 正方再回应、反方再质疑（各两轮交锋）；
-4. 最后以评审身份裁决：新颖性/拥挤度/可行性/门控 4 项评分 + 结论（可做/修改后做/放弃）+ 2-3 条条件建议。
-涉及论文库数据请先用工具检索并基于结果作答，引用检索到的论文用 [编号]。`}
-          startLabel="开始辩论"
-          accentBtn="bg-violet-600 hover:bg-violet-700"
-          icon={<Gavel className="w-4 h-4 text-violet-600" />}
-        />
-      </div>
+      </>
+      )}
     </div>
   );
 }

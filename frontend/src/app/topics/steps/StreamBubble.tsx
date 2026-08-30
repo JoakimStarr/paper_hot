@@ -1,0 +1,75 @@
+'use client';
+
+import React from 'react';
+import dynamic from 'next/dynamic';
+import { Loader2 } from 'lucide-react';
+
+const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
+  ssr: false,
+  loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
+});
+
+export interface StreamBubbleData {
+  id: string;
+  label: string;
+  text: string;
+  reasoning: string;
+  model?: string;
+}
+
+/**
+ * 流式气泡（辩论/答辩共用）：
+ * - 流式进行中（streaming=true）用**纯文本**渲染正文——逐 token 零开销，
+ *   避免每个增量都重解析 markdown 造成卡顿/看似非流式；
+ * - 流式结束后（streaming=false）才切 MarkdownRenderer 渲染成文；
+ * - 用 React.memo：已完成轮次的 r 对象不再变化，增量更新只重渲染当前轮。
+ */
+function StreamBubbleImpl({ r, colorCls, streaming, citations }: {
+  r: StreamBubbleData;
+  colorCls: string;
+  streaming: boolean;
+  citations?: Record<number, { id: string; title?: string }>;
+}) {
+  return (
+    <div className={`rounded-lg border p-3 transition-all duration-300 ${colorCls}`}>
+      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{r.label}</span>
+        {r.model && (
+          <span className="text-[10px] px-1.5 py-px rounded bg-white/70 dark:bg-gray-700/70 text-gray-400 font-mono">
+            {r.model.split('/').pop()}
+          </span>
+        )}
+        {streaming && !r.text && (
+          <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            {r.reasoning ? '思考中，即将成文…' : '思考中…'}
+          </span>
+        )}
+      </div>
+
+      {/* 思考过程：流式滚入（原生 details 折叠；流式中的当前轮默认展开） */}
+      {r.reasoning && (
+        <details className="mb-1.5" open={streaming}>
+          <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">思考过程</summary>
+          <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
+            {r.reasoning}
+          </div>
+        </details>
+      )}
+
+      {/* 流式中：纯文本逐 token 更新；结束后：Markdown 成文 */}
+      {streaming ? (
+        <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-300 min-h-[1em]">
+          {r.text || (r.reasoning ? '' : '…')}
+        </div>
+      ) : (
+        <div className="prose prose-sm dark:prose-invert max-w-none">
+          <MarkdownRenderer content={r.text || ''} citations={citations} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const StreamBubble = React.memo(StreamBubbleImpl);
+export default StreamBubble;

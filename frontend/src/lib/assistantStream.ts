@@ -32,6 +32,64 @@ export interface AssistantStreamEvent {
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
 
+/**
+ * 通用直连后端 SSE（任意后端路径）。
+ *
+ * 与 streamChat（走 /api 代理，Next dev 会 gzip 缓冲）不同：直连 `BACKEND_URL/api{path}`，
+ * 保证浏览器真正逐字流式。每个 SSE 帧 `data: {...}` 原样回调（round/debate_scores/papers
+ * 等元帧也透传，由调用方路由到 onMeta）。
+ */
+export async function streamDirectSSE(
+  path: string,
+  body: Record<string, unknown>,
+  onEvent: (data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${ASSISTANT_BACKEND_URL}/api${path}`, {
+    method: 'POST',
+    headers: assistantHeaders(),
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const err: unknown = await res.json();
+      if (err && typeof err === 'object' && typeof (err as { detail?: unknown }).detail === 'string') {
+        detail = (err as { detail: string }).detail;
+      }
+    } catch { /* 忽略解析失败 */ }
+    onEvent({ error: detail });
+    return;
+  }
+  if (!res.body) {
+    onEvent({ error: '响应无内容' });
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)) as Record<string, unknown>);
+        } catch { /* 忽略单条解析失败 */ }
+      }
+    }
+  } catch (e: unknown) {
+    if ((e as Error).name !== 'AbortError') throw e;
+    return;
+  }
+  onEvent({ done: true });
+}
+
 /** 直连后端 POST /api/assistant/chat 的 SSE 流式读取（逐帧解析 content/reasoning/tool_progress/tools/usage/error/done）。 */
 export async function streamAssistantDirect(
   sessionId: number,
