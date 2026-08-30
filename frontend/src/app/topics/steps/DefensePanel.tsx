@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Loader2, ChevronDown, Gavel, MessageSquareText, CheckCircle2 } from 'lucide-react';
+import { Loader2, ChevronDown, Gavel, MessageSquareText, CheckCircle2, User } from 'lucide-react';
 import { streamDefenseTopic, papersApi, getLastModel, rememberModel } from '@/lib/api';
 import type { DebateTranscript } from '@/types/paper';
 import DebateModelSelect from './DebateModelSelect';
@@ -29,6 +29,19 @@ function defenseRoundMeta(roundId: string): { label: string; role: DefenseRole }
   if (roundId === 'panel') return { label: '合议裁定', role: 'panel' };
   return { label: roundId || '答辩', role: 'panel' };
 }
+
+// 答辩角色头像（聊天窗口式）
+function defenseAvatar(role: DefenseRole): React.ReactNode {
+  if (role === 'candidate') {
+    return <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center"><User className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /></div>;
+  }
+  if (role === 'examiner') {
+    return <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center"><Gavel className="w-4 h-4 text-amber-600 dark:text-amber-400" /></div>;
+  }
+  return <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center"><Gavel className="w-4 h-4 text-violet-600 dark:text-violet-400" /></div>;
+}
+
+const DEFENSE_ROLE_LABELS: Record<DefenseRole, string> = { candidate: '候选人', examiner: '评委', panel: '合议' };
 
 /** 模拟答辩（选题向导 Step5：模拟开题答辩）。自包含，仅依赖选题标题与 projectId。 */
 export default function DefensePanel({ topic, projectId, goStep, initialTranscript }: {
@@ -206,7 +219,16 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
 
   // StreamBubble：流式中纯文本逐 token 渲染，结束后切 Markdown；增量只重渲染当前轮
   const bubble = (r: DefenseRound) => (
-    <StreamBubble key={r.id} r={r} colorCls={colorCls(r.role)} streaming={defending && isLatest(r)} citations={citations} />
+    <StreamBubble
+      key={r.id}
+      r={r}
+      colorCls={colorCls(r.role)}
+      streaming={defending && isLatest(r)}
+      citations={citations}
+      avatar={defenseAvatar(r.role)}
+      avatarSide={r.role === 'examiner' ? 'right' : 'left'}
+      sideLabel={DEFENSE_ROLE_LABELS[r.role]}
+    />
   );
 
   return (

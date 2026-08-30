@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel, MessageSquareText } from 'lucide-react';
+import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel, MessageSquareText, User } from 'lucide-react';
 import { streamValidateTopic, streamDebateTopic, papersApi, getLastModel } from '@/lib/api';
 import { parseValidationScores } from '@/lib/topicReport';
 import { openAssistant } from '@/lib/assistantBus';
@@ -48,6 +48,19 @@ function debateRoundMeta(roundId: string): { label: string; side: DebateSide } {
   }
   return { label: roundId || '辩论', side: 'pro' };
 }
+
+// 辩论角色头像（聊天窗口式）
+function debateAvatar(side: DebateSide): React.ReactNode {
+  if (side === 'pro') {
+    return <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center"><User className="w-4 h-4 text-blue-600 dark:text-blue-400" /></div>;
+  }
+  if (side === 'con') {
+    return <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/40 flex items-center justify-center"><User className="w-4 h-4 text-red-600 dark:text-red-400" /></div>;
+  }
+  return <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center"><Gavel className="w-4 h-4 text-violet-600 dark:text-violet-400" /></div>;
+}
+
+const DEBATE_SIDE_LABELS: Record<DebateSide, string> = { pro: '正方', con: '反方', judge: '评委' };
 
 export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   const [validating, setValidating] = useState(false);
@@ -617,7 +630,7 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
 
           {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
 
-          {/* 对话流：正方左 / 反方右 / 评审居中（聊天窗口式） */}
+          {/* 对话流：正方左 / 反方右 / 评委左（聊天窗口式，带头像与正反方标识） */}
           <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
             {debateRounds.length === 0 && debating && (
               <div className="text-xs text-gray-400 animate-pulse">正方正在陈述…</div>
@@ -631,9 +644,17 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
                     : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
               const isLatest = debateRounds[debateRounds.length - 1]?.id === r.id;
               return (
-                <div key={r.id} className={`flex ${r.side === 'con' ? 'justify-end' : r.side === 'judge' ? 'justify-center' : 'justify-start'}`}>
-                  <div className={r.side === 'judge' ? 'w-full max-w-2xl' : 'max-w-[85%]'}>
-                    <StreamBubble r={r} colorCls={colorCls} streaming={debating && isLatest} citations={citations} />
+                <div key={r.id} className={`flex ${r.side === 'con' ? 'justify-end' : 'justify-start'}`}>
+                  <div className="max-w-[85%]">
+                    <StreamBubble
+                      r={r}
+                      colorCls={colorCls}
+                      streaming={debating && isLatest}
+                      citations={citations}
+                      avatar={debateAvatar(r.side)}
+                      avatarSide={r.side === 'con' ? 'right' : 'left'}
+                      sideLabel={DEBATE_SIDE_LABELS[r.side]}
+                    />
                   </div>
                 </div>
               );
