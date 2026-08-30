@@ -183,7 +183,7 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   // 进入步骤时恢复辩论记录（全文 + 裁决 + 轮数；与 validation_evidence 同理，组件内存态不丢）
   useEffect(() => {
     const t = project.debate_transcript;
-    if (!t || t.surface !== 'debate' || !t.rounds?.length) return;
+    if (!t || t.surface !== 'debate' || !t.rounds?.length || debating) return;
     setDebateRounds(t.rounds.map((r) => ({
       id: r.id,
       label: r.label,
@@ -195,9 +195,10 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     setDebateScores(t.scores || null);
     if (t.rounds_per_side) setDebateRoundsPerSide(t.rounds_per_side);
     setDebateRestored(true); // 标记为历史记录，非实时 AI 输出
-    // 仅在进入该步骤（项目切换）时恢复一次
+    setStep2Tab('debate');   // 有历史记录时默认切到辩论 Tab 展示
+    // 仅在进入该步骤（项目切换）或记录更新时恢复一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id]);
+  }, [project.id, project.debate_transcript]);
 
   const handleValidate = async () => {
     const topic = project.title.trim();
