@@ -769,50 +769,7 @@ export function streamValidateTopic(
 }
 
 /**
- * 选题评估辩论（SSE 流式）：正方/反方各 roundsPerSide 轮 + 评审裁决。
- * projectId 可选：提供时裁决分数（novelty/crowding/feasibility/gate）由服务端落库。
- * models 可选：按角色指定模型（键 pro/con/judge，值 'provider/model'），缺省角色跟随全局默认。
- * SSE 帧约定：{"round": "pro_1|...|judge", "model": "provider/bare"} 开新轮次并标注模型；
- * {"debate_scores": {...}} 裁决分数（先于 done 帧）；content 为当前轮次正文增量。
- */
-export function streamDebateTopic(
-  topic: string,
-  projectId: number | undefined,
-  cb: ChatStreamCallbacks,
-  signal?: AbortSignal,
-  roundsPerSide?: number,
-  models?: Record<string, string>,
-): Promise<void> {
-  const extra: Record<string, unknown> = { topic };
-  if (projectId) extra.project_id = projectId;
-  if (roundsPerSide) extra.rounds_per_side = roundsPerSide;
-  if (models && Object.keys(models).length > 0) extra.models = models;
-  return streamChat('/topic-validator/debate', [{ role: 'user', content: topic }], undefined, cb, signal, extra);
-}
-
-/**
- * 选题答辩（SSE 流式）：候选人自述 + 评委质询/候选人应答 N 轮 + 合议裁定。
- * projectId 可选：合议分数（validate 4 轴）由服务端落库。
- * models 可选：按角色指定（键 candidate/examiner/panel，值 'provider/model'）。
- * SSE 帧约定：{"round": "candidate_0|examiner_k|candidate_k|panel", "model": ...}；
- * {"defense_scores": {...4轴 + verdict}} 合议分数（先于 done）；content 为当前环节正文增量。
- */
-export function streamDefenseTopic(
-  topic: string,
-  projectId: number | undefined,
-  cb: ChatStreamCallbacks,
-  signal?: AbortSignal,
-  roundsPerSide?: number,
-  models?: Record<string, string>,
-): Promise<void> {
-  const extra: Record<string, unknown> = { topic };
-  if (projectId) extra.project_id = projectId;
-  if (roundsPerSide) extra.rounds_per_side = roundsPerSide;
-  if (models && Object.keys(models).length > 0) extra.models = models;
-  return streamChat('/topic-validator/defense', [{ role: 'user', content: topic }], undefined, cb, signal, extra);
-}
-
-/** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */
+ * 选题立项书（P2-12a）：验证通过后生成一页立项书。 */
 export const generateTopicProposal = async (
   topic: string,
   validationReport?: string,
