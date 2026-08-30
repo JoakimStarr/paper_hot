@@ -299,6 +299,13 @@ class ValidateRequest(BaseModel):
     use_tools: bool = False
 
 
+class DebateRequest(BaseModel):
+    topic: str
+    model: Optional[str] = None
+    # 提供时：裁决分数（novelty/crowding/feasibility/gate）落库到该项目
+    project_id: Optional[int] = None
+
+
 @router.get("/topic-validator/status")
 async def get_validator_status(db: AsyncSession = Depends(get_db)):
     """embedding 覆盖情况：已向量化论文数 / 总数（决定召回质量）。"""
@@ -1054,6 +1061,147 @@ async def validate_topic(
                 logger.warning(f"validate server-side persist failed: {e}")
 
     return StreamingResponse(composed_stream(), media_type="text/event-stream")
+
+
+@router.post("/topic-validator/debate")
+async def debate_topic(
+    body: DebateRequest,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """选题评估辩论（debate 技能）：正方/反方各两轮交锋 + 评审裁决（SSE 全流式）。
+
+    五轮顺序（ROUND_SEQUENCE）：pro_1 正方陈述 -> con_1 反方反驳 -> pro_2 正方再回应
+    -> con_2 反方再回应 -> judge 评审裁决。每一轮前发 {"round": round_name} 元帧
+    （前端据此开新气泡桶），正文逐字流式转发。
+
+    裁决轮输出以 ```json 头开始（novelty/crowding/feasibility/gate，口径与 validate 一致）：
+    - 后端在流中缓冲剥离该头（复用 validate_skill.split_json_head），markdown 正文实时转发；
+    - 帧顺序硬约束：{"debate_scores": {...}} 必须在 done 帧之前发出（前端 streamChat 遇 done 即 break）；
+    - 带 project_id 时流结束后 apply_scores 落库（技能层回写）。
+    """
+    from app.skills import debate as debate_skill
+
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+
+    papers, mode = await _retrieve_similar_papers(db, topic, k=30)
+    stats = _crowding_stats(papers)
+    stats["mode"] = mode
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception as comp_err:
+        logger.warning(f"debate competition map failed: {comp_err}")
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    try:
+        client, provider, bare_model = resolve_working_model(body.model)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    # 首帧论文元消息：编号与 prompt 里的 [n] 对齐，前端据此渲染召回卡片
+    def _papers_payload() -> dict:
+        return {
+            "papers": [
+                {
+                    "n": i + 1,
+                    "id": p["id"],
+                    "title": p["title"],
+                    "source": p["source"],
+                    "published_at": p["published_at"],
+                    "keywords": p["keywords"],
+                    "similarity": p["similarity"],
+                }
+                for i, p in enumerate(papers[:30])
+            ],
+            "mode": mode,
+            "stats": stats,
+        }
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def composed_stream():
+        yield _sse(_papers_payload())
+
+        history: list = []  # [(轮次标签, 该轮全文), ...] 注入下一轮上下文
+        debate_scores = None
+        # 裁决轮 JSON 头缓冲状态（同 validate 端点 :945-969）
+        buf = {"text": "", "decided": False, "scores": None, "md": []}
+
+        def on_judge(ev: dict) -> None:
+            c = ev.get("content")
+            if not c:
+                return
+            if not buf["decided"]:
+                buf["text"] += c
+                scores, rest = validate_skill.split_json_head(buf["text"])
+                if scores is not None:
+                    buf["decided"] = True
+                    buf["scores"] = scores
+                    buf["md"].append(rest)
+                    ev["content"] = rest
+                elif validate_skill.head_in_progress(buf["text"]):
+                    ev["content"] = ""
+                else:
+                    buf["decided"] = True
+                    buf["md"].append(buf["text"])
+                    ev["content"] = buf["text"]
+            else:
+                buf["md"].append(c)
+
+        for round_name in debate_skill.ROUND_SEQUENCE:
+            label, _side = debate_skill.ROLE_LABELS[round_name]
+            yield _sse({"round": round_name})
+
+            messages = debate_skill.build_messages(topic, papers, stats, competition, history, round_name)
+
+            if round_name == "judge":
+                async for frame in _stream_llm_content(
+                    client, bare_model, messages, on_event=on_judge, max_tokens=8192
+                ):
+                    # 硬约束：debate_scores 必须先于 done 到达（前端 streamChat 遇 done 即 break）
+                    if not buf["decided"] and '"done"' in frame and buf["text"]:
+                        buf["decided"] = True
+                        buf["scores"], rest = validate_skill.split_json_head(buf["text"])
+                        buf["md"].append(rest)
+                        if rest:
+                            yield _sse({"content": rest})
+                    if buf["scores"] is not None and debate_scores is None:
+                        debate_scores = buf["scores"]
+                        yield _sse({"debate_scores": debate_scores})
+                    yield frame
+            else:
+                round_text: list = []
+
+                def on_arg(ev: dict) -> None:
+                    c = ev.get("content")
+                    if c:
+                        round_text.append(c)
+
+                async for frame in _stream_llm_content(
+                    client, bare_model, messages, on_event=on_arg, max_tokens=8192
+                ):
+                    yield frame
+                history.append((label, "".join(round_text)))
+
+        # ---- 服务端落库：裁决分数回填（仅限 to_validate；报告正文不覆盖，前端另行展示辩论全文） ----
+        if body.project_id and debate_scores is not None:
+            try:
+                uid = _uid_from(request)
+                p = await db.get(TopicProject, body.project_id)
+                if p and p.user_id == uid:
+                    validate_skill.apply_scores(p, debate_scores)
+                    await db.commit()
+                    logger.info(f"debate scores persisted for project {body.project_id}: "
+                                f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
+            except Exception as e:
+                logger.warning(f"debate server-side persist failed: {e}")
+
+    return StreamingResponse(composed_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class ProposalRequest(BaseModel):

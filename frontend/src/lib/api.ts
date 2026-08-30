@@ -768,6 +768,23 @@ export function streamValidateTopic(
   return streamChat('/topic-validator/validate', [{ role: 'user', content: topic }], model, cb, signal, extra);
 }
 
+/**
+ * 选题评估辩论（SSE 流式）：正方/反方各两轮 + 评审裁决。
+ * projectId 可选：提供时裁决分数（novelty/crowding/feasibility/gate）由服务端落库。
+ * SSE 帧约定：{"round": "pro_1|con_1|pro_2|con_2|judge"} 开新轮次；
+ * {"debate_scores": {...}} 裁决分数（先于 done 帧）；content 为当前轮次正文增量。
+ */
+export function streamDebateTopic(
+  topic: string,
+  projectId: number | undefined,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const extra: Record<string, unknown> = { topic };
+  if (projectId) extra.project_id = projectId;
+  return streamChat('/topic-validator/debate', [{ role: 'user', content: topic }], undefined, cb, signal, extra);
+}
+
 /** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */
 export const generateTopicProposal = async (
   topic: string,
