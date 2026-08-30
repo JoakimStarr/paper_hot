@@ -2,12 +2,13 @@
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel, MessageSquareText } from 'lucide-react';
+import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel } from 'lucide-react';
 import { streamValidateTopic } from '@/lib/api';
 import { parseValidationScores } from '@/lib/topicReport';
 import { openAssistant } from '@/lib/assistantBus';
 import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
 import type { StepProps } from './types';
+import AssistantChatBox from '@/components/AssistantChatBox';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -371,31 +372,23 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
         </div>
       )}
 
-      {/* 进阶评估 · 辩论（复用悬浮助手对话，流式输出有保障，可追问） */}
+      {/* 进阶评估 · 辩论（内嵌 AI 对话：直连后端流式，正方/反方/评审由模型自主呈现，可追问） */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-violet-200 dark:border-violet-800 p-4 sm:p-6">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
-            <Gavel className="w-4 h-4 text-violet-600" /> 进阶评估 · 辩论
-            <span className="text-[11px] font-normal text-gray-400">正反交锋 + 评审裁决</span>
-          </h3>
-          <button
-            onClick={() => openAssistant({
-              contextText: project.title,
-              autoPrompt: `请对选题「${project.title}」发起一场正方/反方辩论并给出评审裁决：
+        <AssistantChatBox
+          title="进阶评估 · 辩论"
+          subtitle="正反交锋 + 评审裁决"
+          page="topics"
+          contextText={project.title}
+          autoPrompt={`请对选题「${project.title}」发起一场正方/反方辩论并给出评审裁决：
 1. 正方陈述：论证该选题的研究价值、可行性与创新空位；
 2. 反方反驳：质疑其与最相似文献的实质重合、竞争拥挤度、数据与方法可行性；
 3. 正方再回应、反方再质疑（各两轮交锋）；
 4. 最后以评审身份裁决：新颖性/拥挤度/可行性/门控 4 项评分 + 结论（可做/修改后做/放弃）+ 2-3 条条件建议。
-涉及论文库数据请先用工具检索并基于结果作答，引用检索到的论文用 [编号]。`,
-            })}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs rounded-lg transition-colors"
-          >
-            <MessageSquareText className="w-3.5 h-3.5" /> 在 AI 对话中发起辩论
-          </button>
-        </div>
-        <p className="text-xs text-gray-400">
-          AI 对话流式输出，正方/反方/评审由模型自主分角色呈现，支持模型选择与随时追问交锋细节。
-        </p>
+涉及论文库数据请先用工具检索并基于结果作答，引用检索到的论文用 [编号]。`}
+          startLabel="开始辩论"
+          accentBtn="bg-violet-600 hover:bg-violet-700"
+          icon={<Gavel className="w-4 h-4 text-violet-600" />}
+        />
       </div>
     </div>
   );

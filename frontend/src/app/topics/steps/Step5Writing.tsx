@@ -7,6 +7,7 @@ import { workbenchApi, producerApi } from '@/lib/api';
 import { openAssistant } from '@/lib/assistantBus';
 import { downloadTextFile, downloadAsWord } from '@/lib/utils';
 import type { StepProps } from './types';
+import AssistantChatBox from '@/components/AssistantChatBox';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -255,31 +256,23 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi, goSte
         )}
       </div>
 
-      {/* 模拟答辩（复用悬浮助手对话，流式输出有保障，可追问） */}
+      {/* 模拟答辩（内嵌 AI 对话：直连后端流式，候选人/评委/合议由模型自主呈现，可追问） */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-emerald-200 dark:border-emerald-800 p-4 sm:p-6">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
-            <MessageSquareText className="w-4 h-4 text-emerald-600" /> 模拟答辩
-            <span className="text-[11px] font-normal text-gray-400">模拟开题答辩 · 自述 + 质询 + 合议</span>
-          </h3>
-          <button
-            onClick={() => openAssistant({
-              contextText: project.title,
-              autoPrompt: `请为选题「${project.title}」模拟一场开题答辩：
+        <AssistantChatBox
+          title="模拟答辩"
+          subtitle="模拟开题答辩 · 自述 + 质询 + 合议"
+          page="topics"
+          contextText={project.title}
+          autoPrompt={`请为选题「${project.title}」模拟一场开题答辩：
 1. 以候选人身份自述研究设计（研究问题/方法/数据/创新点）；
 2. 以评委身份质询 2 轮（新颖性差异、识别策略、数据可得性、竞争状况）；
 3. 候选人逐一应答；
 4. 最后合议裁定：新颖性/拥挤度/可行性/门控 4 项评分 + 结论（通过/修改后通过/不通过）+ 修改意见。
-涉及论文库数据请先用工具检索并基于结果作答。`,
-            })}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition-colors"
-          >
-            <MessageSquareText className="w-3.5 h-3.5" /> 在 AI 对话中模拟答辩
-          </button>
-        </div>
-        <p className="text-xs text-gray-400">
-          AI 对话流式输出，候选人/评委/合议由模型自主分角色呈现，支持模型选择与随时追问质询细节。
-        </p>
+涉及论文库数据请先用工具检索并基于结果作答。`}
+          startLabel="开始答辩"
+          accentBtn="bg-emerald-600 hover:bg-emerald-700"
+          icon={<MessageSquareText className="w-4 h-4 text-emerald-600" />}
+        />
       </div>
 
       {/* 期刊适配 + 引用 */}
