@@ -70,6 +70,8 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
   const defenseScrollRef = useRef<HTMLDivElement | null>(null);
   // 继续追问输入
   const [defenseFollowup, setDefenseFollowup] = useState('');
+  // 当前显示的是否为上次保存的历史记录（非实时 AI 输出）
+  const [defenseRestored, setDefenseRestored] = useState(false);
 
   const [defenseRoundsPerSide, setDefenseRoundsPerSide] = useState(2);
   const [defenseModels, setDefenseModels] = useState<Record<'candidate' | 'examiner' | 'panel', string>>({ candidate: '', examiner: '', panel: '' });
@@ -122,6 +124,7 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
     })));
     setDefenseScores(t.scores || null);
     if (t.rounds_per_side) setDefenseRoundsPerSide(t.rounds_per_side);
+    setDefenseRestored(true); // 标记为历史记录，非实时 AI 输出
     // 仅在选题变化（重新挂载）时恢复一次；重新答辩由 handleDefense 覆盖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);
@@ -146,6 +149,7 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
     setDefenseError(null);
     setDefenseRounds([]);
     setDefenseScores(null);
+    setDefenseRestored(false); // 新开答辩：不再是历史记录
     setRetrievedPapers([]);
     defenseFullTextRef.current = '';
     defenseReasoningRef.current = '';
@@ -318,6 +322,13 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
           </span>
         )}
       </div>
+
+      {/* 历史记录提示：恢复的是上次保存的记录，点「开始答辩」才会调用真实 AI */}
+      {defenseRestored && !defending && defenseRounds.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/60 rounded-md px-3 py-2">
+          <span>已显示上次保存的答辩记录（历史数据）。点「开始答辩」将重新调用真实 AI 生成。</span>
+        </div>
+      )}
 
       {/* 答辩设置（可折叠） */}
       <div className="mb-3">

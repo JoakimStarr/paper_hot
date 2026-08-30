@@ -102,6 +102,8 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   const debateReasoningRef = useRef('');
   // 继续追问输入
   const [debateFollowup, setDebateFollowup] = useState('');
+  // 当前显示的是否为上次保存的历史记录（非实时 AI 输出）
+  const [debateRestored, setDebateRestored] = useState(false);
   // 辩论设置：每方轮数、按角色模型（'provider/model'，''=默认）、统一模型开关
   const [debateRoundsPerSide, setDebateRoundsPerSide] = useState(2);
   const [debateModels, setDebateModels] = useState<Record<'pro' | 'con' | 'judge', string>>({ pro: '', con: '', judge: '' });
@@ -192,6 +194,7 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     })));
     setDebateScores(t.scores || null);
     if (t.rounds_per_side) setDebateRoundsPerSide(t.rounds_per_side);
+    setDebateRestored(true); // 标记为历史记录，非实时 AI 输出
     // 仅在进入该步骤（项目切换）时恢复一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
@@ -285,6 +288,7 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
     setDebateError(null);
     setDebateRounds([]);
     setDebateScores(null);
+    setDebateRestored(false); // 新开辩论：不再是历史记录
     debateFullTextRef.current = '';
     debateReasoningRef.current = '';
     const controller = new AbortController();
@@ -626,6 +630,13 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
               </span>
             )}
           </div>
+
+          {/* 历史记录提示：恢复的是上次保存的记录，点「开始辩论」才会调用真实 AI */}
+          {debateRestored && !debating && debateRounds.length > 0 && (
+            <div className="mb-3 flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/15 border border-amber-200 dark:border-amber-800/60 rounded-md px-3 py-2">
+              <span>已显示上次保存的辩论记录（历史数据）。点「开始辩论」将重新调用真实 AI 生成。</span>
+            </div>
+          )}
 
           {/* 辩论设置（可折叠） */}
           <div className="mb-3">
