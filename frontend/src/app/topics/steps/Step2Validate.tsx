@@ -157,6 +157,8 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
   const [debateAiModels, setDebateAiModels] = useState<Array<{ id: string; label: string }>>([]);
   const [debateSettingsOpen, setDebateSettingsOpen] = useState(true);
   const debateScrollRef = useRef<HTMLDivElement | null>(null);
+  // 先配置后开跑：点「发起辩论」先展开配置面板（轮数/模型），用户点「开始辩论」才启动
+  const [debateConfigOpen, setDebateConfigOpen] = useState(false);
 
   // —— 选题答辩状态 ——
   const [defending, setDefending] = useState(false);
@@ -172,6 +174,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
   const [defenseUnifiedModel, setDefenseUnifiedModel] = useState('');
   const [defenseSettingsOpen, setDefenseSettingsOpen] = useState(true);
   const defenseScrollRef = useRef<HTMLDivElement | null>(null);
+  const [defenseConfigOpen, setDefenseConfigOpen] = useState(false);
 
   // 加载可用模型列表 + 恢复辩论/答辩各角色的模型记忆
   useEffect(() => {
@@ -345,6 +348,19 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
   const handleDefenseAbort = () => {
     defenseAbortRef.current?.abort();
     setDefending(false);
+  };
+
+  // 展开辩论配置面板（不启动流），用户调好轮数/模型后点「开始辩论」
+  const handleOpenDebateConfig = () => {
+    if (debating) return;
+    setDebateConfigOpen(true);
+    requestAnimationFrame(() => debateScrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  };
+
+  const handleOpenDefenseConfig = () => {
+    if (defending) return;
+    setDefenseConfigOpen(true);
+    requestAnimationFrame(() => defenseScrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
   };
 
   const handleDefense = async () => {
@@ -606,16 +622,16 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
             ) : (
               <>
                 <button
-                  onClick={handleDebate}
-                  title="正方/反方各 N 轮交锋 + 评审按预承诺标准裁决（基于论文库证据）"
+                  onClick={handleOpenDebateConfig}
+                  title="先配置轮数与各角色模型，再开始辩论（基于论文库证据）"
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm rounded-lg transition-colors"
                 >
                   <Gavel className="w-4 h-4" />
                   {debateRounds.length > 0 ? '再次辩论' : '发起辩论'}
                 </button>
                 <button
-                  onClick={handleDefense}
-                  title="候选人自述 + 评委质询/候选人应答 N 轮 + 合议裁定（模拟论文答辩）"
+                  onClick={handleOpenDefenseConfig}
+                  title="先配置质询轮数与各角色模型，再开始模拟答辩"
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-lg transition-colors"
                 >
                   <MessageSquareText className="w-4 h-4" />
@@ -724,7 +740,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
       </div>
 
       {/* 选题辩论：正方/反方各 N 轮（左右双栏）+ 评审裁决（跨栏居中） */}
-      {(debateRounds.length > 0 || debating || debateError) && (
+      {(debateConfigOpen || debateRounds.length > 0 || debating || debateError) && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-violet-200 dark:border-violet-800 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
@@ -799,6 +815,15 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
                     <DebateModelSelect roleLabel="评审" memKey="debate_judge" value={debateModels.judge} models={debateAiModels}
                       onChange={(v) => setDebateModels((m) => ({ ...m, judge: v }))} />
                   </>
+                )}
+                {/* 先配置后开跑：调好轮数/模型后点此启动 */}
+                {!debating && (
+                  <button
+                    onClick={handleDebate}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs rounded-lg transition-colors ml-auto"
+                  >
+                    <Gavel className="w-3.5 h-3.5" /> 开始辩论（{debateRoundsPerSide} 轮）
+                  </button>
                 )}
               </div>
             )}
@@ -908,7 +933,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
       )}
 
       {/* 选题答辩：候选人自述 + 评委质询/候选人应答 N 轮 + 合议裁定 */}
-      {(defenseRounds.length > 0 || defending || defenseError) && (
+      {(defenseConfigOpen || defenseRounds.length > 0 || defending || defenseError) && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-emerald-200 dark:border-emerald-800 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
@@ -980,6 +1005,15 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
                     <DebateModelSelect roleLabel="合议" memKey="defense_panel" value={defenseModels.panel} models={debateAiModels}
                       onChange={(v) => setDefenseModels((m) => ({ ...m, panel: v }))} />
                   </>
+                )}
+                {/* 先配置后开跑：调好轮数/模型后点此启动 */}
+                {!defending && (
+                  <button
+                    onClick={handleDefense}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition-colors ml-auto"
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" /> 开始答辩（{defenseRoundsPerSide} 轮质询）
+                  </button>
                 )}
               </div>
             )}
