@@ -434,6 +434,8 @@ export interface TopicProject {
   novelty: number | null;
   crowding: string | null;
   feasibility: number | null;
+  gate?: string | null;
+  verdict?: string | null;
   status: 'to_validate' | 'validated' | 'subscribed' | 'abandoned';
   validation_report?: string | null;
   validation_evidence?: ValidationEvidence | null;

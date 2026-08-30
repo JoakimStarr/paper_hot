@@ -560,6 +560,20 @@ export default function ProjectList() {
                       拥挤度 {p.crowding}
                     </span>
                   )}
+                  {p.gate && (
+                    <span className={`inline-flex px-1.5 py-0.5 rounded ${
+                      p.gate === 'pass' ? 'bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-300'
+                      : p.gate === 'caution' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
+                      : 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300'
+                    }`}>
+                      门控 {p.gate}
+                    </span>
+                  )}
+                  {p.verdict && (
+                    <span className="inline-flex px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">
+                      {p.verdict}
+                    </span>
+                  )}
                 </div>
               )}
               <div className="flex items-center justify-between text-xs text-gray-400">

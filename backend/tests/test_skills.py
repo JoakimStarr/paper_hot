@@ -78,12 +78,20 @@ class TestValidate:
                 self.novelty = None
                 self.crowding = None
                 self.feasibility = None
+                self.gate = None
+                self.verdict = None
                 self.status = "to_validate"
 
         p = P()
         touched = validate.apply_scores(p, {"novelty": 8, "crowding": "低", "feasibility": 6, "gate": "pass"})
         assert p.novelty == 8 and p.crowding == "低" and p.feasibility == 6
+        assert p.gate == "pass" and "gate" in touched
         assert p.status == "validated" and "status" in touched
+
+        # verdict 落库（答辩合议）
+        pv = P()
+        validate.apply_scores(pv, {"novelty": 7, "verdict": "修改后通过"})
+        assert pv.verdict == "修改后通过" and pv.gate is None
 
         # 用户已手动置 subscribed / abandoned 时不覆盖
         for st in ("subscribed", "abandoned"):

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Loader2 } from 'lucide-react';
 
@@ -34,6 +34,16 @@ function StreamBubbleImpl({ r, colorCls, streaming, citations, avatar, avatarSid
   avatarSide?: 'left' | 'right';
   sideLabel?: string;
 }) {
+  // 思考计时：流式中且正文未产出时显示已等待秒数
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!streaming || r.text) return;
+    const t0 = Date.now();
+    setElapsed(0);
+    const iv = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(iv);
+  }, [streaming, r.text]);
+
   return (
     <div className={`flex items-end gap-2 ${avatarSide === 'right' ? 'flex-row-reverse' : ''}`}>
       {avatar && <div className="shrink-0">{avatar}</div>}
@@ -48,7 +58,7 @@ function StreamBubbleImpl({ r, colorCls, streaming, citations, avatar, avatarSid
           {streaming && !r.text && (
             <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
               <Loader2 className="w-3 h-3 animate-spin" />
-              {r.reasoning ? '思考中，即将成文…' : '思考中…'}
+              {r.reasoning ? `思考中，即将成文… ${elapsed}s` : `思考中… ${elapsed}s`}
             </span>
           )}
         </div>

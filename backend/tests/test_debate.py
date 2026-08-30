@@ -489,3 +489,79 @@ class TestDebateStreamPersist:
                 await engine.dispose()
 
         assert asyncio.run(_run())
+
+    def test_debate_continue_single_round_and_persists(self, monkeypatch):
+        """继续追问：单轮流式 + followup 轮帧 + 追加到辩论记录。"""
+        from app.database import Base
+        from app.models import TopicProject
+        from app.routers import topic as topic_mod
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        async def scenario(db):
+            db.add(TopicProject(id=1, user_id="local", title="测试",
+                                debate_transcript={"surface": "debate", "rounds_per_side": 2,
+                                                   "rounds": [{"id": "pro_1", "label": "正方陈述", "text": "已有"}],
+                                                   "scores": None}))
+            await db.commit()
+
+            papers = _mk_papers()
+            async def fake_retrieve(db_, t, k=30):
+                return papers, "tfidf"
+            monkeypatch.setattr(topic_mod, "_retrieve_similar_papers", fake_retrieve)
+            monkeypatch.setattr(topic_mod, "_crowding_stats", lambda p: _mk_stats())
+            async def fake_comp(db_, ids):
+                return _mk_comp()
+            monkeypatch.setattr(topic_mod, "_competition_map", fake_comp)
+
+            class _FakeClient:
+                pass
+            monkeypatch.setattr(topic_mod, "resolve_working_model",
+                                lambda m: (_FakeClient(), "fake", "fake-model"))
+
+            async def fake_llm_stream(client, model, messages, on_event=None, **kw):
+                evs = [{"content": "继续追问的回应正文。"}, {"done": True}]
+                for ev in evs:
+                    if on_event:
+                        on_event(ev)
+                    yield "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+            monkeypatch.setattr(topic_mod, "_stream_llm_content", fake_llm_stream)
+
+            body = topic_mod.DebateContinueRequest(
+                topic="测试", project_id=1, role="con",
+                history=[{"id": "pro_1", "label": "正方陈述", "text": "已有"}],
+                prompt="请反方再质疑一次",
+            )
+            req = SimpleNamespace(headers={"x-user-id": "local"})
+            resp = await topic_mod.debate_continue(body, request=req, db=db, token=True)
+            frames = []
+            async for chunk in resp.body_iterator:
+                chunk = chunk if isinstance(chunk, str) else chunk.decode()
+                for line in chunk.split("\n"):
+                    if line.startswith("data: "):
+                        frames.append(_json.loads(line[6:]))
+
+            # followup 轮帧 + content 透传 + done
+            assert any(f.get("round") == "followup" for f in frames)
+            assert any("继续追问的回应正文" in (f.get("content") or "") for f in frames)
+            assert any(f.get("done") for f in frames)
+
+            # 记录追加：原 1 轮 + followup 1 轮
+            p = await db.get(TopicProject, 1)
+            assert len(p.debate_transcript["rounds"]) == 2
+            assert p.debate_transcript["rounds"][-1]["id"] == "followup"
+            return True
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+        async def _run():
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            Session = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with Session() as db:
+                    return await scenario(db)
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(_run())

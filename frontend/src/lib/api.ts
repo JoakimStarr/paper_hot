@@ -1,6 +1,6 @@
 import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, PaperReferencesResponse, PaperCitedByResponse, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate, MethodPlaybookEntry } from '@/types/paper';
 import { getUserId } from '@/lib/user';
-import { streamDirectSSE } from '@/lib/assistantStream';
+import { streamDirectSSE, assistantHeaders, ASSISTANT_BACKEND_URL } from '@/lib/assistantStream';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api'; // 默认走同源 /api，由 next.config rewrites 代理到后端实际端口
 
@@ -855,6 +855,68 @@ export function streamDefenseTopic(
   }, signal);
 }
 
+/** 辩论继续追问（单轮流式）：基于已完成轮次追加一轮，可指定角色或自由追问。 */
+export function streamDebateContinue(
+  topic: string,
+  projectId: number | undefined,
+  history: Array<{ id: string; label: string; model?: string; text: string }>,
+  role: string,
+  prompt: string,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const body: Record<string, unknown> = { topic, history, role, prompt };
+  if (projectId) body.project_id = projectId;
+  let fullContent = '';
+  let fullReasoning = '';
+  return streamDirectSSE('/topic-validator/debate/continue', body, (data) => {
+    if (data.error) {
+      cb.onError(String(data.error));
+    } else if (data.done) {
+      cb.onDone(fullContent);
+    } else if (data.reasoning) {
+      fullReasoning += String(data.reasoning);
+      if (cb.onReasoning) cb.onReasoning(fullReasoning);
+    } else if (data.content) {
+      fullContent += String(data.content);
+      cb.onContent(fullContent);
+    } else if (cb.onMeta) {
+      cb.onMeta(data); // round / usage 等元帧
+    }
+  }, signal);
+}
+
+/** 答辩继续追问（单轮流式）：基于已完成环节追加一轮，可指定角色或自由追问。 */
+export function streamDefenseContinue(
+  topic: string,
+  projectId: number | undefined,
+  history: Array<{ id: string; label: string; model?: string; text: string }>,
+  role: string,
+  prompt: string,
+  cb: ChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const body: Record<string, unknown> = { topic, history, role, prompt };
+  if (projectId) body.project_id = projectId;
+  let fullContent = '';
+  let fullReasoning = '';
+  return streamDirectSSE('/topic-validator/defense/continue', body, (data) => {
+    if (data.error) {
+      cb.onError(String(data.error));
+    } else if (data.done) {
+      cb.onDone(fullContent);
+    } else if (data.reasoning) {
+      fullReasoning += String(data.reasoning);
+      if (cb.onReasoning) cb.onReasoning(fullReasoning);
+    } else if (data.content) {
+      fullContent += String(data.content);
+      cb.onContent(fullContent);
+    } else if (cb.onMeta) {
+      cb.onMeta(data); // round / usage 等元帧
+    }
+  }, signal);
+}
+
 /** 选题立项书（P2-12a）：验证通过后生成一页立项书。 */
 export const generateTopicProposal = async (
   topic: string,
@@ -906,7 +968,8 @@ export interface ChatStreamCallbacks {
   onMeta?: (data: Record<string, unknown>) => void;  // 可选：非 content/reasoning/done 的结构化 SSE 载荷
 }
 
-/** 通过 fetch + 手动读流发起对话，注入与 apiClient 相同的 x-api-token（保持鉴权一致）。 */
+/** 通过 fetch + 手动读流发起对话，注入与 apiClient 相同的 x-api-token（保持鉴权一致）。
+ *  直连后端（assistantStream 同款）：绕过 Next dev 代理的 gzip 缓冲，保证真正逐字流式。 */
 export async function streamChat(
   url: string,
   messages: Array<{ role: string; content: string }>,
@@ -915,12 +978,12 @@ export async function streamChat(
   signal?: AbortSignal,
   extraBody?: Record<string, unknown>,
 ): Promise<void> {
-  const headers = buildHeaders();
+  const headers = { ...assistantHeaders() };
 
   let response: Response;
   try {
     const body = extraBody ? { ...extraBody, messages } : { messages, ...(model ? { model } : {}) };
-    response = await fetch(`${API_BASE_URL}${url}`, {
+    response = await fetch(`${ASSISTANT_BACKEND_URL}/api${url}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

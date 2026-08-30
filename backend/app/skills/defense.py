@@ -173,3 +173,62 @@ def _format_history(history: List[Tuple[str, str]]) -> str:
             t = t[:1200] + "…（该轮过长已截断）"
         blocks.append(f"【{label}】\n{t}")
     return "\n\n".join(blocks)
+
+
+def build_followup_messages(
+    topic: str,
+    papers: List[dict],
+    stats: dict,
+    competition: dict,
+    history: List[dict],
+    role: str,
+    prompt: str,
+) -> List[dict]:
+    """继续追问（答辩已结束后追加单轮）：历史轮次 + 角色指令 + 用户问题。
+
+    history：已完成的轮次 [{id,label,model,text}]。
+    role：candidate | examiner | panel | assistant。
+    """
+    papers_text = validate_skill.build_papers_text(papers, limit=30)
+    script_evidence = validate_skill.build_script_evidence(stats, competition)
+    role_instruction = {
+        "candidate": "你继续以**候选人**身份应答（可补充论证、回应新的质询）：",
+        "examiner": "你继续以**答辩评委**身份质询（提出 1-2 个新的尖锐问题，聚焦具体证据）：",
+        "panel": "你继续以**答辩委员会**身份回应（可补充合议意见、细化修改意见）：",
+        "assistant": "你作为中立专家，结合已有答辩回应：",
+    }.get(role, "你继续回应：")
+    history_blocks = []
+    for h in history:
+        if not isinstance(h, dict):
+            continue
+        label = h.get("label") or h.get("id") or ""
+        text = (h.get("text") or "").strip()
+        if len(text) > 1200:
+            text = text[:1200] + "…（该轮过长已截断）"
+        history_blocks.append(f"【{label}】\n{text}")
+    history_text = "\n\n".join(history_blocks)
+
+    system_prompt = f"""你是一位学术论文答辩参与者，正在继续一场关于以下选题的答辩。
+
+候选选题：{topic}
+
+【Script 证据——系统预计算的确定性统计，非你的判断；引用时必须原样复述，标注为系统统计】
+{script_evidence}
+
+【召回论文列表（按相似度降序；[n] 编号即引用编号，仅限 [1]-[{len(papers[:30])}]）】
+{papers_text}
+
+【已进行的答辩环节】
+{history_text or "（无）"}
+
+{role_instruction}
+
+【写作纪律】
+- 回应要落到具体证据：关键判断先给量化依据（Script 数字或 [n] 编号）再展开；
+- Script 数字原样引用；[n] 只引用上方列表内的论文，严禁编造；
+- 证据不足时如实说明并降低置信度；
+- 用中文作答，markdown 格式，300-700 字。"""
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]

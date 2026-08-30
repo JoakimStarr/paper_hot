@@ -12,7 +12,9 @@ import { getUserId } from '@/lib/user';
 const ASSISTANT_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const ASSISTANT_API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || '';
 
-function assistantHeaders(): Record<string, string> {
+export { ASSISTANT_BACKEND_URL, ASSISTANT_API_TOKEN };
+
+export function assistantHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (ASSISTANT_API_TOKEN) h['x-api-token'] = ASSISTANT_API_TOKEN;
   // 会话按用户隔离（后端 _load_session 校验 user_id），必须带与创建会话一致的 x-user-id

@@ -254,6 +254,8 @@ class TopicProject(Base):
     novelty = Column(Integer, nullable=True)               # 新颖性评分 1-10
     crowding = Column(String(20), nullable=True)           # 拥挤度 低/中/高
     feasibility = Column(Integer, nullable=True)           # 可行性评分 1-10
+    gate = Column(String(20), nullable=True)               # 门控 pass/caution/avoid（验证/辩论/答辩裁决）
+    verdict = Column(String(20), nullable=True)            # 答辩结论 通过/修改后通过/不通过
     current_step = Column(Integer, default=1)              # 五步向导进度 1-5
     generated_topics = Column(UnicodeJSON, nullable=True)  # Step1 LLM 生成的候选选题
     overview = Column(Text, nullable=True)                 # Step2 已有研究盘点（markdown）

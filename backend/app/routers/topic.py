@@ -781,6 +781,8 @@ class TopicProjectOut(BaseModel):
     novelty: Optional[int] = None
     crowding: Optional[str] = None
     feasibility: Optional[int] = None
+    gate: Optional[str] = None
+    verdict: Optional[str] = None
     status: str
     validation_report: Optional[str] = None   # 验证报告 markdown（选题库回看决策依据）
     validation_evidence: Optional[dict] = None
@@ -814,6 +816,8 @@ def _project_out(p: TopicProject) -> dict:
         "novelty": p.novelty,
         "crowding": p.crowding,
         "feasibility": p.feasibility,
+        "gate": p.gate,
+        "verdict": p.verdict,
         "status": p.status,
         "validation_report": p.validation_report,
         "validation_evidence": p.validation_evidence,
@@ -1460,6 +1464,182 @@ async def defense_topic(
                                 f"rounds={len(transcript_rounds)}, novelty={getattr(p, 'novelty', None)}")
             except Exception as e:
                 logger.warning(f"defense server-side persist failed: {e}")
+
+    return StreamingResponse(composed_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class DebateContinueRequest(BaseModel):
+    topic: str
+    model: Optional[str] = None
+    project_id: Optional[int] = None
+    history: list = []          # 已完成轮次 [{id,label,model,text}]
+    role: str = "assistant"     # pro | con | judge | assistant
+    prompt: str = ""            # 用户追问或预置指令
+    models: Optional[dict] = None
+
+
+@router.post("/topic-validator/debate/continue")
+async def debate_continue(
+    body: DebateContinueRequest,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """辩论继续追问（单轮流式）：基于已完成轮次追加一轮，可指定角色或自由追问。"""
+    from app.skills import debate as debate_skill
+
+    topic = (body.topic or "").strip()
+    prompt = (body.prompt or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    papers, mode = await _retrieve_similar_papers(db, topic, k=30)
+    stats = _crowding_stats(papers)
+    stats["mode"] = mode
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception:
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    try:
+        client, provider, bare_model = resolve_working_model(body.model)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+    resolve_role_model = _make_role_model_resolver(body.models, (client, provider, bare_model))
+
+    role = body.role if body.role in ("pro", "con", "judge", "assistant") else "assistant"
+    # 角色 -> 模型键：pro/con/judge 用各自模型，assistant 用评审模型
+    model_key = {"pro": "pro", "con": "con", "judge": "judge", "assistant": "judge"}[role]
+    r_client, r_provider, r_bare = resolve_role_model(model_key)
+    messages = debate_skill.build_followup_messages(topic, papers, stats, competition, body.history, role, prompt)
+
+    label = {"pro": "正方再回应", "con": "反方再回应", "judge": "评委再点评", "assistant": "继续追问"}[role]
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def composed_stream():
+        yield _sse({"round": "followup", "model": f"{r_provider}/{r_bare}", "role": role})
+        round_text: list = []
+
+        def on_round(ev: dict) -> None:
+            c = ev.get("content")
+            if c:
+                round_text.append(c)
+
+        async for frame in _stream_llm_content(r_client, r_bare, messages, on_event=on_round, max_tokens=16384):
+            yield frame
+
+        # 落库：追加到辩论记录
+        if body.project_id:
+            try:
+                uid = _uid_from(request)
+                p = await db.get(TopicProject, body.project_id)
+                if p and p.user_id == uid:
+                    t = p.debate_transcript or {}
+                    rounds = list(t.get("rounds") or [])
+                    rounds.append({"id": "followup", "label": label, "model": f"{r_provider}/{r_bare}",
+                                   "text": "".join(round_text)})
+                    p.debate_transcript = {
+                        "surface": "debate",
+                        "rounds_per_side": t.get("rounds_per_side", 2),
+                        "rounds": rounds,
+                        "scores": t.get("scores"),
+                        "created_at": t.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                    }
+                    await db.commit()
+            except Exception as e:
+                logger.warning(f"debate continue persist failed: {e}")
+
+    return StreamingResponse(composed_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class DefenseContinueRequest(BaseModel):
+    topic: str
+    model: Optional[str] = None
+    project_id: Optional[int] = None
+    history: list = []
+    role: str = "assistant"     # candidate | examiner | panel | assistant
+    prompt: str = ""
+    models: Optional[dict] = None
+
+
+@router.post("/topic-validator/defense/continue")
+async def defense_continue(
+    body: DefenseContinueRequest,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """答辩继续追问（单轮流式）：基于已完成环节追加一轮，可指定角色或自由追问。"""
+    from app.skills import defense as defense_skill
+
+    topic = (body.topic or "").strip()
+    prompt = (body.prompt or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    papers, mode = await _retrieve_similar_papers(db, topic, k=30)
+    stats = _crowding_stats(papers)
+    stats["mode"] = mode
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception:
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    try:
+        client, provider, bare_model = resolve_working_model(body.model)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+    resolve_role_model = _make_role_model_resolver(body.models, (client, provider, bare_model))
+
+    role = body.role if body.role in ("candidate", "examiner", "panel", "assistant") else "assistant"
+    model_key = {"candidate": "candidate", "examiner": "examiner", "panel": "panel", "assistant": "panel"}[role]
+    r_client, r_provider, r_bare = resolve_role_model(model_key)
+    messages = defense_skill.build_followup_messages(topic, papers, stats, competition, body.history, role, prompt)
+
+    label = {"candidate": "候选人再回应", "examiner": "评委再质询", "panel": "合议补充", "assistant": "继续追问"}[role]
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def composed_stream():
+        yield _sse({"round": "followup", "model": f"{r_provider}/{r_bare}", "role": role})
+        round_text: list = []
+
+        def on_round(ev: dict) -> None:
+            c = ev.get("content")
+            if c:
+                round_text.append(c)
+
+        async for frame in _stream_llm_content(r_client, r_bare, messages, on_event=on_round, max_tokens=16384):
+            yield frame
+
+        if body.project_id:
+            try:
+                uid = _uid_from(request)
+                p = await db.get(TopicProject, body.project_id)
+                if p and p.user_id == uid:
+                    t = p.debate_transcript or {}
+                    rounds = list(t.get("rounds") or [])
+                    rounds.append({"id": "followup", "label": label, "model": f"{r_provider}/{r_bare}",
+                                   "text": "".join(round_text)})
+                    p.debate_transcript = {
+                        "surface": "defense",
+                        "rounds_per_side": t.get("rounds_per_side", 2),
+                        "rounds": rounds,
+                        "scores": t.get("scores"),
+                        "created_at": t.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                    }
+                    await db.commit()
+            except Exception as e:
+                logger.warning(f"defense continue persist failed: {e}")
 
     return StreamingResponse(composed_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

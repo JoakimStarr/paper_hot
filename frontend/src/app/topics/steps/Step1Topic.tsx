@@ -93,6 +93,8 @@ export default function Step1Topic({ project, onPatch, runAi, goStep }: StepProp
             最新评估结论
             {project.novelty != null && <> · 新颖性 <strong>{project.novelty}/10</strong></>}
             {project.crowding && <> · 拥挤度 <strong>{project.crowding}</strong></>}
+            {project.gate && <> · 门控 <strong>{project.gate}</strong></>}
+            {project.verdict && <> · 答辩结论 <strong>{project.verdict}</strong></>}
           </span>
           {goStep && (
             <>

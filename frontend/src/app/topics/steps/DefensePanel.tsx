@@ -2,7 +2,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Loader2, ChevronDown, Gavel, MessageSquareText, CheckCircle2, User } from 'lucide-react';
-import { streamDefenseTopic, papersApi, getLastModel, rememberModel } from '@/lib/api';
+import { streamDefenseTopic, streamDefenseContinue, papersApi, getLastModel, rememberModel } from '@/lib/api';
+import { downloadTextFile } from '@/lib/utils';
 import type { DebateTranscript } from '@/types/paper';
 import DebateModelSelect from './DebateModelSelect';
 import StreamBubble from './StreamBubble';
@@ -43,6 +44,14 @@ function defenseAvatar(role: DefenseRole): React.ReactNode {
 
 const DEFENSE_ROLE_LABELS: Record<DefenseRole, string> = { candidate: '候选人', examiner: '评委', panel: '合议' };
 
+// 继续追问角色 -> 轮次标签/角色
+const DEFENSE_FOLLOWUP_META: Record<string, { label: string; role: DefenseRole }> = {
+  candidate: { label: '候选人再回应', role: 'candidate' },
+  examiner: { label: '评委再质询', role: 'examiner' },
+  panel: { label: '合议补充', role: 'panel' },
+  assistant: { label: '继续追问', role: 'panel' },
+};
+
 /** 模拟答辩（选题向导 Step5：模拟开题答辩）。自包含，仅依赖选题标题与 projectId。 */
 export default function DefensePanel({ topic, projectId, goStep, initialTranscript }: {
   topic: string;
@@ -59,6 +68,8 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
   const defenseFullTextRef = useRef('');
   const defenseReasoningRef = useRef('');
   const defenseScrollRef = useRef<HTMLDivElement | null>(null);
+  // 继续追问输入
+  const [defenseFollowup, setDefenseFollowup] = useState('');
 
   const [defenseRoundsPerSide, setDefenseRoundsPerSide] = useState(2);
   const [defenseModels, setDefenseModels] = useState<Record<'candidate' | 'examiner' | 'panel', string>>({ candidate: '', examiner: '', panel: '' });
@@ -207,6 +218,67 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
     );
   };
 
+  // 继续追问：基于已完成环节追加一轮（指定角色或自由追问）
+  const handleDefenseContinue = async (role: string, prompt: string) => {
+    const t = (topic || '').trim();
+    const q = (prompt || '').trim();
+    if (!t || !q || defending) return;
+    setDefending(true);
+    setDefenseError(null);
+    defenseFullTextRef.current = '';
+    defenseReasoningRef.current = '';
+    const controller = new AbortController();
+    defenseAbortRef.current = controller;
+    const history = defenseRounds.map((r) => ({ id: r.id, label: r.label, model: r.model, text: r.text }));
+    const meta = DEFENSE_FOLLOWUP_META[role] || { label: '继续追问', role: 'panel' as DefenseRole };
+    await streamDefenseContinue(t, projectId, history, role, q, {
+      onContent: (text) => {
+        const delta = text.slice(defenseFullTextRef.current.length);
+        defenseFullTextRef.current = text;
+        if (!delta) return;
+        setDefenseRounds((prev) => {
+          const arr = [...prev];
+          const last = arr[arr.length - 1];
+          if (!last) return arr;
+          arr[arr.length - 1] = { ...last, text: last.text + delta };
+          return arr;
+        });
+      },
+      onReasoning: (text) => {
+        const delta = text.slice(defenseReasoningRef.current.length);
+        defenseReasoningRef.current = text;
+        if (!delta) return;
+        setDefenseRounds((prev) => {
+          const arr = [...prev];
+          const last = arr[arr.length - 1];
+          if (!last) return arr;
+          arr[arr.length - 1] = { ...last, reasoning: (last.reasoning || '') + delta };
+          return arr;
+        });
+      },
+      onMeta: (data) => {
+        if (data && typeof data === 'object' && 'round' in data) {
+          const d = data as Record<string, unknown>;
+          const model = typeof d.model === 'string' ? d.model : undefined;
+          setDefenseRounds((prev) => [...prev, { id: `followup_${Date.now()}`, label: meta.label, role: meta.role, text: '', reasoning: '', model }]);
+        }
+      },
+      onDone: () => setDefending(false),
+      onError: (msg) => {
+        setDefenseError(msg);
+        setDefending(false);
+      },
+    }, controller.signal);
+    setDefenseFollowup('');
+  };
+
+  // 导出答辩记录 markdown
+  const exportDefense = () => {
+    if (defenseRounds.length === 0) return;
+    const parts = defenseRounds.map((r) => `### ${r.label}${r.model ? `（${r.model}）` : ''}\n\n${r.text}`);
+    downloadTextFile(`${topic}_答辩记录.md`, `# 模拟答辩：${topic}\n\n${parts.join('\n\n---\n\n')}\n`, 'text/markdown;charset=utf-8');
+  };
+
   const opening = defenseRounds.find((r) => r.id === 'candidate_0');
   const isLatest = (r: DefenseRound) => defenseRounds[defenseRounds.length - 1]?.id === r.id;
 
@@ -337,6 +409,55 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
           ))}
         <div ref={defenseScrollRef} />
       </div>
+
+      {/* 继续追问 + 导出记录 */}
+      {defenseRounds.length > 0 && !defending && (
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            <span className="text-xs text-gray-400">继续追问</span>
+            <button
+              onClick={() => handleDefenseContinue('examiner', '请评委再质询一点：针对候选人尚未充分回答的环节继续追问。')}
+              className="text-[11px] px-2 py-1 rounded-md border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+            >
+              评委再质询
+            </button>
+            <button
+              onClick={() => handleDefenseContinue('candidate', '请候选人针对最新质询再作补充应答。')}
+              className="text-[11px] px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+            >
+              候选人再回应
+            </button>
+            <button
+              onClick={() => handleDefenseContinue('panel', '请合议组补充裁定意见与修改建议。')}
+              className="text-[11px] px-2 py-1 rounded-md border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+            >
+              合议补充
+            </button>
+            <button
+              onClick={exportDefense}
+              className="text-[11px] px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ml-auto"
+            >
+              导出记录
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={defenseFollowup}
+              onChange={(e) => setDefenseFollowup(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleDefenseContinue('assistant', defenseFollowup); }}
+              placeholder="自由追问（如：请针对数据可得性展开论证）…"
+              className="flex-1 px-2.5 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-1 focus:ring-primary-400"
+            />
+            <button
+              onClick={() => handleDefenseContinue('assistant', defenseFollowup)}
+              disabled={!defenseFollowup.trim()}
+              className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs rounded-lg transition-colors"
+            >
+              <MessageSquareText className="w-3.5 h-3.5" /> 追问
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 合议分数 + verdict（前端解析展示，4 轴分数服务端已落库） */}
       {defenseScores && !defending && (

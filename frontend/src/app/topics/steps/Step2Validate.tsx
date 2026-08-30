@@ -3,9 +3,10 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, Gavel, MessageSquareText, User } from 'lucide-react';
-import { streamValidateTopic, streamDebateTopic, papersApi, getLastModel } from '@/lib/api';
+import { streamValidateTopic, streamDebateTopic, streamDebateContinue, papersApi, getLastModel } from '@/lib/api';
 import { parseValidationScores } from '@/lib/topicReport';
 import { openAssistant } from '@/lib/assistantBus';
+import { downloadTextFile } from '@/lib/utils';
 import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
 import type { StepProps } from './types';
 import DebateModelSelect from './DebateModelSelect';
@@ -62,6 +63,14 @@ function debateAvatar(side: DebateSide): React.ReactNode {
 
 const DEBATE_SIDE_LABELS: Record<DebateSide, string> = { pro: '正方', con: '反方', judge: '评委' };
 
+// 继续追问角色 -> 轮次标签/侧栏
+const DEBATE_FOLLOWUP_META: Record<string, { label: string; side: DebateSide }> = {
+  pro: { label: '正方再回应', side: 'pro' },
+  con: { label: '反方再回应', side: 'con' },
+  judge: { label: '评委再点评', side: 'judge' },
+  assistant: { label: '继续追问', side: 'judge' },
+};
+
 export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   const [validating, setValidating] = useState(false);
   const [reportContent, setReportContent] = useState('');
@@ -91,6 +100,8 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
   // onContent/onReasoning 传「全局累积全文」，用前缀差取当前轮增量
   const debateFullTextRef = useRef('');
   const debateReasoningRef = useRef('');
+  // 继续追问输入
+  const [debateFollowup, setDebateFollowup] = useState('');
   // 辩论设置：每方轮数、按角色模型（'provider/model'，''=默认）、统一模型开关
   const [debateRoundsPerSide, setDebateRoundsPerSide] = useState(2);
   const [debateModels, setDebateModels] = useState<Record<'pro' | 'con' | 'judge', string>>({ pro: '', con: '', judge: '' });
@@ -354,6 +365,67 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
       debateRoundsPerSide,
       modelsPayload,
     );
+  };
+
+  // 继续追问：基于已完成轮次追加一轮（指定角色或自由追问）
+  const handleDebateContinue = async (role: string, prompt: string) => {
+    const topic = project.title.trim();
+    const q = (prompt || '').trim();
+    if (!topic || !q || debating) return;
+    setDebating(true);
+    setDebateError(null);
+    debateFullTextRef.current = '';    // continue 流的累积从本轮重新开始
+    debateReasoningRef.current = '';
+    const controller = new AbortController();
+    debateAbortRef.current = controller;
+    const history = debateRounds.map((r) => ({ id: r.id, label: r.label, model: r.model, text: r.text }));
+    const meta = DEBATE_FOLLOWUP_META[role] || { label: '继续追问', side: 'judge' as DebateSide };
+    await streamDebateContinue(topic, project.id, history, role, q, {
+      onContent: (text) => {
+        const delta = text.slice(debateFullTextRef.current.length);
+        debateFullTextRef.current = text;
+        if (!delta) return;
+        setDebateRounds((prev) => {
+          const arr = [...prev];
+          const last = arr[arr.length - 1];
+          if (!last) return arr;
+          arr[arr.length - 1] = { ...last, text: last.text + delta };
+          return arr;
+        });
+      },
+      onReasoning: (text) => {
+        const delta = text.slice(debateReasoningRef.current.length);
+        debateReasoningRef.current = text;
+        if (!delta) return;
+        setDebateRounds((prev) => {
+          const arr = [...prev];
+          const last = arr[arr.length - 1];
+          if (!last) return arr;
+          arr[arr.length - 1] = { ...last, reasoning: (last.reasoning || '') + delta };
+          return arr;
+        });
+      },
+      onMeta: (data) => {
+        if (data && typeof data === 'object' && 'round' in data) {
+          const d = data as Record<string, unknown>;
+          const model = typeof d.model === 'string' ? d.model : undefined;
+          setDebateRounds((prev) => [...prev, { id: `followup_${Date.now()}`, label: meta.label, side: meta.side, text: '', reasoning: '', model }]);
+        }
+      },
+      onDone: () => setDebating(false),
+      onError: (msg) => {
+        setDebateError(msg);
+        setDebating(false);
+      },
+    }, controller.signal);
+    setDebateFollowup('');
+  };
+
+  // 导出辩论记录 markdown
+  const exportDebate = () => {
+    if (debateRounds.length === 0) return;
+    const parts = debateRounds.map((r) => `### ${r.label}${r.model ? `（${r.model}）` : ''}\n\n${r.text}`);
+    downloadTextFile(`${project.title}_辩论记录.md`, `# 选题辩论：${project.title}\n\n${parts.join('\n\n---\n\n')}\n`, 'text/markdown;charset=utf-8');
   };
 
   // 验证用的初始报告：优先当前流式内容，其次项目已保存的
@@ -661,6 +733,55 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
             })}
             <div ref={debateScrollRef} />
           </div>
+
+          {/* 继续追问 + 导出记录 */}
+          {debateRounds.length > 0 && !debating && (
+            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                <span className="text-xs text-gray-400">继续追问</span>
+                <button
+                  onClick={() => handleDebateContinue('con', '请反方再质疑正方的最新论点，并提出新的风险点。')}
+                  className="text-[11px] px-2 py-1 rounded-md border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  让反方再质疑
+                </button>
+                <button
+                  onClick={() => handleDebateContinue('pro', '请正方再辩护，回应反方最新质疑。')}
+                  className="text-[11px] px-2 py-1 rounded-md border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                >
+                  让正方再辩护
+                </button>
+                <button
+                  onClick={() => handleDebateContinue('judge', '请评委点评最新一轮交锋，并补充裁决意见。')}
+                  className="text-[11px] px-2 py-1 rounded-md border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors"
+                >
+                  评委点评
+                </button>
+                <button
+                  onClick={exportDebate}
+                  className="text-[11px] px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ml-auto"
+                >
+                  导出记录
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={debateFollowup}
+                  onChange={(e) => setDebateFollowup(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleDebateContinue('assistant', debateFollowup); }}
+                  placeholder="自由追问（如：请针对数据可得性展开论证）…"
+                  className="flex-1 px-2.5 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none focus:ring-1 focus:ring-primary-400"
+                />
+                <button
+                  onClick={() => handleDebateContinue('assistant', debateFollowup)}
+                  disabled={!debateFollowup.trim()}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-xs rounded-lg transition-colors"
+                >
+                  <MessageSquareText className="w-3.5 h-3.5" /> 追问
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 裁决分数（复用 validate 评分轴；前端解析展示，服务端已落库） */}
           {debateScores && !debating && (

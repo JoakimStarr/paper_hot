@@ -219,6 +219,12 @@ def apply_scores(project, scores: Dict[str, Any]) -> List[str]:
     if scores.get("feasibility") is not None:
         project.feasibility = scores["feasibility"]
         touched.append("feasibility")
+    if scores.get("gate") in GATES:
+        project.gate = scores["gate"]
+        touched.append("gate")
+    if scores.get("verdict") in VERDICTS:
+        project.verdict = scores["verdict"]
+        touched.append("verdict")
     if project.status == "to_validate":
         project.status = "validated"
         touched.append("status")
