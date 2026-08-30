@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models import TopicProject
 from app.skills import debate
 
 
@@ -37,6 +38,22 @@ def _mk_comp():
 
 
 class TestDebateSkill:
+    def test_project_out_includes_transcript(self):
+        """选题列表/详情序列化必须透出 debate_transcript（前端恢复辩论全文的契约）。"""
+        from app.routers.topic import _project_out
+        p = TopicProject(
+            id=1, user_id="local", title="测试",
+            debate_transcript={
+                "surface": "debate", "rounds_per_side": 2,
+                "rounds": [{"id": "pro_1", "label": "正方陈述", "model": "p/m", "text": "正文"}],
+                "scores": {"novelty": 8, "crowding": "中", "feasibility": 7, "gate": "caution"},
+            },
+        )
+        out = _project_out(p)
+        assert out["debate_transcript"]["surface"] == "debate"
+        assert out["debate_transcript"]["rounds"][0]["id"] == "pro_1"
+        assert out["debate_transcript"]["scores"]["novelty"] == 8
+
     def test_round_sequence_and_labels(self):
         assert debate.ROUND_SEQUENCE == ["pro_1", "con_1", "pro_2", "con_2", "judge"]
         assert debate.ROLE_LABELS["pro_1"][1] == "pro"
