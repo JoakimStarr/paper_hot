@@ -389,6 +389,163 @@ async def _t_topic_clusters(db: AsyncSession, args: dict) -> dict:
     return {"total_papers": data.get("total"), "k": data.get("k"), "clusters": clusters}
 
 
+async def _t_get_paper_detail(db: AsyncSession, args: dict) -> dict:
+    """按 paper_id 或标题取单篇论文详情（含摘要），供回答"《某论文》讲了什么"。"""
+    paper, err = await _resolve_paper(db, args)
+    if err:
+        return err
+    abstract = paper.abstract or ""
+    if len(abstract) > 800:
+        abstract = abstract[:800] + "…（摘要过长已截断）"
+    score = (await db.execute(
+        sa_select(PaperScore.final_score).where(PaperScore.paper_id == paper.id)
+    )).scalar_one_or_none()
+    return {"papers": [{
+        "id": paper.id,
+        "title": paper.title,
+        "authors": (paper.authors or [])[:8] or "未知",
+        "journal": paper.journal_name,
+        "published_at": str(paper.published_at)[:10] if paper.published_at else None,
+        "keywords": (paper.keywords_cn or [])[:8],
+        "subfield": paper.economics_subfield,
+        "abstract": abstract or "无",
+        "references_count": len(paper.references_cn or []),
+        "score": round(float(score), 3) if score is not None else None,
+    }]}
+
+
+async def _t_similar_papers(db: AsyncSession, args: dict) -> dict:
+    """查与某篇论文最相似的库内论文（基于预计算的 TF-IDF 相似度索引）。"""
+    paper, err = await _resolve_paper(db, args)
+    if err:
+        return err
+    from app.crud import PaperSimilarityCRUD
+    limit = min(int(args.get("limit") or MAX_TOOL_RESULTS_ITEMS), MAX_TOOL_RESULTS_ITEMS)
+    papers, score_map = await PaperSimilarityCRUD.get_similar_papers_with_scores(db, paper.id, limit=limit)
+    if not papers:
+        return {"query_paper": {"id": paper.id, "title": paper.title},
+                "note": "库中暂无该论文的预计算相似结果（相似度索引未覆盖该论文），可改用 search_papers 按关键词检索",
+                "papers": []}
+    items = [{
+        "id": p.id,
+        "title": p.title,
+        "journal": p.journal_name,
+        "published_at": str(p.published_at)[:10] if p.published_at else None,
+        "similarity": round(float(score_map.get(p.id, 0)), 3),
+    } for p in papers]
+    return {"query_paper": {"id": paper.id, "title": paper.title}, "papers": items}
+
+
+async def _t_paper_references(db: AsyncSession, args: dict) -> dict:
+    """查论文的参考文献脉络：outgoing=该文引用了谁（references_cn 条目）；
+    incoming=库内哪些论文引用了该文（反向匹配）。"""
+    paper, err = await _resolve_paper(db, args)
+    if err:
+        return err
+    direction = str(args.get("direction") or "outgoing").strip().lower()
+    limit = min(int(args.get("limit") or 10), 20)
+    if direction in ("incoming", "citing"):
+        from app.crud import find_citing_papers
+        citing = await find_citing_papers(db, paper.id, paper.title or "", paper.url or "")
+        return {"direction": "incoming",
+                "note": "以下库内论文的参考文献中引用了该论文",
+                "total": len(citing),
+                "papers": citing[:limit]}
+    refs = paper.references_cn or []
+    if not refs:
+        return {"direction": "outgoing", "query_paper": {"id": paper.id, "title": paper.title},
+                "note": "该论文暂无参考文献数据（参考文献抓取未覆盖），请如实告知用户",
+                "total": 0, "references": []}
+    items = [{"index": (it.get("index") or i + 1), "text": (it.get("text") or "")[:160]}
+             for i, it in enumerate(refs[:limit])]
+    return {"direction": "outgoing", "query_paper": {"id": paper.id, "title": paper.title},
+            "total": len(refs), "shown": len(items),
+            "note": "references 为该文文末参考文献条目（非库内论文），不可对其使用 [编号] 论文引用",
+            "references": items}
+
+
+async def _t_my_library(db: AsyncSession, args: dict) -> dict:
+    """当前用户的收藏/阅读历史（仅 assistant surface；user_id 由 agent 循环注入 args["_user_id"]）。"""
+    uid = str(args.get("_user_id") or "").strip()
+    if not uid:
+        return {"error": "无法识别当前用户，不能查询个人数据"}
+    kind = str(args.get("kind") or "favorites").strip().lower()
+    limit = min(int(args.get("limit") or MAX_TOOL_RESULTS_ITEMS), MAX_TOOL_RESULTS_ITEMS)
+    from app.models import Favorite, ReadingHistory
+    if kind in ("history", "reading"):
+        label = "reading_history"
+        rows = (await db.execute(
+            sa_select(ReadingHistory.paper_id, ReadingHistory.read_at)
+            .where(ReadingHistory.user_id == uid)
+            .order_by(ReadingHistory.read_at.desc())
+            .limit(limit)
+        )).all()
+    else:
+        label = "favorites"
+        rows = (await db.execute(
+            sa_select(Favorite.paper_id, Favorite.created_at)
+            .where(Favorite.user_id == uid)
+            .order_by(Favorite.created_at.desc())
+            .limit(limit)
+        )).all()
+    if not rows:
+        return {"kind": label, "count": 0, "papers": [],
+                "note": "该用户暂无对应记录，请如实告知"}
+    ids = [pid for pid, _ in rows]
+    prows = (await db.execute(
+        sa_select(Paper.id, Paper.title, Paper.journal_name, Paper.published_at)
+        .where(Paper.id.in_(ids))
+    )).all()
+    pmap = {r[0]: r for r in prows}
+    papers = []
+    for pid, ts in rows:
+        info = pmap.get(pid)
+        if info is None:
+            continue  # 论文已被清理，收藏/阅读记录悬挂
+        _pid, title, jn, pub = info
+        papers.append({
+            "id": pid, "title": title, "journal": jn,
+            "published_at": str(pub)[:10] if pub else None,
+            "at": str(ts)[:19] if ts else None,
+        })
+    return {"kind": label, "count": len(papers), "papers": papers}
+
+
+async def _resolve_paper(db: AsyncSession, args: dict):
+    """get_paper_detail / similar_papers / paper_references 共用的论文定位。
+
+    paper_id 精确优先；其次标题精确；再退标题模糊（唯一命中才采纳，
+    多个命中返回候选让模型用更完整标题重试，避免张冠李戴）。
+    返回 (Paper | None, error_dict | None)。
+    """
+    paper_id = str(args.get("paper_id") or "").strip()
+    title = str(args.get("title") or "").strip()
+    if paper_id:
+        row = (await db.execute(
+            sa_select(Paper).where(Paper.id == paper_id)
+        )).scalar_one_or_none()
+        if row is not None:
+            return row, None
+    if not title:
+        return None, {"error": "未找到论文：请提供有效的 paper_id 或 title"}
+    row = (await db.execute(
+        sa_select(Paper).where(Paper.title == title)
+    )).scalar_one_or_none()
+    if row is None:
+        fuzzy = (await db.execute(
+            sa_select(Paper).where(Paper.title.ilike(f"%{title}%")).limit(5)
+        )).scalars().all()
+        if len(fuzzy) == 1:
+            row = fuzzy[0]
+        elif len(fuzzy) > 1:
+            return None, {"error": f"标题模糊匹配到 {len(fuzzy)} 篇论文，请用更完整的标题重试",
+                          "candidates": [p.title for p in fuzzy]}
+    if row is None:
+        return None, {"note": "未在论文库中找到该论文，请如实告知用户，严禁编造",
+                      "queried_title": title}
+    return row, None
+
+
 # ---------------------------------------------------------------- 工具注册表
 
 def _schema(name: str, description: str, props: dict, required: list[str]) -> dict:
@@ -418,6 +575,10 @@ TOOL_HANDLERS = {
     "keyword_network": _t_keyword_network,
     "keyword_map": _t_keyword_map,
     "topic_clusters": _t_topic_clusters,
+    "get_paper_detail": _t_get_paper_detail,
+    "similar_papers": _t_similar_papers,
+    "paper_references": _t_paper_references,
+    "my_library": _t_my_library,
 }
 
 TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
@@ -463,6 +624,18 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {"keyword": {"type": "string"}}, ["keyword"]),
         _schema("topic_clusters", "获取论文库主题聚类地图：各主题簇的标签、规模、年份范围与高频关键词。回答“论文库有哪些主题/研究方向分类”时使用",
                 {"k": {"type": "integer"}}, []),
+        _schema("get_paper_detail", "按 paper_id 或标题取单篇论文详情（作者/摘要/关键词/参考文献数）。回答\"《某论文》讲了什么/某篇的摘要\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"}}, []),
+        _schema("similar_papers", "查与某篇论文最相似的库内论文（预计算 TF-IDF 相似度）。回答\"和这篇类似的论文/同方法的文章\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"},
+                 "limit": {"type": "integer"}}, []),
+        _schema("paper_references", "查论文的参考文献脉络：direction=outgoing 返回该文引用的文献条目，direction=incoming 返回库内哪些论文引用了该文。回答\"这篇承接了哪些工作/学术定位/被谁引用\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"},
+                 "direction": {"type": "string", "enum": ["outgoing", "incoming"]},
+                 "limit": {"type": "integer"}}, []),
+        _schema("my_library", "查询当前用户的收藏或阅读历史（kind=favorites 收藏 / history 阅读史）。回答\"我收藏了哪些/我读过什么\"时使用",
+                {"kind": {"type": "string", "enum": ["favorites", "history"]},
+                 "limit": {"type": "integer"}}, []),
     ],
     # 趋势追问（P0）
     "trend_chat": [
@@ -482,6 +655,11 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
+        _schema("get_paper_detail", "按 paper_id 或标题取单篇论文详情（作者/摘要/关键词/参考文献数）。用户问到具体某篇论文的内容时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"}}, []),
+        _schema("similar_papers", "查与某篇论文最相似的库内论文（预计算 TF-IDF 相似度）。回答\"和这篇类似的论文/同方法的文章\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"},
+                 "limit": {"type": "integer"}}, []),
     ],
     # 单篇论文追问（P0）：在论文自身内容之上，可跨库检索相关文献
     "paper_chat": [
@@ -497,6 +675,15 @@ TOOL_SCHEMAS_BY_SURFACE: dict[str, list[dict]] = {
                 {}, []),
         _schema("author_papers", "按作者名查询其论文列表",
                 {"author": {"type": "string"}, "limit": {"type": "integer"}}, ["author"]),
+        _schema("get_paper_detail", "按 paper_id 或标题取单篇论文详情（作者/摘要/关键词/参考文献数）。回答\"《某论文》讲了什么/某篇的摘要\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"}}, []),
+        _schema("similar_papers", "查与某篇论文最相似的库内论文（预计算 TF-IDF 相似度）。回答\"和这篇类似的论文/同方法的文章\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"},
+                 "limit": {"type": "integer"}}, []),
+        _schema("paper_references", "查论文的参考文献脉络：direction=outgoing 返回该文引用的文献条目，direction=incoming 返回库内哪些论文引用了该文。回答\"这篇承接了哪些工作/学术定位/被谁引用\"时使用",
+                {"paper_id": {"type": "string"}, "title": {"type": "string"},
+                 "direction": {"type": "string", "enum": ["outgoing", "incoming"]},
+                 "limit": {"type": "integer"}}, []),
     ],
 }
 
@@ -582,12 +769,14 @@ async def _stream_model_round(client: Any, model: str, convo: list, schemas: lis
         try:
             resp = client.chat.completions.create(
                 model=model, messages=convo, tools=schemas or None, stream=True,
+                temperature=0.4,
             )
             _consume_stream(resp, collected, _forward)
         except Exception as e:
             logger.warning(f"agent round stream failed, retrying once: {e}")
             resp = client.chat.completions.create(
                 model=model, messages=convo, tools=schemas or None, stream=True,
+                temperature=0.4,
             )
             _consume_stream(resp, collected, _forward)
 
@@ -608,6 +797,7 @@ async def run_agent_chat(
     outer_db: AsyncSession | None = None,
     on_progress: Any = None,
     on_delta: Any = None,
+    user_id: str | None = None,
 ) -> tuple[list[dict], list[dict], bool]:
     """带工具调用循环的对话（全流式）。
 
@@ -666,6 +856,9 @@ async def run_agent_chat(
                 args = json.loads(tc["function"]["arguments"] or "{}")
             except Exception:
                 args = {}
+            # 个人数据工具（my_library）依赖当前用户身份：由调用方注入，模型侧不可伪造
+            if user_id and isinstance(args, dict):
+                args.setdefault("_user_id", user_id)
             if on_progress:
                 try:
                     on_progress({"tool": name, "args": args})

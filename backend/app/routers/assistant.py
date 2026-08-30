@@ -295,7 +295,7 @@ async def assistant_chat(
         system_prompt += (
             "\n\n## 工具使用规则\n"
             "1. 涉及论文库数据的问题（热点/趋势/相关论文/研究现状/数量/进展/作者），第一步必须调用工具检索后再回答，禁止用常识编造库内数字。\n"
-            "2. 热点用 trending_topics，推荐/相关文献用 retrieve_context 或 search_papers，其余按需调用。\n"
+            "2. 热点用 trending_topics，推荐/相关文献用 retrieve_context 或 search_papers，个人收藏/阅读史用 my_library，其余按需调用。\n"
             "3. 未调用工具就不要说「我查看了论文库/我检索了」。不检索就直接回答。\n"
             "4. 引用检索到的论文用 [编号] 标注（如 [1]）。\n"
             "5. 检索结果为空或无关时如实说明，不要编造。"
@@ -320,5 +320,5 @@ async def assistant_chat(
 
     return _stream_agent_chat_response(
         client, provider, messages, model=bare_model, surface="assistant_chat",
-        agent_enabled=enabled,
+        agent_enabled=enabled, user_id=uid,
     )

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Tuple
@@ -19,6 +20,63 @@ from app.schemas import PaperCardResponse
 logger = logging.getLogger(__name__)
 
 _shared_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
+# Agent 追问的「工具使用规则」：头部/尾部各 surface 共享（引用编号规范 + 防幻觉约束），
+# 中间的工具清单按 surface 各异（须与 app/agent.py 的 TOOL_SCHEMAS_BY_SURFACE 保持一致）。
+AGENT_TOOL_RULES_HEADER = """\
+## 工具使用规则（重要）
+你可以在论文库中检索数据。当用户询问涉及库内具体内容的问题时——例如"有哪些相关论文"、\
+"某方向的研究脉络/方法/结论"、"论文数量/趋势"、"谁在研究"——**必须**先调用工具检索，再基于检索结果回答：
+"""
+
+AGENT_TOOL_RULES_FOOTER = """
+引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空或与问题无关，如实说明。"""
+
+
+def _extract_json(text: str):
+    """从 LLM 输出里稳健提取 JSON（容忍 markdown 代码块围栏、前后杂讯与嵌套结构）。
+
+    策略：先去围栏，再尝试整段解析；失败则用括号配对找最外层 {...} 或 [...]。
+    """
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\n?", "", t)
+        t = re.sub(r"\n?```$", "", t).strip()
+    try:
+        return json.loads(t)
+    except Exception:
+        pass
+    # 括号配对：找到第一个开括号后按深度匹配最外层闭合，跳过被括号包裹的内层
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = t.find(opener)
+        if start < 0:
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(t)):
+            ch = t[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == opener:
+                depth += 1
+            elif ch == closer:
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(t[start:i + 1])
+                    except Exception:
+                        break
+    logger.warning("_extract_json 解析失败，原始输出前 200 字符: %r", (text or "")[:200])
+    raise ValueError("无法从 LLM 输出解析 JSON")
 
 
 async def verify_token(x_api_token: str = Header(default=None)):
@@ -201,11 +259,13 @@ async def _stream_llm_content(client, model: str, messages: list,
 
 def _stream_agent_chat_response(client, provider: str, messages: list, model: Optional[str] = None,
                                 surface: str = "trend_chat",
-                                agent_enabled: Optional[bool] = None):
+                                agent_enabled: Optional[bool] = None,
+                                user_id: Optional[str] = None):
     """追问 SSE：默认跑 Agent 工具循环（实时推送工具调用进度 → 工具轨迹 → 正文）；
     当 Agent 关闭时退化为普通对话——不调用任何工具，直接流式输出回答。
 
     agent_enabled：请求级覆盖（悬浮助手"检索数据库"开关）。为 None 时使用全局 settings.agent_enabled。
+    user_id：当前用户身份，透传给工具循环供个人数据类工具（my_library）使用；不传则此类工具报"无法识别用户"。
     """
     from app.agent import run_agent_chat
 
@@ -217,7 +277,7 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
     async def event_generator():
         # Agent 开关关闭：普通追问，无检索、无工具轨迹/进度
         if not enabled:
-            async for frame in _stream_llm_content(client, model, messages):
+            async for frame in _stream_llm_content(client, model, messages, temperature=0.4):
                 yield frame
             return
 
@@ -230,6 +290,7 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
                     messages, client, model, surface=surface,
                     on_progress=out_q.put_nowait,   # {"tool","args"}
                     on_delta=out_q.put_nowait,      # {"content"|"reasoning", ...}
+                    user_id=user_id,
                 )
                 box["messages"] = msgs
                 box["trace"] = trace
@@ -263,7 +324,7 @@ def _stream_agent_chat_response(client, provider: str, messages: list, model: Op
             yield f"data: {json.dumps({'tools': _compact_agent_trace(box['trace'])})}\n\n"
         # 正文已由 agent 循环流式推送时无需重放；否则（降级路径）补一次普通流式
         if not box["content_streamed"]:
-            async for frame in _stream_llm_content(client, model, box["messages"]):
+            async for frame in _stream_llm_content(client, model, box["messages"], temperature=0.4):
                 yield frame
         else:
             if box.get("usage"):

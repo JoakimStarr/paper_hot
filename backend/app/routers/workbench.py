@@ -35,6 +35,7 @@ from app.routers.deps import (
     resolve_working_model,
     verify_token, _parse_json_list, _isoformat_utc,
     _get_ai_client, _resolve_model_provider, _get_default_model,
+    _extract_json,
 )
 from app.routers.topic import _retrieve_similar_papers, _generate_proposal_content, _project_out
 from app.routers.producer import _suggest_journal_content
@@ -503,52 +504,6 @@ async def run_ai_action(
     from app.main import spawn_background_task
     spawn_background_task(_run_ai_action(project_id, action, idea_text=body.idea_text, model=body.model))
     return {"status": "started", "action": action}
-
-
-def _extract_json(text: str):
-    """从 LLM 输出里稳健提取 JSON（容忍 markdown 代码块围栏、前后杂讯与嵌套结构）。
-
-    策略：先去围栏，再尝试整段解析；失败则用括号配对找最外层 {...} 或 [...]。
-    """
-    t = (text or "").strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\n?", "", t)
-        t = re.sub(r"\n?```$", "", t).strip()
-    try:
-        return json.loads(t)
-    except Exception:
-        pass
-    # 括号配对：找到第一个开括号后按深度匹配最外层闭合，跳过被括号包裹的内层
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = t.find(opener)
-        if start < 0:
-            continue
-        depth = 0
-        in_str = False
-        esc = False
-        for i in range(start, len(t)):
-            ch = t[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif ch == "\\":
-                    esc = True
-                elif ch == '"':
-                    in_str = False
-                continue
-            if ch == '"':
-                in_str = True
-            elif ch == opener:
-                depth += 1
-            elif ch == closer:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(t[start:i + 1])
-                    except Exception:
-                        break
-    logger.warning("workbench _extract_json 解析失败，原始输出前 200 字符: %r", (text or "")[:200])
-    raise ValueError("无法从 LLM 输出解析 JSON")
 
 
 async def _llm_json(messages: list, max_tokens: int = 4096, temperature: float = 0.4, model: Optional[str] = None):

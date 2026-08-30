@@ -3,7 +3,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
@@ -23,6 +22,7 @@ from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc, _paper_to_card,
     _compute_cache_key, _get_ai_client, _resolve_model_provider,
     _get_default_model, _stream_agent_chat_response, _stream_llm_content,
+    _extract_json, AGENT_TOOL_RULES_HEADER, AGENT_TOOL_RULES_FOOTER,
 )
 from app.schemas import (
     PaperResponse, PaperCardListResponse, PaperDetailResponse, SimilarPaper,
@@ -510,6 +510,10 @@ def _build_single_analysis_messages(paper, refs: Optional[list] = None) -> list[
     journal = paper.journal_name or "未知"
     journal_issue = paper.journal_issue or ""
     subfield = paper.economics_subfield or "未知"
+    # 摘要截断保护：个别条目摘要异常超长，注入前裁剪避免浪费 token / 撑爆上下文
+    abstract = paper.abstract or "无"
+    if len(abstract) > 1000:
+        abstract = abstract[:1000] + "…（摘要过长已截断）"
 
     system_prompt = (
         "你是一位严谨的学术分析专家，擅长从论文标题、作者、期刊、关键词与摘要中提炼结构化洞见。"
@@ -536,7 +540,7 @@ def _build_single_analysis_messages(paper, refs: Optional[list] = None) -> list[
 - 关键词：{keywords}
 
 摘要：
-{paper.abstract or '无'}
+{abstract}
 {refs_section}
 请从以下方面进行分析，用中文作答：
 1. **研究背景与核心问题**：论文试图解决什么问题，为什么重要
@@ -746,7 +750,7 @@ async def _run_batch_analyze_background(batch_id: int, ids: List[str], model: Op
                 return
 
             papers_text = "\n\n".join([
-                f"【{i+1}】《{p.title}》\n"
+                f"[{i+1}] 《{p.title}》\n"
                 f"- 期刊：{p.journal_name or '未知'} {p.journal_issue or ''}\n"
                 f"- 作者：{', '.join(_parse_json_list(p.authors)) or '未知'}\n"
                 f"- 关键词：{', '.join(_parse_json_list(p.keywords_cn)) or '未知'}\n"
@@ -756,7 +760,7 @@ async def _run_batch_analyze_background(batch_id: int, ids: List[str], model: Op
 
             system_prompt = (
                 "你是一位严谨的学术综述专家。回答使用中文、清晰的 Markdown 结构，"
-                "引用文献时用【编号】标注，结论必须有文献支撑，不臆造。"
+                "引用文献时用 [编号] 标注（如 [1][3]），结论必须有文献支撑，不臆造。"
             )
             prompt = f"""以下是用户从论文库中挑选的 {len(papers)} 篇论文，请生成一份「领域综述摘要」：
 
@@ -768,7 +772,7 @@ async def _run_batch_analyze_background(batch_id: int, ids: List[str], model: Op
 ## 方法图谱
 各篇采用的方法归类对比（可用列表），指出方法上的共性与分歧
 ## 核心发现对照
-逐篇一句话核心结论（【编号】标注），并指出相互印证或矛盾之处
+逐篇一句话核心结论（[编号] 标注），并指出相互印证或矛盾之处
 ## 研究空白与下一步
 综合来看还有哪些空隙值得研究，给出 2-3 个可行切入点"""
 
@@ -874,10 +878,13 @@ async def paper_topic_relevance(
             max_tokens=200,
             temperature=0.2,
         )
-        import json as _json
         raw = (response.choices[0].message.content or "").strip()
-        m = re.search(r"\{.*\}", raw, re.S)
-        data = _json.loads(m.group(0)) if m else {}
+        try:
+            data = _extract_json(raw)  # 容忍围栏/杂讯的稳健解析（与 workbench 共用）
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
         score = float(data.get("score", rule_score))
         score = max(0.0, min(1.0, score))
         return {"score": round(score, 2), "reason": str(data.get("reason", ""))[:300], "ai_used": True}
@@ -924,17 +931,20 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
     authors = ", ".join(_parse_json_list(paper.authors)) or "未知"
     keywords = ", ".join(_parse_json_list(paper.keywords_cn)) or "未知"
     journal = paper.journal_name or "未知"
+    abstract = paper.abstract or "无"
+    if len(abstract) > 1000:
+        abstract = abstract[:1000] + "…（摘要过长已截断）"
 
     # Agent 工具检索开关：请求级覆盖优先于全局；关闭时移除工具规则，追问退化为普通对话（不检索论文库）
+    # 头部/尾部共享自 deps（引用编号规范 + 防幻觉约束），工具清单与 agent.TOOL_SCHEMAS_BY_SURFACE["paper_chat"] 对应
     agent_enabled = body.agent_enabled if body.agent_enabled is not None else settings.agent_enabled
-    tool_rules = """\
-## 工具使用规则（重要）
-你可以在论文库中检索更多相关文献。当用户询问涉及库内论文的问题时——例如"还有哪些相关论文"、"这个方向的研究脉络/方法/结论是什么"、"谁在研究这个"、"相关文献数量/趋势"——**必须**先调用工具检索：
+    tool_rules = (AGENT_TOOL_RULES_HEADER + """\
 - `search_papers`：按关键词/期刊/年份检索论文（返回标题/期刊/关键词/评分）
 - `retrieve_context`：语义召回最相关的论文（返回标题/摘要/编号，适合"研究到哪了/结论是什么"）
 - `paper_trend`：关键词逐年发文趋势；`author_papers`：按作者查论文
-
-检索之后，引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空或与问题无关，如实说明。""" if agent_enabled else ""
+- `get_paper_detail` / `similar_papers`：取某篇论文的详情（含摘要）、查与它最相似的库内论文
+- `paper_references`：查论文的参考文献脉络（该文引用了谁 / 库内谁引用了该文）
+""" + AGENT_TOOL_RULES_FOOTER) if agent_enabled else ""
 
     system_prompt = f"""你是一位学术论文分析助手，正在与用户围绕一篇论文进行多轮对话。以下是当前讨论的论文信息：
 
@@ -946,7 +956,7 @@ async def chat_about_paper(paper_id: str, body: ChatRequest, db: AsyncSession = 
 - 子领域：{paper.economics_subfield or '未知'}
 
 ## 摘要
-{paper.abstract or '无'}
+{abstract}
 
 ## 对话规则
 1. 基于以上论文信息回答用户问题，用中文，回答做到结构清晰、有针对性。

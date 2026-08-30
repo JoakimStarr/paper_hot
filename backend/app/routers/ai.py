@@ -16,6 +16,7 @@ from app.ai_service import ai_trend_service
 from app.routers.deps import (
     verify_token, _parse_json_list, _isoformat_utc,
     _get_ai_client, _resolve_model_provider, _get_default_model, _stream_agent_chat_response,
+    AGENT_TOOL_RULES_HEADER, AGENT_TOOL_RULES_FOOTER,
 )
 from app.schemas import AIAnalysisReportResponse, AIAnalysisReportListResponse
 
@@ -467,14 +468,13 @@ async def chat_about_trend(report_id: int, body: TrendChatRequest, db: AsyncSess
         analysis_context = analysis_context[:6000] + "\n\n...(内容过长已截断)"
 
     # Agent 工具检索开关：关闭时移除工具规则，追问退化为普通对话（不检索论文库）
-    tool_rules = """\
-## 工具使用规则（重要）
-你可以在论文库中检索数据。当用户询问涉及库内具体内容的问题时——例如"有哪些相关论文"、"某方向的研究脉络/方法/结论"、"论文数量/趋势"、"谁在研究"——**必须**先调用工具检索，再基于检索结果回答：
+    # 头部/尾部共享自 deps（引用编号规范 + 防幻觉约束），工具清单与 agent.TOOL_SCHEMAS_BY_SURFACE["trend_chat"] 对应
+    tool_rules = (AGENT_TOOL_RULES_HEADER + """\
 - `search_papers`：按关键词/期刊/年份检索论文
 - `retrieve_context`：语义召回最相关的论文（返回标题/摘要/编号，适合"研究到哪了/结论是什么"）
 - `paper_trend` / `keyword_gaps` / `subfield_distribution` / `author_papers`：趋势、空白、子领域分布、作者论文
-
-引用具体论文时用 [编号] 标注（如 [1][3]）。严禁仅凭通用知识编造库内论文的具体标题/结论；若检索结果为空，如实说明。""" if settings.agent_enabled else ""
+- `get_paper_detail` / `similar_papers`：取某篇论文的详情（含摘要）、查与它最相似的库内论文
+""" + AGENT_TOOL_RULES_FOOTER) if settings.agent_enabled else ""
 
     system_prompt = f"""你是一位专业的论文选题分析师。你的职责是基于AI趋势分析结果，帮助用户深入理解研究热点、发现选题机会、评估研究方向可行性。
 
