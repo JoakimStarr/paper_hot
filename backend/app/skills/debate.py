@@ -16,7 +16,7 @@ from app.skills import validate as validate_skill
 NAME = "debate"
 DESCRIPTION = "选题评估辩论：正方/反方各两轮交锋 + 评审按预承诺标准裁决（novelty/crowding/feasibility/gate）"
 
-# 五轮流式顺序：pro_1 正方陈述 -> con_1 反方反驳 -> pro_2 正方再回应 -> con_2 反方再回应 -> judge 评审裁决
+# 默认五轮流式顺序（每方 2 轮）：pro_1 正方陈述 -> con_1 反方反驳 -> pro_2 正方再回应 -> con_2 反方再回应 -> judge 评审裁决
 ROUND_SEQUENCE: List[str] = ["pro_1", "con_1", "pro_2", "con_2", "judge"]
 
 ROLE_LABELS: Dict[str, Tuple[str, str]] = {
@@ -27,6 +27,33 @@ ROLE_LABELS: Dict[str, Tuple[str, str]] = {
     "judge": ("评审裁决", "judge"),
 }
 
+_MAX_ROUNDS_PER_SIDE = 3
+
+
+def build_round_sequence(rounds_per_side: int = 2) -> List[str]:
+    """按每方轮数自适应生成轮序：pro_i/con_i 交替 N 轮 + judge。
+
+    rounds_per_side 钳制到 [1, 3]；与默认常量 ROUND_SEQUENCE（N=2）保持一致输出。
+    """
+    n = max(1, min(int(rounds_per_side if rounds_per_side is not None else 2), _MAX_ROUNDS_PER_SIDE))
+    rounds: List[str] = []
+    for i in range(1, n + 1):
+        rounds.append(f"pro_{i}")
+        rounds.append(f"con_{i}")
+    rounds.append("judge")
+    return rounds
+
+
+def round_label(round_name: str) -> Tuple[str, str]:
+    """任意轮名的展示标签与立场（多轮自适应版 ROLE_LABELS）。"""
+    if round_name == "judge":
+        return "评审裁决", "judge"
+    side, idx = round_name.rsplit("_", 1)
+    i = int(idx)
+    if side == "pro":
+        return ("正方陈述" if i == 1 else f"正方第{i}轮", "pro")
+    return ("反方反驳" if i == 1 else f"反方第{i}轮", "con")
+
 
 def build_messages(
     topic: str,
@@ -35,16 +62,18 @@ def build_messages(
     competition: dict,
     history: List[Tuple[str, str]],
     round_name: str,
+    rounds_per_side: int = 2,
 ) -> List[dict]:
     """构造某一轮的 prompt：角色人格 + Script 证据 + 历史轮次 + 本轮指令。
 
     history：[(轮次标签, 该轮正文), ...]，不含当前轮。
+    rounds_per_side：每方轮数，用于区分"中间轮回应"与"末轮最后辩护"的措辞。
     """
     papers_text = validate_skill.build_papers_text(papers, limit=30)
     script_evidence = validate_skill.build_script_evidence(stats, competition)
-    label, side = ROLE_LABELS.get(round_name, (round_name, "pro"))
+    label, side = round_label(round_name)
     history_text = _format_history(history)
-    role_instruction = _role_instruction(side, label, round_name)
+    role_instruction = _role_instruction(side, label, round_name, rounds_per_side)
     # 评审轮额外追加裁决契约（JSON 头 + 正文小节固定顺序）
     if round_name == "judge":
         role_instruction += "\n\n" + judge_head_schema()
@@ -73,31 +102,48 @@ def build_messages(
     ]
 
 
-def _role_instruction(side: str, label: str, round_name: str) -> str:
-    """各角色的本轮任务指令。"""
+def _role_instruction(side: str, label: str, round_name: str, rounds_per_side: int = 2) -> str:
+    """各角色的本轮任务指令（按 (i, N) 区分中间轮回应与末轮最后辩护）。"""
     common = f"本轮的发言将呈现为「{label}」。"
+    try:
+        i = int(round_name.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        i = 1
+    n = max(1, min(int(rounds_per_side if rounds_per_side is not None else 2), _MAX_ROUNDS_PER_SIDE))
+    is_last = i >= n
     if side == "pro":
-        if round_name == "pro_1":
+        if i == 1:
             return (
                 common + "你持**支持**立场：论证该选题的研究价值与可行性。"
                 "说明它解决什么问题、为何值得做（引用热度/趋势/关键词证据）、"
                 "现有研究留下了什么空位（引用相似度最高的几篇 [n] 说明差异）。"
             )
+        if is_last:
+            return (
+                common + "你持**支持**立场，本轮是回应反方质疑后的最后辩护："
+                "逐条回应反方提出的拥挤/可行性质疑（引用证据说明为何低估），"
+                "并补充一个反方未考虑的差异化切入点。"
+            )
         return (
-            common + "你持**支持**立场，本轮是回应反方质疑后的最后辩护："
-            "逐条回应反方提出的拥挤/可行性质疑（引用证据说明为何低估），"
-            "并补充一个反方未考虑的差异化切入点。"
+            common + "你持**支持**立场，本轮继续回应反方上一轮的质疑："
+            "逐条反驳其关于拥挤度/可行性/数据可得性的论点（引用证据），"
+            "并指出反方忽略或低估的证据。"
         )
-    if round_name == "con_1":
+    if i == 1:
         return (
             common + "你持**反对/质疑**立场：客观评估该选题的风险与拥挤度。"
             "指出它与最相似文献的实质重合（引用 [n]）、方向竞争状况（引用 Script 统计）、"
             "数据与方法可行性的隐患。证据不足的部分如实说明，不要为了反对而反对。"
         )
+    if is_last:
+        return (
+            common + "你持**反对/质疑**立场，本轮是最后的再质疑："
+            "对正方新提出的差异化切入点评其现实障碍（数据可得性/方法成熟度/样本量），"
+            "并评估正方是否回避了最关键的竞争证据。"
+        )
     return (
-        common + "你持**反对/质疑**立场，本轮是回应正方辩护后的再质疑："
-        "对正方新提出的差异化切入点评其现实障碍（数据可得性/方法成熟度/样本量），"
-        "并评估正方是否回避了最关键的竞争证据。"
+        common + "你持**反对/质疑**立场，本轮继续质疑正方："
+        "对正方上轮的辩护逐条检视其证据强度，指出仍未被回答的关键问题。"
     )
 
 

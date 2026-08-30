@@ -3,7 +3,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { ShieldCheck, Loader2, Square, Sparkles, ChevronDown, Brain, RefreshCw, CheckCircle2, FileText, Gavel, MessageSquareText } from 'lucide-react';
-import { streamValidateTopic, streamDebateTopic, workbenchApi } from '@/lib/api';
+import { streamValidateTopic, streamDebateTopic, workbenchApi, papersApi, getLastModel, rememberModel } from '@/lib/api';
 import { parseValidationScores } from '@/lib/topicReport';
 import { openAssistant } from '@/lib/assistantBus';
 import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
@@ -14,14 +14,86 @@ const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), 
   loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
 });
 
-// 辩论五轮的展示标签与立场（与后端 skills/debate.py 的 ROUND_SEQUENCE/ROLE_LABELS 对齐）
-const DEBATE_ROUNDS: Record<string, { label: string; side: 'pro' | 'con' | 'judge' }> = {
+type DebateSide = 'pro' | 'con' | 'judge';
+
+interface DebateRound {
+  id: string;
+  label: string;
+  side: DebateSide;
+  text: string;
+  reasoning: string;
+  model?: string;
+}
+
+// 默认五轮（每方 2 轮）的展示标签（与后端 skills/debate.py 对齐）
+const DEBATE_ROUNDS: Record<string, { label: string; side: DebateSide }> = {
   pro_1: { label: '正方陈述', side: 'pro' },
   con_1: { label: '反方反驳', side: 'con' },
   pro_2: { label: '正方再回应', side: 'pro' },
   con_2: { label: '反方再回应', side: 'con' },
   judge: { label: '评审裁决', side: 'judge' },
 };
+
+// 多轮自适应标签（后端 build_round_sequence 可产生 pro_3/con_3 等）
+function debateRoundMeta(roundId: string): { label: string; side: DebateSide } {
+  const known = DEBATE_ROUNDS[roundId];
+  if (known) return known;
+  const m = /^(pro|con)_(\d+)$/.exec(roundId);
+  if (m) {
+    const i = Number(m[2]);
+    if (m[1] === 'pro') return { label: i === 1 ? '正方陈述' : `正方第${i}轮`, side: 'pro' };
+    return { label: i === 1 ? '反方反驳' : `反方第${i}轮`, side: 'con' };
+  }
+  return { label: roundId || '辩论', side: 'pro' };
+}
+
+// 角色模型下拉（Step4Data 同款交互：默认项 + provider · bare）
+function DebateModelSelect({ roleLabel, memKey, value, models, onChange }: {
+  roleLabel: string;
+  memKey: string;
+  value: string;
+  models: Array<{ id: string; label: string }>;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pick = (v: string) => {
+    rememberModel(memKey, v || null);
+    onChange(v);
+    setOpen(false);
+  };
+  return (
+    <div className="relative inline-flex items-center gap-1.5">
+      <span className="text-xs text-gray-400 shrink-0">{roleLabel}</span>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+        title="选择该角色的模型（默认自动跟随全局设置）"
+      >
+        {value ? (models.find((m) => m.id === value)?.label || value) : '默认模型'}
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-[200px] max-h-72 overflow-y-auto">
+          <button
+            onClick={() => pick('')}
+            className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${value === '' ? 'text-violet-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+          >
+            默认（跟随全局设置）
+          </button>
+          {models.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => pick(m.id)}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${value === m.id ? 'text-violet-600 font-medium' : 'text-gray-700 dark:text-gray-300'}`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Step2Validate({ project, onPatch, runAi, goStep }: StepProps) {
   const [validating, setValidating] = useState(false);
@@ -47,12 +119,50 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
   // —— 选题评估辩论状态 ——
   const [debating, setDebating] = useState(false);
   const [debateError, setDebateError] = useState<string | null>(null);
-  const [debateRounds, setDebateRounds] = useState<Array<{ id: string; label: string; side: 'pro' | 'con' | 'judge'; text: string; reasoning: string }>>([]);
+  const [debateRounds, setDebateRounds] = useState<DebateRound[]>([]);
   const [debateScores, setDebateScores] = useState<Record<string, unknown> | null>(null);
   const debateAbortRef = useRef<AbortController | null>(null);
   // onContent/onReasoning 传「全局累积全文」，用前缀差取当前轮增量
   const debateFullTextRef = useRef('');
   const debateReasoningRef = useRef('');
+  // 辩论设置：每方轮数、按角色模型（'provider/model'，''=默认）、统一模型开关
+  const [debateRoundsPerSide, setDebateRoundsPerSide] = useState(2);
+  const [debateModels, setDebateModels] = useState<Record<'pro' | 'con' | 'judge', string>>({ pro: '', con: '', judge: '' });
+  const [debateUnified, setDebateUnified] = useState(false);
+  const [debateUnifiedModel, setDebateUnifiedModel] = useState('');
+  const [debateAiModels, setDebateAiModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [debateSettingsOpen, setDebateSettingsOpen] = useState(true);
+  const debateScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // 加载可用模型列表 + 恢复各角色的模型记忆
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await papersApi.getAIAnalysisModels();
+        const bare = (n: string) => (n.includes('/') ? n.split('/').slice(1).join('/') : n);
+        const list = (res.models || [])
+          .filter((m) => m.available)
+          .map((m) => ({ id: m.name, label: `${m.provider ? `${m.provider} · ` : ''}${bare(m.name)}` }));
+        if (cancelled) return;
+        setDebateAiModels(list);
+        const restored: Record<'pro' | 'con' | 'judge', string> = { pro: '', con: '', judge: '' };
+        (['pro', 'con', 'judge'] as const).forEach((role) => {
+          const last = getLastModel(`debate_${role}`);
+          if (last && list.some((m) => m.id === last)) restored[role] = last;
+        });
+        setDebateModels(restored);
+      } catch { /* 模型列表加载失败：仍可用默认模型 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 自动滚动到最新一轮
+  useEffect(() => {
+    if (debating && debateScrollRef.current) {
+      debateScrollRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [debateRounds, debating]);
 
   const aiRunning = project.ai_pending === 'overview';
   const hasReport = !!(project.validation_report || reportContent);
@@ -198,6 +308,19 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
     let metaPapers: RetrievedPaper[] = [];
     let metaMode = '';
     let metaCompetition: ValidationEvidence['competition'] = null;
+    // 按角色模型载荷（统一开关时三键同值；'' 默认项省略，走全局默认）
+    const modelsPayload: Record<string, string> = {};
+    if (debateUnified) {
+      if (debateUnifiedModel) {
+        modelsPayload.pro = debateUnifiedModel;
+        modelsPayload.con = debateUnifiedModel;
+        modelsPayload.judge = debateUnifiedModel;
+      }
+    } else {
+      (['pro', 'con', 'judge'] as const).forEach((role) => {
+        if (debateModels[role]) modelsPayload[role] = debateModels[role];
+      });
+    }
     await streamDebateTopic(
       topic,
       project.id,
@@ -231,8 +354,9 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
           const d = data as Record<string, unknown>;
           if ('round' in d) {
             const roundId = String(d.round ?? '');
-            const meta = DEBATE_ROUNDS[roundId] ?? { label: roundId || d.round, side: 'pro' as const };
-            setDebateRounds((prev) => [...prev, { id: roundId, label: meta.label, side: meta.side, text: '', reasoning: '' }]);
+            const meta = debateRoundMeta(roundId);
+            const model = typeof d.model === 'string' ? d.model : undefined;
+            setDebateRounds((prev) => [...prev, { id: roundId, label: meta.label, side: meta.side, text: '', reasoning: '', model }]);
           } else if ('debate_scores' in d) {
             setDebateScores((d.debate_scores as Record<string, unknown>) || null);
           } else if ('papers' in d) {
@@ -254,6 +378,8 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
         },
       },
       controller.signal,
+      debateRoundsPerSide,
+      modelsPayload,
     );
   };
 
@@ -436,13 +562,15 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
         )}
       </div>
 
-      {/* 选题辩论：正方/反方各两轮 + 评审裁决 */}
+      {/* 选题辩论：正方/反方各 N 轮（左右双栏）+ 评审裁决（跨栏居中） */}
       {(debateRounds.length > 0 || debating || debateError) && (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-violet-200 dark:border-violet-800 p-4 sm:p-6">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
               <MessageSquareText className="w-4 h-4 text-violet-600" /> 选题辩论
-              <span className="text-[11px] font-normal text-gray-400">正反交锋 · 基于论文库证据</span>
+              <span className="text-[11px] font-normal text-gray-400">
+                正反交锋 · 基于论文库证据 · 每方 {debateRoundsPerSide} 轮
+              </span>
             </h3>
             {debating && (
               <span className="inline-flex items-center gap-1 text-xs text-violet-600 dark:text-violet-400">
@@ -451,55 +579,153 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
             )}
           </div>
 
-          {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
-
-          <div className="space-y-3">
-            {debateRounds.map((r, i) => (
-              <div
-                key={r.id}
-                className={`flex ${r.side === 'con' ? 'justify-end' : r.side === 'judge' ? 'justify-center' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[85%] rounded-lg border p-3 ${
-                    r.side === 'pro'
-                      ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
-                      : r.side === 'con'
-                        ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
-                        : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
-                      {r.label}
-                      <span className="ml-1 font-mono text-[10px] text-gray-400">({i + 1}/{debateRounds.length || 5})</span>
-                    </span>
-                    {debating && i === debateRounds.length - 1 && !r.text && (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        {r.reasoning ? '思考中，即将成文…' : '思考中…'}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 思考过程：流式滚入（推理模型的 reasoning 帧；原生 details 可折叠） */}
-                  {r.reasoning && (
-                    <details className="mb-1.5" open={debating && i === debateRounds.length - 1}>
-                      <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">
-                        思考过程
-                      </summary>
-                      <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
-                        {r.reasoning}
-                      </div>
-                    </details>
-                  )}
-
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <MarkdownRenderer content={r.text || (debating && i === debateRounds.length - 1 && !r.reasoning ? '…' : '')} citations={citations} />
+          {/* 辩论设置（可折叠） */}
+          <div className="mb-3">
+            <button
+              onClick={() => setDebateSettingsOpen((v) => !v)}
+              className="flex items-center gap-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            >
+              <Gavel className="w-3 h-3" /> 辩论设置
+              <ChevronDown className={`w-3 h-3 transition-transform ${debateSettingsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {debateSettingsOpen && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg bg-gray-50 dark:bg-gray-700/30 border border-gray-200 dark:border-gray-600 p-3">
+                {/* 每方轮数 */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">每方轮数</span>
+                  <div className="inline-flex rounded-md border border-gray-200 dark:border-gray-600 overflow-hidden">
+                    {[1, 2, 3].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setDebateRoundsPerSide(n)}
+                        disabled={debating}
+                        className={`px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${
+                          debateRoundsPerSide === n
+                            ? 'bg-violet-600 text-white'
+                            : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
                   </div>
                 </div>
+                {/* 统一模型快捷开关 */}
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none" title="所有角色用同一个模型">
+                  <input
+                    type="checkbox"
+                    checked={debateUnified}
+                    onChange={(e) => setDebateUnified(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-violet-600"
+                  />
+                  统一使用同一模型
+                </label>
+                {/* 模型选择：统一开关时单个下拉，否则三角色各一个 */}
+                {debateUnified ? (
+                  <DebateModelSelect
+                    roleLabel="模型"
+                    memKey="debate_unified"
+                    value={debateUnifiedModel}
+                    models={debateAiModels}
+                    onChange={setDebateUnifiedModel}
+                  />
+                ) : (
+                  <>
+                    <DebateModelSelect roleLabel="正方" memKey="debate_pro" value={debateModels.pro} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, pro: v }))} />
+                    <DebateModelSelect roleLabel="反方" memKey="debate_con" value={debateModels.con} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, con: v }))} />
+                    <DebateModelSelect roleLabel="评审" memKey="debate_judge" value={debateModels.judge} models={debateAiModels}
+                      onChange={(v) => setDebateModels((m) => ({ ...m, judge: v }))} />
+                  </>
+                )}
               </div>
-            ))}
+            )}
           </div>
+
+          {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
+
+          {/* 左右双栏：正方 / 反方，评审跨栏居中 */}
+          {(() => {
+            const proRounds = debateRounds.filter((r) => r.side === 'pro');
+            const conRounds = debateRounds.filter((r) => r.side === 'con');
+            const judgeRounds = debateRounds.filter((r) => r.side === 'judge');
+            const isLatest = (r: DebateRound) => debateRounds[debateRounds.length - 1]?.id === r.id;
+
+            const bubble = (r: DebateRound) => (
+              <div
+                key={r.id}
+                className={`rounded-lg border p-3 transition-all duration-300 ${
+                  r.side === 'pro'
+                    ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
+                    : r.side === 'con'
+                      ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
+                      : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{r.label}</span>
+                  {r.model && (
+                    <span className="text-[10px] px-1.5 py-px rounded bg-white/70 dark:bg-gray-700/70 text-gray-400 font-mono">
+                      {r.model.split('/').pop()}
+                    </span>
+                  )}
+                  {debating && isLatest(r) && !r.text && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      {r.reasoning ? '思考中，即将成文…' : '思考中…'}
+                    </span>
+                  )}
+                </div>
+                {r.reasoning && (
+                  <details className="mb-1.5" open={debating && isLatest(r)}>
+                    <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">思考过程</summary>
+                    <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
+                      {r.reasoning}
+                    </div>
+                  </details>
+                )}
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <MarkdownRenderer content={r.text || (debating && isLatest(r) && !r.reasoning ? '…' : '')} citations={citations} />
+                </div>
+              </div>
+            );
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-5 gap-y-4">
+                {/* 正方列 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" /> 正方 · 支持
+                  </div>
+                  {proRounds.length === 0 && debating && (
+                    <div className="text-xs text-gray-400 animate-pulse">正方尚未发言…</div>
+                  )}
+                  {proRounds.map(bubble)}
+                </div>
+                {/* 反方列 */}
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-red-600 dark:text-red-400">
+                    <span className="w-2 h-2 rounded-full bg-red-500" /> 反方 · 质疑
+                  </div>
+                  {conRounds.length === 0 && debating && (
+                    <div className="text-xs text-gray-400 animate-pulse">反方尚未发言…</div>
+                  )}
+                  {conRounds.map(bubble)}
+                </div>
+                {/* 评审轮：跨栏居中 */}
+                {judgeRounds.length > 0 && (
+                  <div className="lg:col-span-2 space-y-3">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
+                      <Gavel className="w-3 h-3" /> 评审裁决
+                    </div>
+                    <div className="max-w-2xl mx-auto">{judgeRounds.map(bubble)}</div>
+                  </div>
+                )}
+                <div ref={debateScrollRef} className="lg:col-span-2" />
+              </div>
+            );
+          })()}
 
           {/* 裁决分数（复用 validate 评分轴；前端解析展示，服务端已落库） */}
           {debateScores && !debating && (

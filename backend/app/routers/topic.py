@@ -304,6 +304,10 @@ class DebateRequest(BaseModel):
     model: Optional[str] = None
     # 提供时：裁决分数（novelty/crowding/feasibility/gate）落库到该项目
     project_id: Optional[int] = None
+    # 每方辩论轮数（1-3，服务端钳制）；总轮数 = rounds_per_side*2 + 1（评审）
+    rounds_per_side: int = 2
+    # 按角色指定模型（可选键 pro/con/judge，值 'provider/model'）；缺省键跟随 model/全局默认
+    models: Optional[dict] = None
 
 
 @router.get("/topic-validator/status")
@@ -1070,11 +1074,12 @@ async def debate_topic(
     db: AsyncSession = Depends(get_db),
     token: bool = Depends(verify_token),
 ):
-    """选题评估辩论（debate 技能）：正方/反方各两轮交锋 + 评审裁决（SSE 全流式）。
+    """选题评估辩论（debate 技能）：正方/反方各 rounds_per_side 轮交锋 + 评审裁决（SSE 全流式）。
 
-    五轮顺序（ROUND_SEQUENCE）：pro_1 正方陈述 -> con_1 反方反驳 -> pro_2 正方再回应
-    -> con_2 反方再回应 -> judge 评审裁决。每一轮前发 {"round": round_name} 元帧
-    （前端据此开新气泡桶），正文逐字流式转发。
+    轮序（build_round_sequence）：pro_1 -> con_1 -> ... -> pro_N -> con_N -> judge。
+    每一轮前发 {"round": round_name, "model": "provider/bare"} 元帧（前端据此开新气泡桶
+    并标注模型），正文逐字流式转发。每轮按角色取模型：models.pro/con/judge 显式指定时
+    用对应模型，缺省/失败回落 body.model 或全局默认。
 
     裁决轮输出以 ```json 头开始（novelty/crowding/feasibility/gate，口径与 validate 一致）：
     - 后端在流中缓冲剥离该头（复用 validate_skill.split_json_head），markdown 正文实时转发；
@@ -1100,6 +1105,30 @@ async def debate_topic(
         client, provider, bare_model = resolve_working_model(body.model)
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    # 按角色取模型：显式指定 'provider/model' 优先；失败/未指定回落全局默认
+    role_models: dict = {}
+
+    def _resolve_role_model(role: str) -> tuple:
+        cached = role_models.get(role)
+        if cached is not None:
+            return cached
+        picked = (body.models or {}).get(role)
+        if picked:
+            try:
+                p_provider, p_bare = _resolve_model_provider(picked)
+                p_client, p_provider = _get_ai_client(p_provider)
+                if not p_bare:
+                    p_bare = _get_default_model(p_provider)
+                role_models[role] = (p_client, p_provider, p_bare)
+                return role_models[role]
+            except HTTPException:
+                logger.warning(f"debate role model {role}={picked} 不可用，回落全局默认")
+        role_models[role] = (client, provider, bare_model)
+        return role_models[role]
+
+    rounds_per_side = max(1, min(int(body.rounds_per_side or 2), 3))
+    round_sequence = debate_skill.build_round_sequence(rounds_per_side)
 
     # 首帧论文元消息：编号与 prompt 里的 [n] 对齐，前端据此渲染召回卡片
     def _papers_payload() -> dict:
@@ -1152,15 +1181,20 @@ async def debate_topic(
             else:
                 buf["md"].append(c)
 
-        for round_name in debate_skill.ROUND_SEQUENCE:
-            label, _side = debate_skill.ROLE_LABELS[round_name]
-            yield _sse({"round": round_name})
+        for round_name in round_sequence:
+            label, _side = debate_skill.round_label(round_name)
+            # 每轮按角色取模型：pro/con 用各自模型，judge 用评审模型
+            role = _side
+            r_client, r_provider, r_bare = _resolve_role_model(role)
+            yield _sse({"round": round_name, "model": f"{r_provider}/{r_bare}"})
 
-            messages = debate_skill.build_messages(topic, papers, stats, competition, history, round_name)
+            messages = debate_skill.build_messages(
+                topic, papers, stats, competition, history, round_name, rounds_per_side
+            )
 
             if round_name == "judge":
                 async for frame in _stream_llm_content(
-                    client, bare_model, messages, on_event=on_judge, max_tokens=8192
+                    r_client, r_bare, messages, on_event=on_judge, max_tokens=8192
                 ):
                     # 硬约束：debate_scores 必须先于 done 到达（前端 streamChat 遇 done 即 break）
                     if not buf["decided"] and '"done"' in frame and buf["text"]:
@@ -1182,7 +1216,7 @@ async def debate_topic(
                         round_text.append(c)
 
                 async for frame in _stream_llm_content(
-                    client, bare_model, messages, on_event=on_arg, max_tokens=8192
+                    r_client, r_bare, messages, on_event=on_arg, max_tokens=8192
                 ):
                     yield frame
                 history.append((label, "".join(round_text)))

@@ -769,9 +769,10 @@ export function streamValidateTopic(
 }
 
 /**
- * 选题评估辩论（SSE 流式）：正方/反方各两轮 + 评审裁决。
+ * 选题评估辩论（SSE 流式）：正方/反方各 roundsPerSide 轮 + 评审裁决。
  * projectId 可选：提供时裁决分数（novelty/crowding/feasibility/gate）由服务端落库。
- * SSE 帧约定：{"round": "pro_1|con_1|pro_2|con_2|judge"} 开新轮次；
+ * models 可选：按角色指定模型（键 pro/con/judge，值 'provider/model'），缺省角色跟随全局默认。
+ * SSE 帧约定：{"round": "pro_1|...|judge", "model": "provider/bare"} 开新轮次并标注模型；
  * {"debate_scores": {...}} 裁决分数（先于 done 帧）；content 为当前轮次正文增量。
  */
 export function streamDebateTopic(
@@ -779,9 +780,13 @@ export function streamDebateTopic(
   projectId: number | undefined,
   cb: ChatStreamCallbacks,
   signal?: AbortSignal,
+  roundsPerSide?: number,
+  models?: Record<string, string>,
 ): Promise<void> {
   const extra: Record<string, unknown> = { topic };
   if (projectId) extra.project_id = projectId;
+  if (roundsPerSide) extra.rounds_per_side = roundsPerSide;
+  if (models && Object.keys(models).length > 0) extra.models = models;
   return streamChat('/topic-validator/debate', [{ role: 'user', content: topic }], undefined, cb, signal, extra);
 }
 

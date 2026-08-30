@@ -43,6 +43,31 @@ class TestDebateSkill:
         assert debate.ROLE_LABELS["con_2"][1] == "con"
         assert debate.ROLE_LABELS["judge"] == ("评审裁决", "judge")
 
+    def test_build_round_sequence_varied(self):
+        assert debate.build_round_sequence(1) == ["pro_1", "con_1", "judge"]
+        assert debate.build_round_sequence(2) == ["pro_1", "con_1", "pro_2", "con_2", "judge"]
+        assert debate.build_round_sequence(3) == ["pro_1", "con_1", "pro_2", "con_2", "pro_3", "con_3", "judge"]
+        # 钳制：0 / 9 都落到合法区间
+        assert debate.build_round_sequence(0) == debate.build_round_sequence(1)
+        assert debate.build_round_sequence(9) == debate.build_round_sequence(3)
+
+    def test_round_label_dynamic(self):
+        assert debate.round_label("pro_1") == ("正方陈述", "pro")
+        assert debate.round_label("pro_3") == ("正方第3轮", "pro")
+        assert debate.round_label("con_1") == ("反方反驳", "con")
+        assert debate.round_label("con_3") == ("反方第3轮", "con")
+        assert debate.round_label("judge") == ("评审裁决", "judge")
+
+    def test_build_messages_multi_round_instruction(self):
+        # N=3：pro_2 是中间轮（继续回应），pro_3 是末轮（最后辩护）
+        msgs_mid = debate.build_messages("t", _mk_papers(), _mk_stats(), _mk_comp(), [], "pro_2", rounds_per_side=3)
+        assert "继续回应反方" in msgs_mid[0]["content"]
+        msgs_last = debate.build_messages("t", _mk_papers(), _mk_stats(), _mk_comp(), [], "pro_3", rounds_per_side=3)
+        assert "最后辩护" in msgs_last[0]["content"]
+        # N=2 时 pro_2 即末轮（兼容旧行为）
+        msgs_two = debate.build_messages("t", _mk_papers(), _mk_stats(), _mk_comp(), [], "pro_2", rounds_per_side=2)
+        assert "最后辩护" in msgs_two[0]["content"]
+
     def test_build_messages_pro_round_contract(self):
         msgs = debate.build_messages("耐心资本对数据要素市场的影响", _mk_papers(), _mk_stats(), _mk_comp(),
                                      [], "pro_1")
@@ -224,6 +249,142 @@ class TestDebateStreamPersist:
             rounds = [f["round"] for f in frames if "round" in f]
             assert rounds == ["pro_1", "con_1", "pro_2", "con_2", "judge"]
             assert any("debate_scores" in f for f in frames)
+            return True
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+        async def _run():
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            Session = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with Session() as db:
+                    return await scenario(db)
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(_run())
+
+    def test_stream_rounds_per_side_one(self, monkeypatch):
+        """rounds_per_side=1：只出 3 个 round 元帧。"""
+        from app.database import Base
+        from app.routers import topic as topic_mod
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        async def scenario(db):
+            papers = _mk_papers()
+            async def fake_retrieve(db_, t, k=30):
+                return papers, "tfidf"
+            monkeypatch.setattr(topic_mod, "_retrieve_similar_papers", fake_retrieve)
+            monkeypatch.setattr(topic_mod, "_crowding_stats", lambda p: _mk_stats())
+            async def fake_comp(db_, ids):
+                return _mk_comp()
+            monkeypatch.setattr(topic_mod, "_competition_map", fake_comp)
+
+            class _FakeClient:
+                pass
+            monkeypatch.setattr(topic_mod, "resolve_working_model",
+                                lambda m: (_FakeClient(), "fake", "fake-model"))
+
+            async def fake_llm_stream(client, model, messages, on_event=None, **kw):
+                if "评审裁决" in messages[-1]["content"]:
+                    evs = [{"content": '```json\n{"novelty": 5, "crowding": "中", "feasibility": 5, "gate": "caution"}\n```\n## 结论\ncaution'},
+                           {"done": True}]
+                else:
+                    evs = [{"content": "论证内容"}, {"done": True}]
+                for ev in evs:
+                    if on_event:
+                        on_event(ev)
+                    yield "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+            monkeypatch.setattr(topic_mod, "_stream_llm_content", fake_llm_stream)
+
+            body = topic_mod.DebateRequest(topic="测试选题", rounds_per_side=1)
+            req = SimpleNamespace(headers={"x-user-id": "local"})
+            resp = await topic_mod.debate_topic(body, request=req, db=db, token=True)
+            frames = []
+            async for chunk in resp.body_iterator:
+                chunk = chunk if isinstance(chunk, str) else chunk.decode()
+                for line in chunk.split("\n"):
+                    if line.startswith("data: "):
+                        frames.append(_json.loads(line[6:]))
+            rounds = [f["round"] for f in frames if "round" in f]
+            assert rounds == ["pro_1", "con_1", "judge"]
+            return True
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+        async def _run():
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            Session = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with Session() as db:
+                    return await scenario(db)
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(_run())
+
+    def test_stream_role_models_used_per_round(self, monkeypatch):
+        """models 指定三角色模型：round 元帧带对应模型，且 _stream_llm_content 收到对应 client。"""
+        from app.database import Base
+        from app.routers import topic as topic_mod
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        async def scenario(db):
+            papers = _mk_papers()
+            async def fake_retrieve(db_, t, k=30):
+                return papers, "tfidf"
+            monkeypatch.setattr(topic_mod, "_retrieve_similar_papers", fake_retrieve)
+            monkeypatch.setattr(topic_mod, "_crowding_stats", lambda p: _mk_stats())
+            async def fake_comp(db_, ids):
+                return _mk_comp()
+            monkeypatch.setattr(topic_mod, "_competition_map", fake_comp)
+
+            # 显式角色模型解析：'provider/model' -> (provider, bare)
+            monkeypatch.setattr(topic_mod, "_resolve_model_provider",
+                                lambda m: (m.split("/")[0], "/".join(m.split("/")[1:])))
+            clients = {}
+            class _FakeClient:
+                def __init__(self, tag):
+                    self.tag = tag
+            monkeypatch.setattr(topic_mod, "_get_ai_client", lambda p: (_FakeClient(p), p))
+
+            calls: list = []  # (client.tag, model)
+
+            async def fake_llm_stream(client, model, messages, on_event=None, **kw):
+                calls.append((client.tag, model))
+                if "评审裁决" in messages[-1]["content"]:
+                    evs = [{"content": '```json\n{"novelty": 6, "crowding": "低", "feasibility": 7, "gate": "pass"}\n```\n## 结论\npass'},
+                           {"done": True}]
+                else:
+                    evs = [{"content": "论证内容"}, {"done": True}]
+                for ev in evs:
+                    if on_event:
+                        on_event(ev)
+                    yield "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+            monkeypatch.setattr(topic_mod, "_stream_llm_content", fake_llm_stream)
+
+            body = topic_mod.DebateRequest(
+                topic="测试选题", rounds_per_side=1,
+                models={"pro": "zhipu/glm-pro", "con": "siliconflow/deepseek-v3", "judge": "openai/gpt-5"},
+            )
+            req = SimpleNamespace(headers={"x-user-id": "local"})
+            resp = await topic_mod.debate_topic(body, request=req, db=db, token=True)
+            frames = []
+            async for chunk in resp.body_iterator:
+                chunk = chunk if isinstance(chunk, str) else chunk.decode()
+                for line in chunk.split("\n"):
+                    if line.startswith("data: "):
+                        frames.append(_json.loads(line[6:]))
+
+            round_frames = [f for f in frames if "round" in f]
+            assert [f["model"] for f in round_frames] == [
+                "zhipu/glm-pro", "siliconflow/deepseek-v3", "openai/gpt-5"]
+            # 每轮 LLM 调用用的 client/模型与 round 元帧一致
+            assert calls == [("zhipu", "glm-pro"), ("siliconflow", "deepseek-v3"), ("openai", "gpt-5")]
             return True
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
