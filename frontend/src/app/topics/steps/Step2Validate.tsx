@@ -47,11 +47,12 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
   // —— 选题评估辩论状态 ——
   const [debating, setDebating] = useState(false);
   const [debateError, setDebateError] = useState<string | null>(null);
-  const [debateRounds, setDebateRounds] = useState<Array<{ id: string; label: string; side: 'pro' | 'con' | 'judge'; text: string }>>([]);
+  const [debateRounds, setDebateRounds] = useState<Array<{ id: string; label: string; side: 'pro' | 'con' | 'judge'; text: string; reasoning: string }>>([]);
   const [debateScores, setDebateScores] = useState<Record<string, unknown> | null>(null);
   const debateAbortRef = useRef<AbortController | null>(null);
-  // onContent 传「全局累积全文」，用前缀差取当前轮增量
+  // onContent/onReasoning 传「全局累积全文」，用前缀差取当前轮增量
   const debateFullTextRef = useRef('');
+  const debateReasoningRef = useRef('');
 
   const aiRunning = project.ai_pending === 'overview';
   const hasReport = !!(project.validation_report || reportContent);
@@ -191,6 +192,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
     setDebateRounds([]);
     setDebateScores(null);
     debateFullTextRef.current = '';
+    debateReasoningRef.current = '';
     const controller = new AbortController();
     debateAbortRef.current = controller;
     let metaPapers: RetrievedPaper[] = [];
@@ -212,13 +214,25 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
             return arr;
           });
         },
+        onReasoning: (text) => {
+          const delta = text.slice(debateReasoningRef.current.length);
+          debateReasoningRef.current = text;
+          if (!delta) return;
+          setDebateRounds((prev) => {
+            const arr = [...prev];
+            const last = arr[arr.length - 1];
+            if (!last) return arr;
+            arr[arr.length - 1] = { ...last, reasoning: (last.reasoning || '') + delta };
+            return arr;
+          });
+        },
         onMeta: (data) => {
           if (!data || typeof data !== 'object') return;
           const d = data as Record<string, unknown>;
           if ('round' in d) {
             const roundId = String(d.round ?? '');
             const meta = DEBATE_ROUNDS[roundId] ?? { label: roundId || d.round, side: 'pro' as const };
-            setDebateRounds((prev) => [...prev, { id: roundId, label: meta.label, side: meta.side, text: '' }]);
+            setDebateRounds((prev) => [...prev, { id: roundId, label: meta.label, side: meta.side, text: '', reasoning: '' }]);
           } else if ('debate_scores' in d) {
             setDebateScores((d.debate_scores as Record<string, unknown>) || null);
           } else if ('papers' in d) {
@@ -440,7 +454,7 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
           {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
 
           <div className="space-y-3">
-            {debateRounds.map((r) => (
+            {debateRounds.map((r, i) => (
               <div
                 key={r.id}
                 className={`flex ${r.side === 'con' ? 'justify-end' : r.side === 'judge' ? 'justify-center' : 'justify-start'}`}
@@ -454,9 +468,33 @@ export default function Step2Validate({ project, onPatch, runAi, goStep }: StepP
                         : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800'
                   }`}
                 >
-                  <div className="text-[11px] font-semibold mb-1.5 text-gray-500 dark:text-gray-400">{r.label}</div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
+                      {r.label}
+                      <span className="ml-1 font-mono text-[10px] text-gray-400">({i + 1}/{debateRounds.length || 5})</span>
+                    </span>
+                    {debating && i === debateRounds.length - 1 && !r.text && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        {r.reasoning ? '思考中，即将成文…' : '思考中…'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 思考过程：流式滚入（推理模型的 reasoning 帧；原生 details 可折叠） */}
+                  {r.reasoning && (
+                    <details className="mb-1.5" open={debating && i === debateRounds.length - 1}>
+                      <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">
+                        思考过程
+                      </summary>
+                      <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
+                        {r.reasoning}
+                      </div>
+                    </details>
+                  )}
+
                   <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <MarkdownRenderer content={r.text || (debating && r.id === debateRounds[debateRounds.length - 1].id ? '…' : '')} citations={citations} />
+                    <MarkdownRenderer content={r.text || (debating && i === debateRounds.length - 1 && !r.reasoning ? '…' : '')} citations={citations} />
                   </div>
                 </div>
               </div>
