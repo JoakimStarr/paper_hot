@@ -9,6 +9,7 @@ import { openAssistant } from '@/lib/assistantBus';
 import type { RetrievedPaper, ValidationEvidence } from '@/types/paper';
 import type { StepProps } from './types';
 import DebateModelSelect from './DebateModelSelect';
+import StreamBubble from './StreamBubble';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -605,43 +606,17 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
             const judgeRounds = debateRounds.filter((r) => r.side === 'judge');
             const isLatest = (r: DebateRound) => debateRounds[debateRounds.length - 1]?.id === r.id;
 
+            const colorCls = (side: DebateSide) =>
+              side === 'pro'
+                ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
+                : side === 'con'
+                  ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
+                  : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
+
+            // StreamBubble：流式中纯文本逐 token 渲染，结束后切 Markdown；
+            // React.memo 保证增量只重渲染当前轮（已完成轮次不重解析 markdown）
             const bubble = (r: DebateRound) => (
-              <div
-                key={r.id}
-                className={`rounded-lg border p-3 transition-all duration-300 ${
-                  r.side === 'pro'
-                    ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
-                    : r.side === 'con'
-                      ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
-                      : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800'
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                  <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{r.label}</span>
-                  {r.model && (
-                    <span className="text-[10px] px-1.5 py-px rounded bg-white/70 dark:bg-gray-700/70 text-gray-400 font-mono">
-                      {r.model.split('/').pop()}
-                    </span>
-                  )}
-                  {debating && isLatest(r) && !r.text && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      {r.reasoning ? '思考中，即将成文…' : '思考中…'}
-                    </span>
-                  )}
-                </div>
-                {r.reasoning && (
-                  <details className="mb-1.5" open={debating && isLatest(r)}>
-                    <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">思考过程</summary>
-                    <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
-                      {r.reasoning}
-                    </div>
-                  </details>
-                )}
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <MarkdownRenderer content={r.text || (debating && isLatest(r) && !r.reasoning ? '…' : '')} citations={citations} />
-                </div>
-              </div>
+              <StreamBubble key={r.id} r={r} colorCls={colorCls(r.side)} streaming={debating && isLatest(r)} citations={citations} />
             );
 
             return (

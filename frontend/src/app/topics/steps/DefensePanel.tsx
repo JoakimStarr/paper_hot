@@ -1,15 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import dynamic from 'next/dynamic';
 import { Loader2, ChevronDown, Gavel, MessageSquareText, CheckCircle2 } from 'lucide-react';
 import { streamDefenseTopic, papersApi, getLastModel, rememberModel } from '@/lib/api';
 import DebateModelSelect from './DebateModelSelect';
-
-const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
-  ssr: false,
-  loading: () => <div className="h-16 flex items-center justify-center text-gray-400 text-sm animate-pulse">加载中...</div>,
-});
+import StreamBubble from './StreamBubble';
 
 type DefenseRole = 'candidate' | 'examiner' | 'panel';
 
@@ -185,43 +180,16 @@ export default function DefensePanel({ topic, projectId, goStep }: {
   const panelRounds = defenseRounds.filter((r) => r.role === 'panel');
   const isLatest = (r: DefenseRound) => defenseRounds[defenseRounds.length - 1]?.id === r.id;
 
+  const colorCls = (role: DefenseRole) =>
+    role === 'candidate'
+      ? 'bg-emerald-50 dark:bg-emerald-900/15 border-emerald-200 dark:border-emerald-800'
+      : role === 'examiner'
+        ? 'bg-amber-50 dark:bg-amber-900/15 border-amber-200 dark:border-amber-800'
+        : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
+
+  // StreamBubble：流式中纯文本逐 token 渲染，结束后切 Markdown；增量只重渲染当前轮
   const bubble = (r: DefenseRound) => (
-    <div
-      key={r.id}
-      className={`rounded-lg border p-3 transition-all duration-300 ${
-        r.role === 'candidate'
-          ? 'bg-emerald-50 dark:bg-emerald-900/15 border-emerald-200 dark:border-emerald-800'
-          : r.role === 'examiner'
-            ? 'bg-amber-50 dark:bg-amber-900/15 border-amber-200 dark:border-amber-800'
-            : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800'
-      }`}
-    >
-      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">{r.label}</span>
-        {r.model && (
-          <span className="text-[10px] px-1.5 py-px rounded bg-white/70 dark:bg-gray-700/70 text-gray-400 font-mono">
-            {r.model.split('/').pop()}
-          </span>
-        )}
-        {defending && isLatest(r) && !r.text && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 animate-pulse">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            {r.reasoning ? '思考中，即将成文…' : '思考中…'}
-          </span>
-        )}
-      </div>
-      {r.reasoning && (
-        <details className="mb-1.5" open={defending && isLatest(r)}>
-          <summary className="text-[10px] text-gray-400 cursor-pointer select-none hover:text-gray-500">思考过程</summary>
-          <div className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-400/90 dark:text-gray-500">
-            {r.reasoning}
-          </div>
-        </details>
-      )}
-      <div className="prose prose-sm dark:prose-invert max-w-none">
-        <MarkdownRenderer content={r.text || (defending && isLatest(r) && !r.reasoning ? '…' : '')} citations={citations} />
-      </div>
-    </div>
+    <StreamBubble key={r.id} r={r} colorCls={colorCls(r.role)} streaming={defending && isLatest(r)} citations={citations} />
   );
 
   return (
