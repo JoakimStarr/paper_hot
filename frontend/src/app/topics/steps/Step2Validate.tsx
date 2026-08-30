@@ -617,61 +617,29 @@ export default function Step2Validate({ project, onPatch, goStep }: StepProps) {
 
           {debateError && <div className="text-sm text-red-500 py-2">{debateError}</div>}
 
-          {/* 左右双栏：正方 / 反方，评审跨栏居中 */}
-          {(() => {
-            const proRounds = debateRounds.filter((r) => r.side === 'pro');
-            const conRounds = debateRounds.filter((r) => r.side === 'con');
-            const judgeRounds = debateRounds.filter((r) => r.side === 'judge');
-            const isLatest = (r: DebateRound) => debateRounds[debateRounds.length - 1]?.id === r.id;
-
-            const colorCls = (side: DebateSide) =>
-              side === 'pro'
-                ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
-                : side === 'con'
-                  ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
-                  : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
-
-            // StreamBubble：流式中纯文本逐 token 渲染，结束后切 Markdown；
-            // React.memo 保证增量只重渲染当前轮（已完成轮次不重解析 markdown）
-            const bubble = (r: DebateRound) => (
-              <StreamBubble key={r.id} r={r} colorCls={colorCls(r.side)} streaming={debating && isLatest(r)} citations={citations} />
-            );
-
-            return (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-5 gap-y-4">
-                {/* 正方列 */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400">
-                    <span className="w-2 h-2 rounded-full bg-blue-500" /> 正方 · 支持
+          {/* 对话流：正方左 / 反方右 / 评审居中（聊天窗口式） */}
+          <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+            {debateRounds.length === 0 && debating && (
+              <div className="text-xs text-gray-400 animate-pulse">正方正在陈述…</div>
+            )}
+            {debateRounds.map((r) => {
+              const colorCls =
+                r.side === 'pro'
+                  ? 'bg-blue-50 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800'
+                  : r.side === 'con'
+                    ? 'bg-red-50 dark:bg-red-900/15 border-red-200 dark:border-red-800'
+                    : 'bg-violet-50 dark:bg-violet-900/15 border-violet-200 dark:border-violet-800';
+              const isLatest = debateRounds[debateRounds.length - 1]?.id === r.id;
+              return (
+                <div key={r.id} className={`flex ${r.side === 'con' ? 'justify-end' : r.side === 'judge' ? 'justify-center' : 'justify-start'}`}>
+                  <div className={r.side === 'judge' ? 'w-full max-w-2xl' : 'max-w-[85%]'}>
+                    <StreamBubble r={r} colorCls={colorCls} streaming={debating && isLatest} citations={citations} />
                   </div>
-                  {proRounds.length === 0 && debating && (
-                    <div className="text-xs text-gray-400 animate-pulse">正方尚未发言…</div>
-                  )}
-                  {proRounds.map(bubble)}
                 </div>
-                {/* 反方列 */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-red-600 dark:text-red-400">
-                    <span className="w-2 h-2 rounded-full bg-red-500" /> 反方 · 质疑
-                  </div>
-                  {conRounds.length === 0 && debating && (
-                    <div className="text-xs text-gray-400 animate-pulse">反方尚未发言…</div>
-                  )}
-                  {conRounds.map(bubble)}
-                </div>
-                {/* 评审轮：跨栏居中 */}
-                {judgeRounds.length > 0 && (
-                  <div className="lg:col-span-2 space-y-3">
-                    <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
-                      <Gavel className="w-3 h-3" /> 评审裁决
-                    </div>
-                    <div className="max-w-2xl mx-auto">{judgeRounds.map(bubble)}</div>
-                  </div>
-                )}
-                <div ref={debateScrollRef} className="lg:col-span-2" />
-              </div>
-            );
-          })()}
+              );
+            })}
+            <div ref={debateScrollRef} />
+          </div>
 
           {/* 裁决分数（复用 validate 评分轴；前端解析展示，服务端已落库） */}
           {debateScores && !debating && (

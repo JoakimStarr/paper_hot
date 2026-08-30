@@ -195,9 +195,6 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
   };
 
   const opening = defenseRounds.find((r) => r.id === 'candidate_0');
-  const examinerRounds = defenseRounds.filter((r) => r.role === 'examiner');
-  const answerRounds = defenseRounds.filter((r) => r.role === 'candidate' && r.id !== 'candidate_0');
-  const panelRounds = defenseRounds.filter((r) => r.role === 'panel');
   const isLatest = (r: DefenseRound) => defenseRounds[defenseRounds.length - 1]?.id === r.id;
 
   const colorCls = (role: DefenseRole) =>
@@ -299,39 +296,24 @@ export default function DefensePanel({ topic, projectId, goStep, initialTranscri
 
       {defenseError && <div className="text-sm text-red-500 py-2">{defenseError}</div>}
 
-      {/* 布局：自述跨栏置顶 → 双栏（评委质询左/候选人应答右）→ 合议跨栏置底 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-5 gap-y-4">
-        {opening && <div className="lg:col-span-2 space-y-3">{bubble(opening)}</div>}
+      {/* 对话流：候选人应答左 / 评委质询右 / 自述与合议居中（聊天窗口式） */}
+      <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+        {opening && (
+          <div className="flex justify-center">
+            <div className="w-full max-w-2xl">{bubble(opening)}</div>
+          </div>
+        )}
         {!opening && defending && (
-          <div className="lg:col-span-2 text-xs text-gray-400 animate-pulse">候选人正在自述研究设计…</div>
+          <div className="text-xs text-gray-400 animate-pulse">候选人正在自述研究设计…</div>
         )}
-        <div className="space-y-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-            <span className="w-2 h-2 rounded-full bg-amber-500" /> 评委质询
-          </div>
-          {examinerRounds.length === 0 && defending && (
-            <div className="text-xs text-gray-400 animate-pulse">评委尚未质询…</div>
-          )}
-          {examinerRounds.map(bubble)}
-        </div>
-        <div className="space-y-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" /> 候选人应答
-          </div>
-          {answerRounds.length === 0 && defending && (
-            <div className="text-xs text-gray-400 animate-pulse">候选人尚未应答…</div>
-          )}
-          {answerRounds.map(bubble)}
-        </div>
-        {panelRounds.length > 0 && (
-          <div className="lg:col-span-2 space-y-3">
-            <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
-              <Gavel className="w-3 h-3" /> 合议裁定
+        {defenseRounds
+          .filter((r) => r.id !== 'candidate_0')
+          .map((r) => (
+            <div key={r.id} className={`flex ${r.role === 'examiner' ? 'justify-end' : r.role === 'candidate' ? 'justify-start' : 'justify-center'}`}>
+              <div className={r.role === 'panel' ? 'w-full max-w-2xl' : 'max-w-[85%]'}>{bubble(r)}</div>
             </div>
-            <div className="max-w-2xl mx-auto">{panelRounds.map(bubble)}</div>
-          </div>
-        )}
-        <div ref={defenseScrollRef} className="lg:col-span-2" />
+          ))}
+        <div ref={defenseScrollRef} />
       </div>
 
       {/* 合议分数 + verdict（前端解析展示，4 轴分数服务端已落库） */}
