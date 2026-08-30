@@ -22,6 +22,8 @@ DESCRIPTION = "选题验证：预承诺评分标准 + Script 证据 + 结构化�
 # 输出 JSON 头的合法取值
 CROWDING_LEVELS = ("低", "中", "高")
 GATES = ("pass", "caution", "avoid")
+# 答辩合议结论（defense 技能复用；与 gate 一样仅随 JSON 头透传，无存储列）
+VERDICTS = ("通过", "修改后通过", "不通过")
 
 _JSON_DECODER = json.JSONDecoder()
 
@@ -156,6 +158,8 @@ def normalize_scores(data: Any) -> Dict[str, Any]:
         out["crowding"] = data["crowding"]
     if data.get("gate") in GATES:
         out["gate"] = data["gate"]
+    if data.get("verdict") in VERDICTS:
+        out["verdict"] = data["verdict"]
     return out
 
 

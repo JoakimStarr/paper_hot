@@ -182,6 +182,10 @@ class TestDebateStreamPersist:
             assert scores_idx < done_idx, "debate_scores 必须先于 done 帧"
             assert frames[scores_idx]["debate_scores"] == {
                 "novelty": 7, "crowding": "中", "feasibility": 6, "gate": "caution"}
+            # 论证轮的 done 帧必须被丢弃，仅评审轮保留一个总 done（否则 streamChat 会提前 break）
+            done_frames = [f for f in frames if f.get("done")]
+            assert len(done_frames) == 1, f"预期只有评审轮一个 done，实际 {len(done_frames)} 个"
+            assert done_frames[0] is frames[-1], "done 必须是最后一个帧"
 
             # 裁决分数落库（apply_scores 复用 validate 状态流转；gate 无存储列，已随 debate_scores 帧透传）
             p = await db.get(TopicProject, 1)
@@ -310,6 +314,68 @@ class TestDebateStreamPersist:
                         frames.append(_json.loads(line[6:]))
             rounds = [f["round"] for f in frames if "round" in f]
             assert rounds == ["pro_1", "con_1", "judge"]
+            return True
+
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+
+        async def _run():
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            Session = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                async with Session() as db:
+                    return await scenario(db)
+            finally:
+                await engine.dispose()
+
+        assert asyncio.run(_run())
+
+    def test_stream_empty_argument_round_gets_fallback_note(self, monkeypatch):
+        """论证轮只出 reasoning 不出 content 时：注入"已跳过"提示帧，避免空气泡。"""
+        from app.database import Base
+        from app.routers import topic as topic_mod
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        async def scenario(db):
+            papers = _mk_papers()
+            async def fake_retrieve(db_, t, k=30):
+                return papers, "tfidf"
+            monkeypatch.setattr(topic_mod, "_retrieve_similar_papers", fake_retrieve)
+            monkeypatch.setattr(topic_mod, "_crowding_stats", lambda p: _mk_stats())
+            async def fake_comp(db_, ids):
+                return _mk_comp()
+            monkeypatch.setattr(topic_mod, "_competition_map", fake_comp)
+
+            class _FakeClient:
+                pass
+            monkeypatch.setattr(topic_mod, "resolve_working_model",
+                                lambda m: (_FakeClient(), "fake", "fake-model"))
+
+            async def fake_llm_stream(client, model, messages, on_event=None, **kw):
+                # 论证轮只发 reasoning（无 content）；评审轮正常输出裁决
+                if "评审裁决" in messages[-1]["content"]:
+                    evs = [{"content": '```json\n{"novelty": 6, "crowding": "中", "feasibility": 5, "gate": "caution"}\n```\n## 结论\ncaution'},
+                           {"done": True}]
+                else:
+                    evs = [{"reasoning": "一段很长的思考"}, {"done": True}]
+                for ev in evs:
+                    if on_event:
+                        on_event(ev)
+                    yield "data: " + _json.dumps(ev, ensure_ascii=False) + "\n\n"
+            monkeypatch.setattr(topic_mod, "_stream_llm_content", fake_llm_stream)
+
+            body = topic_mod.DebateRequest(topic="测试选题", rounds_per_side=1)
+            req = SimpleNamespace(headers={"x-user-id": "local"})
+            resp = await topic_mod.debate_topic(body, request=req, db=db, token=True)
+            frames = []
+            async for chunk in resp.body_iterator:
+                chunk = chunk if isinstance(chunk, str) else chunk.decode()
+                for line in chunk.split("\n"):
+                    if line.startswith("data: "):
+                        frames.append(_json.loads(line[6:]))
+            content_texts = [f.get("content") or "" for f in frames]
+            assert sum("已跳过" in c for c in content_texts) == 2, "两个论证轮都应注入空轮提示"
             return True
 
         engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)

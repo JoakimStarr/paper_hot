@@ -48,6 +48,35 @@ def _uid_from(request: Request) -> str:
     return (request.headers.get("x-user-id") if request else None) or LOCAL_USER
 
 
+def _make_role_model_resolver(models: Optional[dict], fallback: tuple):
+    """按角色解析 'provider/model'（辩论/答辩共用）。
+
+    返回 resolver(role) -> (client, provider, bare_model)：
+    显式指定优先（失败回落全局默认），未指定直接用 fallback；结果按角色缓存。
+    """
+    cache: dict = {}
+
+    def resolve(role: str) -> tuple:
+        cached = cache.get(role)
+        if cached is not None:
+            return cached
+        picked = (models or {}).get(role)
+        if picked:
+            try:
+                p_provider, p_bare = _resolve_model_provider(picked)
+                p_client, p_provider = _get_ai_client(p_provider)
+                if not p_bare:
+                    p_bare = _get_default_model(p_provider)
+                cache[role] = (p_client, p_provider, p_bare)
+                return cache[role]
+            except HTTPException:
+                logger.warning(f"role model {role}={picked} 不可用，回落全局默认")
+        cache[role] = fallback
+        return cache[role]
+
+    return resolve
+
+
 # 本进程启动时间（UTC naive，与 ResearchGapReport.created_at 的 func.now() 同口径，
 # SQLite server_default 为 UTC）。后台任务跑在进程内存里，后端重启会让 running
 # 状态的报告永远无法完成，用它判断并回收僵尸 running 报告。
@@ -307,6 +336,17 @@ class DebateRequest(BaseModel):
     # 每方辩论轮数（1-3，服务端钳制）；总轮数 = rounds_per_side*2 + 1（评审）
     rounds_per_side: int = 2
     # 按角色指定模型（可选键 pro/con/judge，值 'provider/model'）；缺省键跟随 model/全局默认
+    models: Optional[dict] = None
+
+
+class DefenseRequest(BaseModel):
+    topic: str
+    model: Optional[str] = None
+    # 提供时：合议分数（novelty/crowding/feasibility/gate）落库到该项目
+    project_id: Optional[int] = None
+    # 质询轮数（1-3，服务端钳制）；总环节 = candidate_0 + rounds_per_side*2 + panel
+    rounds_per_side: int = 2
+    # 按角色指定模型（可选键 candidate/examiner/panel，值 'provider/model'）
     models: Optional[dict] = None
 
 
@@ -1081,6 +1121,9 @@ async def debate_topic(
     并标注模型），正文逐字流式转发。每轮按角色取模型：models.pro/con/judge 显式指定时
     用对应模型，缺省/失败回落 body.model 或全局默认。
 
+    帧约定：论证轮只转发 content/reasoning/usage/error，**不转发轮内 done 帧**
+    （前端 streamChat 遇 done 即 break，转发会截断后续轮次）；评审轮最后发一个总 done。
+
     裁决轮输出以 ```json 头开始（novelty/crowding/feasibility/gate，口径与 validate 一致）：
     - 后端在流中缓冲剥离该头（复用 validate_skill.split_json_head），markdown 正文实时转发；
     - 帧顺序硬约束：{"debate_scores": {...}} 必须在 done 帧之前发出（前端 streamChat 遇 done 即 break）；
@@ -1106,26 +1149,7 @@ async def debate_topic(
     except HTTPException:
         raise HTTPException(status_code=503, detail="AI API key not configured")
 
-    # 按角色取模型：显式指定 'provider/model' 优先；失败/未指定回落全局默认
-    role_models: dict = {}
-
-    def _resolve_role_model(role: str) -> tuple:
-        cached = role_models.get(role)
-        if cached is not None:
-            return cached
-        picked = (body.models or {}).get(role)
-        if picked:
-            try:
-                p_provider, p_bare = _resolve_model_provider(picked)
-                p_client, p_provider = _get_ai_client(p_provider)
-                if not p_bare:
-                    p_bare = _get_default_model(p_provider)
-                role_models[role] = (p_client, p_provider, p_bare)
-                return role_models[role]
-            except HTTPException:
-                logger.warning(f"debate role model {role}={picked} 不可用，回落全局默认")
-        role_models[role] = (client, provider, bare_model)
-        return role_models[role]
+    resolve_role_model = _make_role_model_resolver(body.models, (client, provider, bare_model))
 
     rounds_per_side = max(1, min(int(body.rounds_per_side or 2), 3))
     round_sequence = debate_skill.build_round_sequence(rounds_per_side)
@@ -1185,7 +1209,7 @@ async def debate_topic(
             label, _side = debate_skill.round_label(round_name)
             # 每轮按角色取模型：pro/con 用各自模型，judge 用评审模型
             role = _side
-            r_client, r_provider, r_bare = _resolve_role_model(role)
+            r_client, r_provider, r_bare = resolve_role_model(role)
             yield _sse({"round": round_name, "model": f"{r_provider}/{r_bare}"})
 
             messages = debate_skill.build_messages(
@@ -1215,10 +1239,19 @@ async def debate_topic(
                     if c:
                         round_text.append(c)
 
+                # 论证轮：转发 content/reasoning/usage/error，但**丢弃轮内 done 帧**——
+                # streamChat 遇 done 即 break，若每轮都发 done，前端在第 1 轮后就会断开，
+                # 后续轮次（含反方/评审）全部收不到（"反方没内容"的根因）。
+                # max_tokens 放宽到 16384：多轮对抗任务推理长，给正文留足预算。
                 async for frame in _stream_llm_content(
-                    r_client, r_bare, messages, on_event=on_arg, max_tokens=8192
+                    r_client, r_bare, messages, on_event=on_arg, max_tokens=16384
                 ):
+                    if '"done"' in frame:
+                        continue
                     yield frame
+                # 空轮兜底：模型只输出思考没输出正文时，注入提示帧避免空气泡（下一轮 meta 之前）
+                if not "".join(round_text):
+                    yield _sse({"content": "\n\n> ⚠️ 本轮模型未输出正文，已跳过。"})
                 history.append((label, "".join(round_text)))
 
         # ---- 服务端落库：裁决分数回填（仅限 to_validate；报告正文不覆盖，前端另行展示辩论全文） ----
@@ -1233,6 +1266,158 @@ async def debate_topic(
                                 f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
             except Exception as e:
                 logger.warning(f"debate server-side persist failed: {e}")
+
+    return StreamingResponse(composed_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/topic-validator/defense")
+async def defense_topic(
+    body: DefenseRequest,
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    token: bool = Depends(verify_token),
+):
+    """选题答辩（defense 技能）：候选人自述 -> 评委质询/候选人应答交替 -> 合议裁定（SSE 全流式）。
+
+    轮序（build_round_sequence）：candidate_0 -> examiner_1 -> candidate_1 -> ...
+    -> examiner_N -> candidate_N -> panel。每一轮前发 {"round", "model"} 元帧，
+    正文逐字流式转发，每轮按角色取模型（models.candidate/examiner/panel）。
+
+    合议轮输出 ```json 头（validate 4 轴 + verdict: 通过|修改后通过|不通过）：
+    - 后端缓冲剥离 JSON 头，markdown 正文实时转发；
+    - 帧顺序硬约束：{"defense_scores": {...}} 先于 done（前端 streamChat 遇 done 即 break）；
+    - 论证环节不转发轮内 done 帧（同 debate，避免截断后续环节）；合议轮最后发总 done；
+    - 带 project_id 时 apply_scores 落库。
+    """
+    from app.skills import defense as defense_skill
+
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+
+    papers, mode = await _retrieve_similar_papers(db, topic, k=30)
+    stats = _crowding_stats(papers)
+    stats["mode"] = mode
+    try:
+        competition = await _competition_map(db, [p["id"] for p in papers])
+    except Exception as comp_err:
+        logger.warning(f"defense competition map failed: {comp_err}")
+        competition = {"top_authors": [], "journal_distribution": [], "recent_1y_count": 0}
+
+    try:
+        client, provider, bare_model = resolve_working_model(body.model)
+    except HTTPException:
+        raise HTTPException(status_code=503, detail="AI API key not configured")
+
+    resolve_role_model = _make_role_model_resolver(body.models, (client, provider, bare_model))
+
+    rounds_per_side = max(1, min(int(body.rounds_per_side or 2), 3))
+    round_sequence = defense_skill.build_round_sequence(rounds_per_side)
+
+    def _papers_payload() -> dict:
+        return {
+            "papers": [
+                {
+                    "n": i + 1,
+                    "id": p["id"],
+                    "title": p["title"],
+                    "source": p["source"],
+                    "published_at": p["published_at"],
+                    "keywords": p["keywords"],
+                    "similarity": p["similarity"],
+                }
+                for i, p in enumerate(papers[:30])
+            ],
+            "mode": mode,
+            "stats": stats,
+        }
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    async def composed_stream():
+        yield _sse(_papers_payload())
+
+        history: list = []  # [(环节标签, 该轮全文), ...]
+        defense_scores = None
+        buf = {"text": "", "decided": False, "scores": None, "md": []}
+
+        def on_panel(ev: dict) -> None:
+            c = ev.get("content")
+            if not c:
+                return
+            if not buf["decided"]:
+                buf["text"] += c
+                scores, rest = validate_skill.split_json_head(buf["text"])
+                if scores is not None:
+                    buf["decided"] = True
+                    buf["scores"] = scores
+                    buf["md"].append(rest)
+                    ev["content"] = rest
+                elif validate_skill.head_in_progress(buf["text"]):
+                    ev["content"] = ""
+                else:
+                    buf["decided"] = True
+                    buf["md"].append(buf["text"])
+                    ev["content"] = buf["text"]
+            else:
+                buf["md"].append(c)
+
+        for round_name in round_sequence:
+            label, role = defense_skill.round_label(round_name)
+            r_client, r_provider, r_bare = resolve_role_model(role)
+            yield _sse({"round": round_name, "model": f"{r_provider}/{r_bare}"})
+
+            messages = defense_skill.build_messages(
+                topic, papers, stats, competition, history, round_name, rounds_per_side
+            )
+
+            if round_name == "panel":
+                async for frame in _stream_llm_content(
+                    r_client, r_bare, messages, on_event=on_panel, max_tokens=8192
+                ):
+                    if not buf["decided"] and '"done"' in frame and buf["text"]:
+                        buf["decided"] = True
+                        buf["scores"], rest = validate_skill.split_json_head(buf["text"])
+                        buf["md"].append(rest)
+                        if rest:
+                            yield _sse({"content": rest})
+                    if buf["scores"] is not None and defense_scores is None:
+                        defense_scores = buf["scores"]
+                        yield _sse({"defense_scores": defense_scores})
+                    yield frame
+            else:
+                round_text: list = []
+
+                def on_round(ev: dict) -> None:
+                    c = ev.get("content")
+                    if c:
+                        round_text.append(c)
+
+                # 环节轮：不转发轮内 done 帧（同 debate 根因修复），max_tokens 放宽给推理留预算
+                async for frame in _stream_llm_content(
+                    r_client, r_bare, messages, on_event=on_round, max_tokens=16384
+                ):
+                    if '"done"' in frame:
+                        continue
+                    yield frame
+                if not "".join(round_text):
+                    yield _sse({"content": "\n\n> ⚠️ 本环节模型未输出正文，已跳过。"})
+                history.append((label, "".join(round_text)))
+
+        # ---- 服务端落库：合议分数回填（verdict 随 JSON 头透传，无存储列） ----
+        if body.project_id and defense_scores is not None:
+            try:
+                uid = _uid_from(request)
+                p = await db.get(TopicProject, body.project_id)
+                if p and p.user_id == uid:
+                    validate_skill.apply_scores(p, defense_scores)
+                    await db.commit()
+                    logger.info(f"defense scores persisted for project {body.project_id}: "
+                                f"novelty={getattr(p, 'novelty', None)}, crowding={getattr(p, 'crowding', None)}")
+            except Exception as e:
+                logger.warning(f"defense server-side persist failed: {e}")
 
     return StreamingResponse(composed_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

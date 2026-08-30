@@ -9,12 +9,14 @@ from app.skills import lit_review
 from app.skills import method_playbook
 from app.skills import validate
 from app.skills import debate
+from app.skills import defense
 
 SKILLS: Dict[str, object] = {
     validate.NAME: validate,
     method_playbook.NAME: method_playbook,
     lit_review.NAME: lit_review,
     debate.NAME: debate,
+    defense.NAME: defense,
 }
 
 
