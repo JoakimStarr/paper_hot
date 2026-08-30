@@ -7,6 +7,7 @@ import { workbenchApi, producerApi } from '@/lib/api';
 import { openAssistant } from '@/lib/assistantBus';
 import { downloadTextFile, downloadAsWord } from '@/lib/utils';
 import type { StepProps } from './types';
+import DefensePanel from './DefensePanel';
 
 const MarkdownRenderer = dynamic(() => import('@/components/MarkdownRenderer'), {
   ssr: false,
@@ -164,7 +165,10 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi, goSte
             <h2 className="flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white">
               <BookMarked className="w-4 h-4 text-purple-600" /> 文献综述
             </h2>
-            <p className="text-xs text-gray-400 mt-0.5">基于项目文献集生成结构化综述（研究脉络/方法演进/争议/空白）</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              基于项目文献集生成结构化综述（研究脉络/方法演进/争议/空白）
+              <span className="text-gray-300 dark:text-gray-500">（与第 3 步的文献脉络为同一份内容，文献集完善后可在此重新生成并导出）</span>
+            </p>
           </div>
           <div className="flex gap-2">
             <button
@@ -238,9 +242,22 @@ export default function Step5Writing({ project, onPatch, onRefresh, runAi, goSte
             <MarkdownRenderer content={project.proposal} />
           </div>
         ) : (
-          <p className="text-xs text-gray-400">回到第 2 步「选题验证」，验证完成后会自动生成立项书。</p>
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-xs text-gray-400">立项书尚未生成。可直接生成，或先完成文献与数据步骤后再生成更完整。</p>
+            <button
+              onClick={regenerateProposal}
+              disabled={proposalBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+            >
+              {proposalBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+              {proposalBusy ? '生成中…' : '生成立项书'}
+            </button>
+          </div>
         )}
       </div>
+
+      {/* 模拟答辩（基于选题做开题答辩演练） */}
+      <DefensePanel topic={project.title} projectId={project.id} goStep={goStep} />
 
       {/* 期刊适配 + 引用 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800 p-4 sm:p-6">

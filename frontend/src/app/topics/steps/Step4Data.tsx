@@ -81,6 +81,7 @@ export default function Step4Data({ project, onPatch, runAi }: StepProps) {
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
               从项目文献集提取已有研究用的数据来源与识别策略，并给数据可得性建议
+              <span className="text-gray-300 dark:text-gray-500">（预置方法手册为候选知识库，AI 提取为基于本项目文献的判定，可手动补充）</span>
             </p>
           </div>
           <div className="flex items-center gap-2">

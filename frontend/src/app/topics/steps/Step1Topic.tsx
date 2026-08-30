@@ -12,7 +12,7 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: '手动创建',
 };
 
-export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
+export default function Step1Topic({ project, onPatch, runAi, goStep }: StepProps) {
   const [title, setTitle] = useState(project.title);
   const [questions, setQuestions] = useState<string[]>(project.research_questions || []);
   const [newQuestion, setNewQuestion] = useState('');
@@ -85,6 +85,28 @@ export default function Step1Topic({ project, onPatch, runAi }: StepProps) {
 
   return (
     <div className="space-y-5">
+      {/* 最新评估结论（反向闭环：验证/辩论/答辩结论可带回来改题） */}
+      {(project.novelty != null || project.validation_report) && (
+        <div className="flex items-center gap-2 flex-wrap bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800/60 rounded-lg p-3">
+          <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+          <span className="text-xs text-green-700 dark:text-green-300">
+            最新评估结论
+            {project.novelty != null && <> · 新颖性 <strong>{project.novelty}/10</strong></>}
+            {project.crowding && <> · 拥挤度 <strong>{project.crowding}</strong></>}
+          </span>
+          {goStep && (
+            <>
+              <button onClick={() => goStep(2)} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+                去第 2 步查看 →
+              </button>
+              <button onClick={() => goStep(5)} className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+                去第 5 步生成立项书 →
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 基本信息 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 sm:p-6">
         <div className="flex items-center gap-2 mb-4">

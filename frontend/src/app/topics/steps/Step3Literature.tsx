@@ -39,6 +39,7 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
   const recallFiredRef = useRef(false);
 
   const aiRunning = project.ai_pending === 'literature_review';
+  const overviewRunning = project.ai_pending === 'overview';
   const papers = project.papers || [];
 
   // 检索关键词：优先 Step1 手动维护的 search_keywords，回退灵感快照 generated_topics[*].keywords
@@ -326,6 +327,41 @@ export default function Step3Literature({ project, onPatch, runAi, onRefresh, go
               ))}
             </div>
           </>
+        )}
+      </div>
+
+      {/* 已有研究盘点 */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-purple-200 dark:border-purple-800 p-4 sm:p-6">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600 inline-block mr-1" /> 已有研究盘点
+            </h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              谁做了什么、用的什么方法/数据、结论共识与争议、差异化空白——让差异化切入有据
+            </p>
+          </div>
+          <button
+            onClick={() => runAi('overview')}
+            disabled={overviewRunning || papers.length === 0}
+            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-md transition-colors"
+          >
+            {overviewRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {project.overview ? '重新盘点' : '生成盘点'}
+          </button>
+        </div>
+        {overviewRunning ? (
+          <div className="flex items-center justify-center gap-2 text-sm text-purple-600 dark:text-purple-400 py-6">
+            <Loader2 className="w-5 h-5 animate-spin" /> AI 正在盘点已有研究（约 30 秒）…
+          </div>
+        ) : project.overview ? (
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            <MarkdownRenderer content={project.overview} citations={{}} />
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400 py-2">
+            基于文献集生成：谁做了什么、用的什么方法/数据、结论共识与争议、差异化空白。文献集非空即可生成。
+          </p>
         )}
       </div>
 
