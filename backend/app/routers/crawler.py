@@ -505,6 +505,8 @@ async def _run_references_background(paper_url: Optional[str], paper_title: Opti
 
     script = BASE_DIR.parent / "cnki_paper_captcha.py"
     cmd = [sys.executable, str(script)]
+    # 参考文献抓取无需登录知网，默认禁用登录态复用，避免过期/并发会话态带来的干扰
+    cmd += ["--no-login-state"]
     if urls and len(urls) > 1:
         # 批量：写临时清单文件走 --ref-urls-file（脚本逐篇抓取，单篇间隔仍由 --ref-interval 控制）
         cache_dir = BASE_DIR.parent / ".cache"
@@ -1006,19 +1008,6 @@ async def cleanup_database(db: AsyncSession = Depends(get_db), token: bool = Dep
     except Exception as e:
         await db.rollback()
         logger.error(f"Cleanup failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal error ({type(e).__name__})")
-
-
-@router.post("/maintenance/recompute-scores")
-async def recompute_all_scores(db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
-    """全量重算论文评分（新近性/期刊分级/关键词热度），修复历史常数评分。"""
-    try:
-        updated = await PaperCRUD.recompute_all_scores(db)
-        await db.commit()
-        return {"status": "success", "updated_scores": updated}
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Recompute scores failed: {e}")
         raise HTTPException(status_code=500, detail=f"Internal error ({type(e).__name__})")
 
 

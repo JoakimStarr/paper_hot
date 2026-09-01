@@ -33,6 +33,10 @@ BUILTIN_PROVIDERS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# embedding 单批大小：远端网关普遍限制 ≤20；本地推理服务可以用更大批次换吞吐
+LOCAL_EMBED_BATCH = 64
+REMOTE_EMBED_BATCH = 20
+
 # /models / 配置里区分：LLM 选择器只显示对话模型，排除 embedding/rerank/图片/音频等
 _NON_CHAT_MODEL_HINTS = (
     "embedding", "text-embed", "bge-", "rerank", "moderation",
@@ -313,15 +317,23 @@ class AITrendService:
                 return None
 
             client = self.clients[provider]
-            # 部分 embedding 服务（如阿里云百炼 MaaS 网关）限制单次批量 ≤20，按 20 分批保守兼容
-            batch = 20
+            # 部分 embedding 服务（如阿里云百炼 MaaS 网关）限制单次批量 ≤20，按 20 分批保守兼容。
+            # 本地推理服务（ollama / 自建 llama.cpp 等）无该限制，大批次能显著提高 CPU 吞吐
+            # （实测 bge-m3：64 条/批 比 20 条/批 快约 1.7 倍）。
+            base_url = str(getattr(client, "base_url", "") or "")
+            batch = (
+                LOCAL_EMBED_BATCH
+                if any(h in base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"))
+                else REMOTE_EMBED_BATCH
+            )
             truncated = [t[:max_chars] for t in texts]
             vectors: List[Optional[List[float]]] = [None] * len(texts)
-            all_ok = True
             for i in range(0, len(truncated), batch):
                 chunk = truncated[i:i + batch]
                 try:
-                    response = client.embeddings.create(model=bare_model, input=chunk)
+                    # 显式超时：embedding 服务挂起时让单批快速失败（该批记 None），
+                    # 而不是等 SDK 默认 600s 阻塞 to_thread 线程
+                    response = client.embeddings.create(model=bare_model, input=chunk, timeout=60)
                     data = list(response.data)
                     if len(data) != len(chunk):
                         raise ValueError(f"embedding count mismatch: {len(data)} != {len(chunk)}")
@@ -331,10 +343,11 @@ class AITrendService:
                     for offset, item in enumerate(data):
                         vectors[i + offset] = item.embedding
                 except Exception as batch_err:
-                    all_ok = False
                     logger.warning(f"embed_texts batch [{i}:{i + len(chunk)}] failed via {provider}/{bare_model}: {batch_err}")
             logger.info(f"embed_texts: embedded {sum(1 for v in vectors if v is not None)}/{len(texts)} texts via {provider}/{bare_model}")
-            return vectors if all_ok else None
+            # 单批失败返回部分结果（失败位置为 None），由调用方逐条处理/降级；
+            # 之前 return vectors if all_ok else None 会把整批成功的向量也一起丢弃
+            return vectors
         except Exception as e:
             logger.warning(f"embed_texts failed: {e}")
             return None
@@ -537,6 +550,9 @@ class AITrendService:
             ],
             "max_tokens": 8192,
             "temperature": 0.4,
+            # 显式超时：OpenAI SDK 默认 600s，故障链路最坏 N×2×600s；
+            # 120s 与调用方 asyncio.wait_for 一致，SDK 超时抛异常让 to_thread 线程正常退出
+            "timeout": 120,
         }
         # 智谱的 OpenAI 兼容接口支持 JSON 输出模式，可提升结构化稳定性
         if provider == "zhipu":

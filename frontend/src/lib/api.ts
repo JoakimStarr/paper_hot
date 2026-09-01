@@ -1,4 +1,4 @@
-import { PaperListResponse, PaperCardListResponse, PaperCard, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, ValidatorStatus, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, PaperReferencesResponse, PaperCitedByResponse, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate, MethodPlaybookEntry } from '@/types/paper';
+import { PaperCard, PaperCardListResponse, TrendingTopicsResponse, PaperDetailResponse, AIAnalysisResponseV2, AIAnalysisReport, SystemStats, DataHealth, NetworkData, CrawlLog, SettingsInfo, SchedulerJob, MaintenanceResult, ModelLinkTestResult, ResearchGapsResponse, GapAnalysisResponse, TopicProject, TopicProjectPayload, CNKISearchRequest, CNKISearchInfo, ReferencesCrawlInfo, PaperReferencesResponse, PaperCitedByResponse, TopicClustersResponse, KeywordTrendsResponse, ProjectPaper, ProjectSearchPaper, ProjectRecommendedPaper, ExportedSettings, TopicIdeaGenerateRequest, TopicIdeaCandidate, MethodPlaybookEntry } from '@/types/paper';
 import { getUserId } from '@/lib/user';
 import { streamDirectSSE, assistantHeaders, ASSISTANT_BACKEND_URL } from '@/lib/assistantStream';
 
@@ -291,8 +291,6 @@ export const papersApi = {
   /** 参考文献覆盖率：已抓论文数 / 有效链接论文总数。 */
   getReferencesCoverage: async (): Promise<{ papers_with_refs: number; papers_total: number }> =>
     request('/crawl/references/coverage'),
-  sendFeedback: async (body: { surface: string; ref_id?: string; content_hash?: string; rating: 1 | -1; model?: string }): Promise<{ status: string }> =>
-    request('/ai/feedback', { method: 'POST', body }),
 
   getKeywordNetwork: async (): Promise<NetworkData> =>
     request('/network/keywords'),
@@ -441,12 +439,6 @@ export const papersApi = {
   cleanupData: async (): Promise<MaintenanceResult> =>
     request('/maintenance/cleanup', { method: 'POST' }),
 
-  backfillAbstracts: async (): Promise<{ status: string; task_id: string }> =>
-    request('/maintenance/backfill-abstracts', { method: 'POST' }),
-
-  getBackfillStatus: async (): Promise<{ tasks: Record<string, { status: string; stats?: Record<string, number> }> }> =>
-    request('/maintenance/backfill-abstracts'),
-
   // #7 异步化：批量分析先拿 batch_id，再轮询 getBatchAnalyze 拿结果
   startBatchAnalyze: async (paperIds: string[], model?: string): Promise<{ batch_id: number; status: string; paper_count: number }> =>
     request('/papers/batch-analyze', { method: 'POST', body: { paper_ids: paperIds, ...(model ? { model } : {}) } }),
@@ -457,9 +449,6 @@ export const papersApi = {
 
 // —— 个人化（P1-10）：收藏 / 阅读历史 / 关注子领域 ——
 export const personalApi = {
-  getMe: async (): Promise<{ user_id: string; followed_subfields: string[]; read_count: number; favorite_count: number }> =>
-    request('/personal/me'),
-
   getFavorites: async (): Promise<{ papers: PaperCard[]; total: number }> =>
     request('/personal/favorites'),
 
@@ -621,17 +610,8 @@ export interface ReviewBrief { id: number; topic: string; status: string; model:
 export interface ReviewDetail extends ReviewBrief { content: string | null; papers: Array<Record<string, unknown>> | null }
 
 export const producerApi = {
-  startReview: async (topic: string, model?: string): Promise<{ review_id: number; status: string; topic: string }> =>
-    request('/producer/review', { method: 'POST', body: { topic, ...(model ? { model } : {}) } }),
-
   getReview: async (reviewId: number): Promise<ReviewDetail> =>
     request(`/producer/review/${reviewId}`),
-
-  listReviews: async (limit = 10): Promise<ReviewBrief[]> =>
-    request('/producer/reviews', { params: { limit } }),
-
-  suggestJournal: async (topic: string, abstract?: string, model?: string): Promise<{ topic: string; recommendations: string; suggestions: Array<{ journal: string; reason: string }>; ai_used: boolean }> =>
-    request('/producer/journal', { method: 'POST', body: { topic, abstract, ...(model ? { model } : {}) } }),
 
   exportCitations: async (papers: Array<Record<string, unknown>>, format: 'gbt7714' | 'bibtex'): Promise<{ format: string; citations: string[]; total: number }> =>
     request('/producer/citations', { method: 'POST', body: { papers, format } }),
@@ -647,9 +627,6 @@ export const topicsApi = {
 
   getGapAnalysis: async (): Promise<GapAnalysisResponse> =>
     request('/network/gaps/analysis'),
-
-  getValidatorStatus: async (): Promise<ValidatorStatus> =>
-    request('/topic-validator/status'),
 
   backfillEmbeddings: async (batchSize = 100): Promise<{ status: string; batch_size: number }> =>
     request('/topic-validator/embeddings/backfill', { method: 'POST', params: { batch_size: batchSize } }),
@@ -1139,21 +1116,7 @@ export interface TrackEvent {
   meta?: Record<string, unknown>;
 }
 
-export interface AnalyticsData {
-  period_days: number;
-  event_counts: Record<string, number>;
-  funnel: { impressions: number; clicks: number; favorites: number; ctr: number; fav_rate: number };
-  daily: Record<string, Record<string, number>>;
-  top_clicked: Array<{ paper_id: string; clicks: number }>;
-}
-
 export const trackingApi = {
-  trackEvent: async (event: TrackEvent): Promise<{ ok: boolean }> =>
-    request('/tracking/event', { method: 'POST', body: event }),
-
   trackEvents: async (events: TrackEvent[]): Promise<{ ok: boolean; count: number }> =>
     request('/tracking/events', { method: 'POST', body: { events } }),
-
-  getAnalytics: async (days = 7, surface?: string): Promise<AnalyticsData> =>
-    request('/tracking/analytics', { params: { days, ...(surface ? { surface } : {}) } }),
 };

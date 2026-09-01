@@ -22,9 +22,22 @@ def ref(i, title, year=2020, journal="经济研究", url=True):
 
 
 async def run(monkeypatch, refs, *, existing_titles=(), parse_ok=True,
-              verify_at=None, save_ok=True, ref_detail_max=None):
+              verify_at=None, save_ok=True, ref_detail_max=None,
+              ref_detail_workers=8):
     crawler = JournalCrawler()
     crawler.ref_detail_max = ref_detail_max
+    crawler.ref_detail_workers = ref_detail_workers
+
+    # 并发详情抓取走 run_details(self.context, ...)：桩一个假 context/page
+    class _FakePage:
+        async def close(self):
+            pass
+
+    class _FakeContext:
+        async def new_page(self):
+            return _FakePage()
+
+    crawler.context = _FakeContext()
     crawler._db_existing_urls = lambda: asyncio.sleep(0, result={U + '0'})
     crawler._db_existing_titles = lambda: asyncio.sleep(0, result=set(existing_titles))
     loaded = []
@@ -85,8 +98,10 @@ def test_no_url_non_cnki_no_year(monkeypatch):
 
 
 def test_verify_page_aborts(monkeypatch):
+    # 单线程：中止语义与串行实现一致（触发条目+剩余条目都计入 aborted）。
+    # 多线程下在途条目无法撤回，中止只保证「未开始的不加载」，属并发固有语义。
     stats, loaded = asyncio.run(run(monkeypatch, [ref(1, '甲'), ref(2, '乙'), ref(3, '丙')],
-                                   verify_at=2))
+                                    verify_at=2, ref_detail_workers=1))
     assert stats['aborted'] == 2 and stats['saved'] == 1 and len(loaded) == 2
 
 

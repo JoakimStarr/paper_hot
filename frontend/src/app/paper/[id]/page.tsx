@@ -82,7 +82,8 @@ export default function PaperDetailPage() {
     setRefsCrawling(true);
     setRefsError(false);
     try {
-      const res = await papersApi.startReferencesCrawl({ paper_url: paper.url, paper_title: paper.title, show_browser: refsShowBrowser });
+      // 只传标题走默认检索定位：库里存的 CNKI 链接带会话令牌（v=...），过期后直接打开会失败
+      const res = await papersApi.startReferencesCrawl({ paper_title: paper.title, show_browser: refsShowBrowser });
       if (res.status === 'already_running') {
         toast(t('pd.refsCrawlAlready'), 'info');
       }

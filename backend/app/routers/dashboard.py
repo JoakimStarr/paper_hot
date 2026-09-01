@@ -43,6 +43,17 @@ def _uid(x_user_id: Optional[str]) -> str:
     return (x_user_id or "").strip() or "local"
 
 
+def _hidden_fingerprint(hidden: Optional[dict]) -> str:
+    """屏蔽偏好内容指纹，作为 today_read 缓存 key 的一部分：反馈「不感兴趣」后 key 变化即失效，
+    避免 5 分钟 TTL 内仍看到被屏蔽的论文。"""
+    import hashlib
+    import json as _json
+
+    return hashlib.md5(
+        _json.dumps(hidden or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:12]
+
+
 async def _briefing_ai_note(topics: List[str]) -> Optional[str]:
     """用 LLM 给 Top 热点生成一句话领域结论；AI 不可用时返回 None（纯数据降级）。"""
     if not topics:
@@ -317,7 +328,13 @@ async def get_dashboard(
 
     resp: dict = {}
     if "today_read" in wanted:
-        resp["today_read"] = await _today_read(db, uid, followed_subfields, followed_keywords, hidden, seed=seed)
+        # 5 分钟 TTL：四路召回 + FAISS + numpy 精排成本高，短缓存足够保鲜
+        # （key 含 seed 与 hidden 指纹：换一批 / 反馈「不感兴趣」后自动换新 key）
+        resp["today_read"] = await ttl_cache(
+            f"today-read:{uid}:{seed}:{_hidden_fingerprint(hidden)}",
+            300,
+            lambda: _today_read(db, uid, followed_subfields, followed_keywords, hidden, seed=seed),
+        )
     if "briefing" in wanted:
         resp["briefing"] = await _briefing(db)
     if "mine" in wanted:
@@ -386,35 +403,38 @@ async def _today_read(
             q = q.where(hidden_cond)
         return q
 
+    # ---- 「换一批」偏移：seed 每次把各路召回窗口向后推，换的是不同论文而非排列 ----
+    # 先于向量召回计算：画像召回同样按窗口偏移，否则换一批对个性化用户的前排几乎不变
+    off = (seed % 6) * 6
+
     # ---- 路线 1：向量召回（用户画像相似） ----
     try:
         profile = await _build_user_profile_vector(db, uid)
         profile_vec = (profile or {}).get("vec")
         if profile_vec:
-            recall_ids = await _embedding_recall_for_dashboard(db, profile_vec, k=10)
+            recall_ids = await _embedding_recall_for_dashboard(db, profile_vec, k=10 + off)
             if recall_ids:
-                result = await db.execute(
-                    _base_query()
-                    .where(Paper.id.in_(recall_ids))
-                    .order_by(sa_desc(PaperScore.final_score))
-                    .limit(10)
-                )
-                ex = (profile or {}).get("exemplar")
-                ex_label = None
-                if ex:
-                    trow = (await db.execute(sa_select(Paper.title).where(Paper.id == ex["paper_id"]))).first()
-                    if trow and trow[0]:
-                        short = trow[0][:24] + ("…" if len(trow[0]) > 24 else "")
-                        ex_label = f"因为你{'收藏' if ex.get('source') == 'fav' else '读'}过《{short}》"
-                _add_candidates(
-                    result.scalars().all(),
-                    {"type": "profile", "label": ex_label or "与你的阅读/收藏画像相似"},
-                )
+                window = recall_ids[off:]
+                if window:
+                    result = await db.execute(
+                        _base_query()
+                        .where(Paper.id.in_(window))
+                        .order_by(sa_desc(PaperScore.final_score))
+                        .limit(10)
+                    )
+                    ex = (profile or {}).get("exemplar")
+                    ex_label = None
+                    if ex:
+                        trow = (await db.execute(sa_select(Paper.title).where(Paper.id == ex["paper_id"]))).first()
+                        if trow and trow[0]:
+                            short = trow[0][:24] + ("…" if len(trow[0]) > 24 else "")
+                            ex_label = f"因为你{'收藏' if ex.get('source') == 'fav' else '读'}过《{short}》"
+                    _add_candidates(
+                        result.scalars().all(),
+                        {"type": "profile", "label": ex_label or "与你的阅读/收藏画像相似"},
+                    )
     except Exception as e:
         logger.warning(f"embedding recall in today_read failed: {e}")
-
-    # ---- 「换一批」偏移：seed 每次把各路召回窗口向后推，换的是不同论文而非排列 ----
-    off = (seed % 6) * 6
 
     # ---- 路线 2：子领域匹配（关注方向优先） ----
     if followed_subfields:
@@ -491,6 +511,17 @@ async def _today_read(
 
     # ---- 多样性过滤：全选集余弦去重 + 每子领域最多 2 篇 ----
     diversified = _diversity_filter(candidates, max_sim=0.92, max_per_subfield=2)
+
+    # 过滤后不足 6 篇时按原评分顺序回填被过滤掉的候选，避免推荐数量缩水
+    # （冷启动 / 关注面很窄时余弦去重会把候选砍到只剩两三篇）
+    if len(diversified) < 6:
+        chosen = {p.id for p in diversified}
+        for p in candidates:
+            if len(diversified) >= 6:
+                break
+            if p.id not in chosen:
+                diversified.append(p)
+                chosen.add(p.id)
 
     return [_paper_to_card(p, reason=reason_map.get(p.id)) for p in diversified[:6]]
 
@@ -584,12 +615,12 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
 
     fav_papers = []
     if fav_ids:
+        # 轻量化：工作台只展示最近收藏的标题列表，无需完整卡片（含 embedding/scores 的 selectinload）
         presult = await db.execute(
-            sa_select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
-            .where(Paper.id.in_(fav_ids))
+            sa_select(Paper.id, Paper.title).where(Paper.id.in_(fav_ids))
         )
-        fav_papers = [_paper_to_card(p) for p in presult.scalars().all()]
+        title_map = {pid: title for pid, title in presult.all()}
+        fav_papers = [{"id": pid, "title": title_map.get(pid, "")} for pid in fav_ids]
 
     favorite_count = (
         await db.execute(
@@ -700,7 +731,7 @@ async def _mine(db: AsyncSession, uid: str, has_followed: bool = False) -> dict:
         )
         subfields = [r[0] for r in sf_result.all()]
         if subfields:
-            month_start = datetime.now() - timedelta(days=30)
+            month_start = datetime.now(timezone.utc) - timedelta(days=30)
             watch_subfield_count = (
                 await db.execute(
                     sa_select(sa_func.count())
@@ -733,7 +764,7 @@ _TODAY_BRIEF_TTL_SECONDS = 60
 
 
 async def _build_today_brief(db: AsyncSession, uid: str) -> dict:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = now - timedelta(days=30)
 
@@ -820,7 +851,8 @@ async def get_watch_new_papers(
         hidden = {}
     hidden_cond = _hidden_paper_condition(hidden or {})
 
-    cutoff = datetime.now() - timedelta(days=30)
+    # Paper.created_at 以 UTC 存储（server_default=func.now()），统一用带时区的 UTC 口径
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     filters = [
         Paper.economics_subfield.in_(subfields),
         Paper.created_at >= cutoff,

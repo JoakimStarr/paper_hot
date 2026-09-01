@@ -14,7 +14,7 @@ from cnki_crawler import progress
 
 
 async def run_details(context, queue_items: list, *, workers: int, tag: str,
-                      crawl, on_ok=None) -> dict:
+                      crawl, on_ok=None, bracket_progress: bool = True) -> dict:
     """并发抓详情入库。
 
     - context：浏览器 context（worker 用 context.new_page() 各自开 tab）
@@ -22,6 +22,8 @@ async def run_details(context, queue_items: list, *, workers: int, tag: str,
       （如 jn/year/issue）由 crawl 闭包自行解读
     - crawl(page, item)：async callable，返回 crawl_paper_detail 的 result dict
     - on_ok(item)：可选，每成功一篇回调（期刊模式用来累加各刊成功数）
+    - bracket_progress：进度用 [N/M]（默认）；参考文献等非详情阶段传 False 改用
+      (N/M)，避免后端 _parse_cnki_progress 把 [N/M] 误判成详情阶段进度
 
     返回 stats：{'ok','total','already_exists','filtered','verify_failed','failed'}
     （already_exists 为运行时遇到已存在的计数，调用方预过滤的 skipped 需自行累加）。
@@ -45,7 +47,8 @@ async def run_details(context, queue_items: list, *, workers: int, tag: str,
                     return
                 done += 1
                 title = (item.get('paper') or {}).get('title', '')[:30]
-                print(f"{wtag} [{done}/{total}] 处理: {title}...")
+                prog = f"[{done}/{total}]" if bracket_progress else f"({done}/{total})"
+                print(f"{wtag} {prog} 处理: {title}...")
                 res = await crawl(page, item)
                 if res and res.get('title'):
                     ok += 1

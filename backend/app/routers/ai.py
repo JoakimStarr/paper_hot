@@ -341,9 +341,12 @@ async def _run_analysis_background(report_id: int, model: Optional[str] = None):
             )
         except asyncio.TimeoutError:
             async with AsyncSessionLocal() as db:
-                await AIAnalysisReportCRUD.delete_report(db, report_id)
-                await db.commit()
-            logger.error(f"Background analysis {report_id} timed out after 120s, record deleted")
+                report = await AIAnalysisReportCRUD.get_report_by_id(db, report_id)
+                if report:
+                    report.status = "failed"
+                    report.error_message = "AI 分析超时（120s），请稍后重试"
+                    await db.commit()
+            logger.error(f"Background analysis {report_id} timed out after 120s, marked failed")
             return
 
         async with AsyncSessionLocal() as db:
@@ -352,9 +355,10 @@ async def _run_analysis_background(report_id: int, model: Optional[str] = None):
                 return
 
             if not analysis_result:
-                await AIAnalysisReportCRUD.delete_report(db, report_id)
+                report.status = "failed"
+                report.error_message = "AI 分析未返回结果（模型不可用或输出为空）"
                 await db.commit()
-                logger.error(f"Background analysis {report_id} failed: no result, record deleted")
+                logger.error(f"Background analysis {report_id} failed: no result, marked failed")
                 return
 
             elapsed_ms = int((time.time() - start_time) * 1000)

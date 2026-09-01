@@ -57,37 +57,3 @@ def compute_all_similarities(papers: List[Tuple[str, str]]) -> List[Tuple[str, s
         if key not in seen or score > seen[key]:
             seen[key] = score
     return [(a, b, s) for (a, b), s in seen.items()]
-
-
-async def compute_and_store_for_paper(db, paper_id: str):
-    from sqlalchemy import select
-    from app.models import Paper, PaperSimilarity
-    from app.crud import PaperSimilarityCRUD
-
-    paper = await db.execute(
-        select(Paper).where(Paper.id == paper_id)
-    )
-    paper = paper.scalar_one_or_none()
-    if not paper:
-        return
-
-    all_result = await db.execute(
-        select(Paper.id, Paper.abstract).where(Paper.id != paper_id)
-    )
-    others = all_result.all()
-    if not others:
-        return
-
-    papers = [(paper.id, paper.abstract)] + [(r[0], r[1]) for r in others]
-    results = compute_all_similarities(papers)
-
-    await PaperSimilarityCRUD.delete_by_paper(db, paper_id)
-
-    for id_a, id_b, score in results:
-        if paper_id not in (id_a, id_b):
-            continue
-        sim = PaperSimilarity(paper_id_a=id_a, paper_id_b=id_b, similarity_score=score)
-        db.add(sim)
-
-    await db.flush()
-    logger.info(f"Computed similarities for paper {paper_id}: {len(results)} pairs stored")

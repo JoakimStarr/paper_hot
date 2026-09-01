@@ -8,6 +8,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { Copy, Check, ChevronDown, ChevronRight, ExternalLink, Loader2, ThumbsUp, ThumbsDown, RotateCcw } from 'lucide-react';
+import { downloadTextFile } from '@/lib/utils';
 
 export interface ChatPaperRef {
   n?: number;
@@ -74,7 +75,7 @@ function formatTime(ts?: number): string {
   return `${d.getMonth() + 1}-${d.getDate()} ${hm}`;
 }
 
-/** 把一段聊天导出为 .md 文件 */
+/** 把一段聊天导出为 .md 文件（内容拼装与下载逻辑分离，下载复用 utils.downloadTextFile） */
 export function downloadChatMarkdown(title: string, fileName: string, messages: ChatMessageItem[], extra?: string) {
   if (messages.length === 0) return;
   const lines = messages.map((msg) => {
@@ -83,13 +84,7 @@ export function downloadChatMarkdown(title: string, fileName: string, messages: 
     return `### ${role}${ts}\n\n${msg.content}\n`;
   });
   const content = `# ${title}\n\n> 导出时间：${new Date().toLocaleString('zh-CN')}${extra ? `\n${extra}` : ''}\n\n---\n\n${lines.join('\n---\n\n')}`;
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(fileName, content, 'text/markdown;charset=utf-8');
 }
 
 function WorkflowPanel({ tools }: { tools: ChatToolsEvent[] }) {

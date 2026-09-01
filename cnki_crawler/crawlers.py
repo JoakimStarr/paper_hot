@@ -68,7 +68,8 @@ class JournalCrawler:
     """期刊/详情爬虫基类（单浏览器 + 多标签页并发模型）"""
 
     def __init__(self, headless=True, thread_id=0, state_file=None,
-                 refs_with_details=False, ref_max_items=None, ref_detail_max=None):
+                 refs_with_details=False, ref_max_items=None, ref_detail_max=None,
+                 ref_detail_workers=8):
         self.headless = headless
         self.thread_id = thread_id
         # --detail-refs：详情入库后在同一页顺带抓参考文献（省二次导航，防风控）
@@ -76,6 +77,8 @@ class JournalCrawler:
         self.max_items = ref_max_items
         # 每篇最多抓多少条参考文献的详情（None=不限）
         self.ref_detail_max = ref_detail_max
+        # 参考文献详情并发 worker tab 数（默认 8）
+        self.ref_detail_workers = max(1, int(ref_detail_workers))
         self.page = None
         self.browser = None
         self.playwright = None
@@ -1082,9 +1085,10 @@ class JournalCrawler:
         - 本地库已有的（URL 或标题命中）直接跳过，不打开详情页；
         - 条目原文解析不出年份的跳过（否则 published_at 落到今年，综合分里 recency 权重 0.35
           会把老文献顶到发现流前面）；
-        - 每条之间随机停顿并过全局导航闸；一旦撞上安全验证页立即中止本轮剩余条目。
+        - 抓取阶段用 ref_detail_workers 个 worker tab 并发（默认 8），每条前仍随机停顿
+          并过全局导航闸；一旦撞上安全验证页立即中止本轮剩余条目。
 
-        日志里的进度写成 (i/total) 而不是 [i/total]：后端把 [N/M] 当详情页进度解析
+        进度写成 (i/total) 而不是 [i/total]：后端把 [N/M] 当详情页进度解析
         （backend/app/routers/crawler.py 的 _parse_cnki_progress），这里不能污染它。
         """
         stats = {'saved': 0, 'dup_local': 0, 'dup_in_run': 0, 'no_url': 0, 'non_cnki': 0,
@@ -1110,6 +1114,7 @@ class JournalCrawler:
         existing_urls = await self._db_existing_urls()
         existing_titles = await self._db_existing_titles()
         seen = set()
+        queue_items = []
         for i, r in enumerate(candidates, 1):
             url, text = r['url'], (r.get('text') or '')
             if url in seen:
@@ -1125,30 +1130,60 @@ class JournalCrawler:
                 stats['no_year'] += 1
                 print(f"{tag} 参考文献详情 ({i}/{total}) 条目解析不出年份，跳过：{text[:40]}")
                 continue
+            queue_items.append({'idx': i, 'url': url, 'text': text, 'year': year,
+                                'journal': journal, 'paper': {'title': text[:30]}})
+        if not queue_items:
+            print(f"{tag} 参考文献详情小结：入库 0 条，本地已有跳过 {stats['dup_local']} 条，"
+                  f"本轮重复 {stats['dup_in_run']} 条，年份缺失 {stats['no_year']} 条，"
+                  f"著录不全 {stats['incomplete']} 条，非论文条目 {stats['filtered']} 条，"
+                  f"失败 {stats['failed']} 条")
+            return stats
+
+        n = max(1, self.ref_detail_workers)
+        print(f"{tag} 参考文献详情并发 {n} 线程，待抓 {len(queue_items)} 条")
+
+        # 验证页一旦出现立即中止剩余条目；aborted 计数含触发条目（与原串行实现一致）
+        abort = asyncio.Event()
+        extra = {'aborted': 0, 'incomplete': 0, 'load_failed': 0}
+
+        async def crawl_ref(page, item):
+            if abort.is_set():
+                extra['aborted'] += 1
+                return {'error': 'aborted'}
+            i = item['idx']
             await asyncio.sleep(random.uniform(*self.REF_PAGE_INTERVAL))
-            html, err = await self._load_detail_html(url)
+            html, err = await self._load_detail_html(item['url'], page=page)
             if err == 'verify_page':
-                stats['aborted'] = total - i + 1
-                print(f"{tag} ⚠ 遇到安全验证页，中止本轮参考文献详情抓取（已处理 {i - 1} 条）")
-                break
+                abort.set()
+                extra['aborted'] += 1
+                print(f"{tag} ⚠ 遇到安全验证页，中止本轮剩余参考文献详情抓取")
+                return {'error': 'verify_page'}
             if html is None:
-                stats['failed'] += 1
-                print(f"{tag} 参考文献详情 ({i}/{total}) 详情页加载失败：{text[:40]}")
-                continue
-            result = self._parse_detail_html(html, url, journal or '')
+                extra['load_failed'] += 1
+                print(f"{tag} 参考文献详情 ({i}/{total}) 详情页加载失败：{item['text'][:40]}")
+                return {'error': 'load_failed'}
+            result = self._parse_detail_html(html, item['url'], item['journal'] or '')
             if result.get('error'):
-                stats['filtered'] += 1
-                print(f"{tag} 参考文献详情 ({i}/{total}) 非论文条目，跳过：{text[:40]}")
-                continue
-            result['year'] = year
-            if await self.save_to_database(result, journal_name=journal):
-                stats['saved'] += 1
-                existing_urls.add(url)
+                print(f"{tag} 参考文献详情 ({i}/{total}) 非论文条目，跳过：{item['text'][:40]}")
+                return {'error': 'filtered_non_paper'}
+            result['year'] = item['year']
+            if await self.save_to_database(result, journal_name=item['journal']):
+                existing_urls.add(item['url'])
                 existing_titles.add(_norm_title(result['title']))
-                print(f"{tag} 参考文献详情 ({i}/{total}) ✓ 已入库：{result['title'][:30]}（{year}）")
-            else:
-                stats['incomplete'] += 1
-                print(f"{tag} 参考文献详情 ({i}/{total}) 未入库（已存在 / 缺作者或关键词 / 入库异常）：{text[:40]}")
+                print(f"{tag} 参考文献详情 ({i}/{total}) ✓ 已入库：{result['title'][:30]}（{item['year']}）")
+                return result
+            extra['incomplete'] += 1
+            print(f"{tag} 参考文献详情 ({i}/{total}) 未入库（已存在 / 缺作者或关键词 / 入库异常）：{item['text'][:40]}")
+            return {'error': 'incomplete'}
+
+        detail_stats = await run_details(self.context, queue_items, workers=n, tag=tag,
+                                         crawl=crawl_ref, bracket_progress=False)
+
+        stats['saved'] = detail_stats['ok']
+        stats['filtered'] += detail_stats['filtered']
+        stats['failed'] = extra['load_failed']
+        stats['incomplete'] = extra['incomplete']
+        stats['aborted'] = extra['aborted']
 
         print(f"{tag} 参考文献详情小结：入库 {stats['saved']} 条，本地已有跳过 {stats['dup_local']} 条，"
               f"本轮重复 {stats['dup_in_run']} 条，年份缺失 {stats['no_year']} 条，"
@@ -2016,9 +2051,10 @@ class ReferenceCrawler(JournalCrawler):
 
     def __init__(self, headless=True, thread_id=0, state_file=None,
                  paper_urls=None, paper_title=None, max_items=None, interval=6.0,
-                 crawl_ref_details=True, ref_detail_max=None):
+                 crawl_ref_details=True, ref_detail_max=None, ref_detail_workers=8):
         super().__init__(headless=headless, thread_id=thread_id, state_file=state_file,
-                         ref_detail_max=ref_detail_max)
+                         ref_detail_max=ref_detail_max,
+                         ref_detail_workers=ref_detail_workers)
         self.paper_urls = list(paper_urls or [])
         self.paper_title = (paper_title or '').strip()
         self.max_items = max_items

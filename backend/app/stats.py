@@ -52,16 +52,23 @@ def _cooc_from_paper_keywords(paper_keywords: List[List[str]]) -> tuple:
 
 
 async def keyword_cooccurrence(db: AsyncSession, limit: int = 15) -> list:
-    """关键词两两共现 top-N（SQL 聚合，供 AI 分析数据采集使用）。"""
-    result = await db.execute(sa_text("""
-        SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
-        FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
-        WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
-        GROUP BY a.value, b.value
-        ORDER BY cnt DESC
-        LIMIT :lim
-    """), {"lim": limit})
-    return [{"kw1": r[0], "kw2": r[1], "count": r[2]} for r in result.fetchall()]
+    """关键词两两共现 top-N（SQL 聚合，供 AI 分析数据采集使用）。
+    全库 json_each 自连接较重，300s TTL 缓存（结果与用户无关，可安全共享）。
+    """
+    from app.cache_util import ttl_cache
+
+    async def _compute():
+        result = await db.execute(sa_text("""
+            SELECT a.value AS kw1, b.value AS kw2, COUNT(*) AS cnt
+            FROM papers p, json_each(p.keywords_cn) a, json_each(p.keywords_cn) b
+            WHERE p.keywords_cn IS NOT NULL AND a.value < b.value
+            GROUP BY a.value, b.value
+            ORDER BY cnt DESC
+            LIMIT :lim
+        """), {"lim": limit})
+        return [{"kw1": r[0], "kw2": r[1], "count": r[2]} for r in result.fetchall()]
+
+    return await ttl_cache(f"keyword-cooccurrence:{limit}", 300, _compute)
 
 
 def _gap_score(cnt_a: int, cnt_b: int, co: int, max_count: int = 100) -> float:
@@ -82,54 +89,66 @@ async def compute_keyword_gaps(db: AsyncSession, limit: int = 10) -> list:
     """研究空白识别（供 /network/gaps 与 topic.py 的 LLM 解读复用）。
 
     空白分 = 词A热度 × 词B热度 × (1 - 共现饱和度)；纯计算委托 _gap_score。
+    全库聚合较重在内存做，300s TTL 缓存（结果与用户无关）。
     """
-    paper_keywords = await iter_paper_keywords(db, limit=0)
-    keyword_count, cooc = _cooc_from_paper_keywords(paper_keywords)
-    if not keyword_count:
-        return []
+    from app.cache_util import ttl_cache
 
-    # 只在高频词之间找空白（词频过低无统计意义）
-    hot = sorted(keyword_count.items(), key=lambda x: x[1], reverse=True)[:60]
-    max_count = hot[0][1] if hot else 1
+    async def _compute():
+        paper_keywords = await iter_paper_keywords(db, limit=0)
+        keyword_count, cooc = _cooc_from_paper_keywords(paper_keywords)
+        if not keyword_count:
+            return []
 
-    gaps = []
-    for i in range(len(hot)):
-        for j in range(i + 1, len(hot)):
-            (kw_a, cnt_a), (kw_b, cnt_b) = hot[i], hot[j]
-            pair = tuple(sorted([kw_a, kw_b]))
-            co = cooc.get(pair, 0)
-            score = _gap_score(cnt_a, cnt_b, co, max_count)
-            gaps.append({
-                "source": kw_a,
-                "target": kw_b,
-                "source_count": cnt_a,
-                "target_count": cnt_b,
-                "cooccurrence": co,
-                "gap_score": round(score, 4),
-            })
+        # 只在高频词之间找空白（词频过低无统计意义）
+        hot = sorted(keyword_count.items(), key=lambda x: x[1], reverse=True)[:60]
+        max_count = hot[0][1] if hot else 1
 
-    gaps.sort(key=lambda g: g["gap_score"], reverse=True)
-    return gaps[:limit]
+        gaps = []
+        for i in range(len(hot)):
+            for j in range(i + 1, len(hot)):
+                (kw_a, cnt_a), (kw_b, cnt_b) = hot[i], hot[j]
+                pair = tuple(sorted([kw_a, kw_b]))
+                co = cooc.get(pair, 0)
+                score = _gap_score(cnt_a, cnt_b, co, max_count)
+                gaps.append({
+                    "source": kw_a,
+                    "target": kw_b,
+                    "source_count": cnt_a,
+                    "target_count": cnt_b,
+                    "cooccurrence": co,
+                    "gap_score": round(score, 4),
+                })
+
+        gaps.sort(key=lambda g: g["gap_score"], reverse=True)
+        return gaps[:limit]
+
+    return await ttl_cache(f"keyword-gaps:{limit}", 300, _compute)
 
 
 async def keyword_network(db: AsyncSession) -> dict:
     """关键词共现网络：全库聚合（此前仅统计最近 N 篇导致计数失真，已改为全库）。
 
     节点取词频 top80、边取共现 top400，裁剪在本函数内完成。
+    全库聚合较重在内存做，300s TTL 缓存（结果与用户无关）。
     """
-    paper_keywords = await iter_paper_keywords(db)
-    keyword_count, cooc = _cooc_from_paper_keywords(paper_keywords)
+    from app.cache_util import ttl_cache
 
-    nodes_map = {}
-    for kw, cnt in keyword_count.items():
-        nodes_map[kw] = {"id": kw, "name": kw, "count": cnt, "group": "keyword"}
+    async def _compute():
+        paper_keywords = await iter_paper_keywords(db)
+        keyword_count, cooc = _cooc_from_paper_keywords(paper_keywords)
 
-    nodes = sorted(nodes_map.values(), key=lambda x: x["count"], reverse=True)[:80]
-    node_ids = {n["id"] for n in nodes}
-    links = [
-        {"source": a, "target": b, "value": v}
-        for (a, b), v in cooc.items()
-        if a in node_ids and b in node_ids
-    ]
-    links.sort(key=lambda x: x["value"], reverse=True)
-    return {"nodes": nodes, "links": links[:400]}
+        nodes_map = {}
+        for kw, cnt in keyword_count.items():
+            nodes_map[kw] = {"id": kw, "name": kw, "count": cnt, "group": "keyword"}
+
+        nodes = sorted(nodes_map.values(), key=lambda x: x["count"], reverse=True)[:80]
+        node_ids = {n["id"] for n in nodes}
+        links = [
+            {"source": a, "target": b, "value": v}
+            for (a, b), v in cooc.items()
+            if a in node_ids and b in node_ids
+        ]
+        links.sort(key=lambda x: x["value"], reverse=True)
+        return {"nodes": nodes, "links": links[:400]}
+
+    return await ttl_cache("keyword-network", 300, _compute)

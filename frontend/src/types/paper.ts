@@ -23,14 +23,6 @@ export interface Paper {
   keywords_cn: string[];
 }
 
-export interface PaperListResponse {
-  papers: Paper[];
-  total: number;
-  page: number;
-  page_size: number;
-  has_next: boolean;
-}
-
 export interface PaperCard {
   id: string;
   title: string;
@@ -404,11 +396,6 @@ export interface GapAnalysisResponse {
   raw_analysis: string | null;
   gaps_snapshot: ResearchGap[] | null;
   error_message: string | null;
-}
-
-export interface ValidatorStatus {
-  embedded_papers: number;
-  total_papers: number;
 }
 
 /** 验证器召回的一篇近似论文（recall 可见化）。 */

@@ -51,13 +51,13 @@ function TopicSparkline({ series }: { series?: Array<{ year: string; count: numb
   );
 }
 
-type DashboardTab = 'workbench' | 'briefing' | 'stack' | 'prefs';
-const VALID_TABS: DashboardTab[] = ['workbench', 'briefing', 'stack', 'prefs'];
+type DashboardTab = 'workbench' | 'stack' | 'prefs';
+const VALID_TABS: DashboardTab[] = ['workbench', 'stack', 'prefs'];
 
-// 各页签需要的 /dashboard 子集：prefs 页签纯客户端，不需要聚合接口
+// 各页签需要的 /dashboard 子集：prefs 页签纯客户端，不需要聚合接口。
+// 领域快讯（briefing）合并进工作台首屏，不再单独占一个页签。
 const TAB_SECTIONS: Record<DashboardTab, Array<'today_read' | 'briefing' | 'mine'>> = {
-  workbench: ['today_read', 'mine'],
-  briefing: ['briefing'],
+  workbench: ['today_read', 'briefing', 'mine'],
   stack: ['mine'],
   prefs: [],
 };
@@ -80,8 +80,9 @@ function DashboardInner() {
   const { t } = useLanguage();
   const searchParams = useSearchParams();
 
-  // 模块页签；支持 ?tab= 深链（承接原 #follow / #mine 锚点跳转）
-  const tabParam = searchParams.get('tab');
+  // 模块页签；支持 ?tab= 深链（承接原 #follow / #mine 锚点跳转；旧 ?tab=briefing 兼容到工作台）
+  const rawTab = searchParams.get('tab');
+  const tabParam = rawTab === 'briefing' ? 'workbench' : rawTab;
   const [activeTab, setActiveTab] = useState<DashboardTab>(
     tabParam && (VALID_TABS as string[]).includes(tabParam) ? (tabParam as DashboardTab) : 'workbench'
   );
@@ -133,8 +134,9 @@ function DashboardInner() {
   // 页内 Link 跳转到 /dashboard?tab=xxx 时同步激活页签
   useEffect(() => {
     const p = searchParams.get('tab');
-    if (p && (VALID_TABS as string[]).includes(p)) {
-      switchTab(p as DashboardTab);
+    const mapped = p === 'briefing' ? 'workbench' : p;
+    if (mapped && (VALID_TABS as string[]).includes(mapped)) {
+      switchTab(mapped as DashboardTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -182,7 +184,6 @@ function DashboardInner() {
 
   const tabs: { key: DashboardTab; label: string; icon: React.ReactNode }[] = [
     { key: 'workbench', label: t('dash.tabWorkbench'), icon: <BookOpen className="w-4 h-4" /> },
-    { key: 'briefing', label: t('dash.tabBriefing'), icon: <Newspaper className="w-4 h-4" /> },
     { key: 'stack', label: t('dash.tabStack'), icon: <Layers className="w-4 h-4" /> },
     { key: 'prefs', label: t('dash.tabPrefs'), icon: <SlidersHorizontal className="w-4 h-4" /> },
   ];
@@ -191,13 +192,11 @@ function DashboardInner() {
     <Layout>
       <div className="mb-6">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-1">
-          {tabs.find((tb) => tb.key === activeTab)?.label || t('dash.tabWorkbench')}
+          {t('dash.tabWorkbench')}
         </h1>
         <p className="text-gray-500 dark:text-gray-400 text-sm">
           {activeTab === 'workbench'
             ? t('dash.subtitleWorkbench')
-            : activeTab === 'briefing'
-            ? t('dash.subtitleBriefing')
             : activeTab === 'stack'
             ? t('dash.subtitleStack')
             : t('dash.subtitlePrefs')}
@@ -240,16 +239,16 @@ function DashboardInner() {
       ) : (
         <div className="space-y-8" role="tabpanel">
           {activeTab === 'workbench' && dataByTab.workbench?.today_read && dataByTab.workbench?.mine && (
-            <TodayRead
-              data={dataByTab.workbench as DashboardData}
-              reloading={reloading}
-              seed={seed}
-              onRefresh={bumpSeed}
-              onFollowedChanged={() => setFollowVersion((v) => v + 1)}
-            />
-          )}
-          {activeTab === 'briefing' && dataByTab.briefing?.briefing && (
-            <Briefing data={dataByTab.briefing as DashboardData} />
+            <>
+              <TodayRead
+                data={dataByTab.workbench as DashboardData}
+                reloading={reloading}
+                seed={seed}
+                onRefresh={bumpSeed}
+                onFollowedChanged={() => setFollowVersion((v) => v + 1)}
+              />
+              {dataByTab.workbench?.briefing && <Briefing data={dataByTab.workbench as DashboardData} />}
+            </>
           )}
           {activeTab === 'stack' && dataByTab.stack?.mine && (
             <MyStack data={dataByTab.stack as DashboardData} />
@@ -358,13 +357,6 @@ function TodayRead({ data, reloading, seed, onRefresh, onFollowedChanged }: {
           {t('dash.followHintPost')}
         </p>
       )}
-      {mine.watch_subfield_count != null && mine.watch_subfield_count > 0 && (
-        <p className="text-xs text-gray-400 mb-2">
-          <Link href="/search" className="text-primary-600 hover:underline">
-            {t('dash.watchSubfieldNew', { n: mine.watch_subfield_count })}
-          </Link>
-        </p>
-      )}
       <div className={`grid grid-cols-1 gap-4 sm:gap-6 transition-opacity duration-300 ${reloading ? 'opacity-50' : 'opacity-100'}`}>
         {data.today_read.map((p, idx) => (
           <div key={`${p.id}-${seed}`} className="pp-fade-slide-in" style={{ animationDelay: `${idx * 60}ms` }}>
@@ -413,7 +405,7 @@ function TodayRead({ data, reloading, seed, onRefresh, onFollowedChanged }: {
         )}
       </div>
 
-      <WatchNewList onPapersRead={onRefresh} />
+      <WatchNewList count={mine.watch_subfield_count} onPapersRead={onRefresh} />
       <ReadLaterQueue onQueueChanged={onRefresh} />
     </section>
   );
@@ -422,36 +414,44 @@ function TodayRead({ data, reloading, seed, onRefresh, onFollowedChanged }: {
 /** 进行中选题进度条：五步向导进度 + 文献集精读统计（打通"读论文"与"写论文"） */
 function ProjectProgressStrip({ projects }: { projects: DashboardData['mine']['topic_projects'] }) {
   const { t } = useLanguage();
+  if (projects.length === 0) return null;
   const active = projects.slice(0, 3);
-  if (active.length === 0) return null;
   return (
-    <div className="mb-4 flex flex-wrap gap-2">
-      {active.map((tp) => (
-        <Link
-          key={tp.id}
-          href={`/topics?project=${tp.id}`}
-          className="group flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
-        >
-          <Target className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-          <span className="max-w-[180px] sm:max-w-[260px] truncate text-xs font-medium text-blue-800 dark:text-blue-200">
-            {tp.title}
-          </span>
-          <span className="shrink-0 rounded-full bg-blue-100 dark:bg-blue-900/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300">
-            {t('dash.stepN', { n: tp.current_step ?? 1 })}
-          </span>
-          {(tp.paper_count ?? 0) > 0 && (
-            <span className="shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
-              {t('dash.paperStat', { n: tp.paper_count ?? 0, m: tp.read_count ?? 0 })}
+    <div className="mb-4">
+      <div className="flex flex-wrap gap-2">
+        {active.map((tp) => (
+          <Link
+            key={tp.id}
+            href={`/topics?project=${tp.id}`}
+            className="group flex items-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
+          >
+            <Target className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <span className="max-w-[180px] sm:max-w-[260px] truncate text-xs font-medium text-blue-800 dark:text-blue-200">
+              {tp.title}
             </span>
-          )}
+            <span className="shrink-0 rounded-full bg-blue-100 dark:bg-blue-900/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300">
+              {t('dash.stepN', { n: tp.current_step ?? 1 })}
+            </span>
+            {(tp.paper_count ?? 0) > 0 && (
+              <span className="shrink-0 text-[10px] text-blue-600/80 dark:text-blue-300/80">
+                {t('dash.paperStat', { n: tp.paper_count ?? 0, m: tp.read_count ?? 0 })}
+              </span>
+            )}
+          </Link>
+        ))}
+      </div>
+      {projects.length > 3 && (
+        <Link href="/topics" className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
+          {t('dash.viewAllProjects', { n: projects.length })}
         </Link>
-      ))}
+      )}
     </div>
   );
 }
 
-/** 关注子领域近 30 天新论文：就地展开（替代跳搜索页重拼筛选），支持「全部标为看过」 */
-function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
+/** 关注子领域近 30 天新论文：就地展开（替代跳搜索页重拼筛选），支持「全部标为看过」。
+ * count 为 mine.watch_subfield_count（关注子领域新增篇数），在标题上展示数量徽标。 */
+function WatchNewList({ count, onPapersRead }: { count?: number | null; onPapersRead: () => void }) {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -463,7 +463,7 @@ function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || loaded) return;
     let cancelled = false;
     setLoading(true);
     dashboardApi.getWatchNewPapers()
@@ -477,7 +477,7 @@ function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
       .catch(() => { if (!cancelled) setLoaded(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [open, reloadKey]);
+  }, [open, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const markAllRead = async () => {
     if (busy || papers.length === 0) return;
@@ -486,6 +486,7 @@ function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
       await personalApi.recordReadingBatch(papers.map((p) => p.id));
       toast(t('dash.watchNewAllReadDone'), 'success');
       onPapersRead();
+      setLoaded(false);          // 已看过的清空本地缓存，重新拉取后仍展示剩余新论文
       setReloadKey((k) => k + 1);
     } catch {
       toast(t('pref.hideFailed'), 'error');
@@ -503,6 +504,11 @@ function WatchNewList({ onPapersRead }: { onPapersRead: () => void }) {
       >
         <Clock className="w-4 h-4 text-primary-500" />
         <span className="font-medium">{t('dash.watchNewTitle')}</span>
+        {typeof count === 'number' && count > 0 && (
+          <span className="shrink-0 rounded-full bg-primary-50 dark:bg-primary-900/40 px-1.5 py-0.5 text-[10px] font-medium text-primary-600 dark:text-primary-300">
+            {count}
+          </span>
+        )}
         <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
@@ -594,7 +600,7 @@ function ReadLaterQueue({ onQueueChanged }: { onQueueChanged: () => void }) {
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('dash.readLaterTitle')}</h3>
         {papers.length > 0 && <span className="text-xs text-gray-400">{t('dash.readLaterCount', { n: papers.length })}</span>}
         <Link href="/read-later" className="ml-auto text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline">
-          查看全部 →
+          {t('dash.viewAll')} →
         </Link>
       </div>
       {papers.length === 0 ? (
@@ -675,9 +681,17 @@ function ColdStartWizard({ onDone }: { onDone: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label={t('dash.coldstart.title')}>
       <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl p-5 sm:p-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Sparkles className="w-5 h-5 text-primary-500" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('dash.coldstart.title')}</h2>
+        <div className="flex items-start gap-2 mb-1">
+          <Sparkles className="w-5 h-5 text-primary-500 mt-0.5" />
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex-1">{t('dash.coldstart.title')}</h2>
+          <button
+            onClick={finish}
+            title={t('dash.coldstart.skip')}
+            aria-label={t('dash.coldstart.skip')}
+            className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('dash.coldstart.subtitle')}</p>
         <div className="flex flex-wrap gap-2 mb-4 max-h-56 overflow-y-auto">
@@ -899,7 +913,7 @@ function MyStack({ data }: { data: DashboardData }) {
             {data.mine.reviews.slice(0, 5).map((r) => (
               <li key={r.id}>
                 <Link
-                  href="/topics"
+                  href={`/review/${r.id}`}
                   className="block text-xs text-gray-600 dark:text-gray-400 hover:text-primary-600"
                 >
                   <span className="line-clamp-1">{r.topic}</span>
@@ -1144,7 +1158,7 @@ function FollowKeywords({ version = 0 }: { version?: number }) {
           onClick={() => setExpanded((v) => !v)}
           className="mt-3 text-xs text-amber-600 dark:text-amber-400 hover:underline"
         >
-          {expanded ? '收起' : `展开其余 ${hiddenCount} 个关键词`}
+          {expanded ? t('follow.collapse') : t('follow.expandMore', { n: hiddenCount })}
         </button>
       )}
     </section>

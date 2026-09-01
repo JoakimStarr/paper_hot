@@ -39,7 +39,9 @@ async def _run_cached_tool(name: str, fn, db: AsyncSession, args: dict) -> dict:
 
 
 # 可安全缓存（结果不随调用方改写）的工具名
-_CACHEABLE_TOOLS = {"trending_topics", "subfield_distribution"}
+# keyword_gaps / keyword_network 是纯全库聚合，与用户/调用方无关，一个 agent 轮次内多次调用
+# 不应反复重扫全库（相关 stats 函数已自带 TTL 缓存，这里再复用避免重复进缓存查找）
+_CACHEABLE_TOOLS = {"trending_topics", "subfield_distribution", "keyword_gaps", "keyword_network"}
 
 MAX_TOOL_RESULTS_ITEMS = 8
 MAX_ROUND_TRIPS = 6
@@ -769,14 +771,14 @@ async def _stream_model_round(client: Any, model: str, convo: list, schemas: lis
         try:
             resp = client.chat.completions.create(
                 model=model, messages=convo, tools=schemas or None, stream=True,
-                temperature=0.4,
+                temperature=0.4, timeout=60,
             )
             _consume_stream(resp, collected, _forward)
         except Exception as e:
             logger.warning(f"agent round stream failed, retrying once: {e}")
             resp = client.chat.completions.create(
                 model=model, messages=convo, tools=schemas or None, stream=True,
-                temperature=0.4,
+                temperature=0.4, timeout=60,
             )
             _consume_stream(resp, collected, _forward)
 

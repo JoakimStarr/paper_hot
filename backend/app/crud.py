@@ -4,7 +4,7 @@ import time
 from typing import List, Optional, Tuple
 from sqlalchemy import select, and_, desc, func, or_, text, update, bindparam, insert, delete, case
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -260,7 +260,11 @@ class PaperCRUD:
     ) -> Tuple[List[Paper], int]:
         query = (
             select(Paper)
-            .options(selectinload(Paper.features), selectinload(Paper.scores))
+            # 卡片列表不消费 embedding（22.7KB/行 JSON），defer 避免列表页每行拖全量向量
+            .options(
+                selectinload(Paper.features).defer(PaperFeatures.embedding),
+                selectinload(Paper.scores),
+            )
         )
         
         if search:
@@ -1019,50 +1023,6 @@ class PaperCRUD:
         await db.flush()
         return len(updates)
 
-    @staticmethod
-    async def recompute_all_scores(db: AsyncSession) -> int:
-        """全量重算所有论文分数：recency（发表时间衰减）+ venue（期刊分级）+ trend（关键词热度）。"""
-        growth_map = await PaperCRUD._latest_growth_map(db)
-
-        result = await db.execute(
-            select(Paper.id, Paper.published_at, Paper.journal_name, PaperFeatures.keywords)
-            .outerjoin(PaperFeatures, PaperFeatures.paper_id == Paper.id)
-        )
-        rows = result.fetchall()
-
-        updates = []
-        for paper_id, published_at, journal_name, keywords in rows:
-            recency = PaperCRUD._recency_score(published_at)
-            venue = PaperCRUD._venue_score(journal_name)
-            trend = 0.5
-            rates = [growth_map[k] for k in (keywords or []) if k in growth_map]
-            if rates:
-                trend = PaperCRUD._trend_score(max(rates))
-            updates.append({
-                "pid": paper_id,
-                "recency": recency,
-                "venue": venue,
-                "trend": trend,
-                "final": PaperCRUD._final_score(recency, venue, trend),
-            })
-
-        if not updates:
-            return 0
-        score_tbl = PaperScore.__table__
-        await db.execute(
-            update(score_tbl)
-            .where(score_tbl.c.paper_id == bindparam("pid"))
-            .values(
-                recency_score=bindparam("recency"),
-                venue_score=bindparam("venue"),
-                trend_score=bindparam("trend"),
-                final_score=bindparam("final"),
-            ),
-            updates,
-        )
-        await db.flush()
-        return len(updates)
-
 
 class PaperAnalysisCRUD:
     @staticmethod
@@ -1118,17 +1078,6 @@ class PaperAnalysisCRUD:
             .limit(1)
         )
         return result.scalar_one_or_none()
-
-    @staticmethod
-    async def get_history(db: AsyncSession, paper_id: str, limit: int = 10):
-        from app.models import PaperAnalysis
-        result = await db.execute(
-            select(PaperAnalysis)
-            .where(PaperAnalysis.paper_id == paper_id)
-            .order_by(desc(PaperAnalysis.created_at))
-            .limit(limit)
-        )
-        return result.scalars().all()
 
 
 class PaperChatCRUD:
@@ -1481,17 +1430,6 @@ class PaperSimilarityCRUD:
     ) -> List[Paper]:
         papers, _ = await PaperSimilarityCRUD.get_similar_papers_with_scores(db, paper_id, limit)
         return papers
-
-    @staticmethod
-    async def delete_by_paper(db: AsyncSession, paper_id: str):
-        from app.models import PaperSimilarity
-        await db.execute(
-            delete(PaperSimilarity).where(
-                (PaperSimilarity.paper_id_a == paper_id) |
-                (PaperSimilarity.paper_id_b == paper_id)
-            )
-        )
-        await db.flush()
 
     @staticmethod
     async def clear_all(db: AsyncSession):

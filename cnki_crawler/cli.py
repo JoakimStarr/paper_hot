@@ -47,7 +47,7 @@ async def main():
     parser.add_argument('--login', action='store_true',
                         help='交互式登录：打开有头浏览器让用户手动登录知网，回车后保存会话态到 .cache/cnki_state.json 供后续复用')
     parser.add_argument('--state-file', type=str, default=None,
-                        help='会话态文件路径（配合 --login 使用；默认 .cache/cnki_state.json）')
+                        help='自定义会话态文件路径（多进程并发爬取时各自隔离，避免并发写损坏；默认 .cache/cnki_state.json）')
     parser.add_argument('--urls-only', action='store_true',
                         help='只收集论文 URL 写入文件，不抓详情入库（仅检索模式）')
     parser.add_argument('--urls-file', type=str, default=None,
@@ -76,6 +76,8 @@ async def main():
                         help='参考文献模式：只抓引用列表，不抓每条参考文献自身的详情（默认会抓详情并入库）')
     parser.add_argument('--ref-detail-max', type=int, default=None,
                         help='参考文献模式：每篇最多抓多少条参考文献的详情（默认不限；先小批量试跑可设 2）')
+    parser.add_argument('--ref-detail-workers', type=int, default=8,
+                        help='参考文献模式：详情抓取并发 worker tab 数（默认8）')
     args = parser.parse_args()
 
     # —— 交互式登录：--login 与 --no-login-state 语义冲突（一个要写会话态、一个禁用会话态）——
@@ -115,7 +117,9 @@ async def main():
         if not ref_urls and not (args.ref_title or '').strip():
             print("[ERROR] 参考文献模式需要至少一个详情页链接（--ref-paper-url）或论文标题（--ref-title）")
             sys.exit(1)
-        state_file = None if args.no_login_state else str(CACHE_DIR / 'cnki_state.json')
+        state_file = None if args.no_login_state else (
+            args.state_file or str(CACHE_DIR / 'cnki_state.json')
+        )
         ref_crawler = ReferenceCrawler(
             headless=not args.show_browser,
             state_file=state_file,
@@ -125,6 +129,7 @@ async def main():
             interval=args.ref_interval,
             crawl_ref_details=not args.ref_no_details,
             ref_detail_max=args.ref_detail_max,
+            ref_detail_workers=args.ref_detail_workers,
         )
         await ref_crawler.run()
         return
@@ -143,7 +148,9 @@ async def main():
             except Exception:
                 print("年份格式错误，忽略 --years，应为如 2024-2026")
                 min_year = max_year = None
-        state_file = None if args.no_login_state else str(CACHE_DIR / 'cnki_state.json')
+        state_file = None if args.no_login_state else (
+            args.state_file or str(CACHE_DIR / 'cnki_state.json')
+        )
         # --search-url 支持直接传 URL，或传一个含 URL 的本地文件路径（自动读取）
         search_url = args.search_url
         if search_url and Path(search_url).is_file():

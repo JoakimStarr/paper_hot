@@ -193,6 +193,9 @@ async def _stream_llm_content(client, model: str, messages: list,
             kwargs = dict(model=model, messages=messages, stream=True, max_tokens=max_tokens)
             if temperature is not None:
                 kwargs["temperature"] = temperature
+            # 显式超时：流式卡住（无 chunk 到达超过 read timeout）时 SDK 抛异常退出线程，
+            # 否则 run_stream 在 _shared_executor 里永久阻塞（future.cancel 无法中断运行中的线程）
+            kwargs["timeout"] = 60
             response = client.chat.completions.create(**kwargs)
             usage = None
             for chunk in response:

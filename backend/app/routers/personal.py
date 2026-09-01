@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select as sa_select, delete as sa_delete, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.database import get_db
 from app.models import (
@@ -93,7 +93,7 @@ async def get_favorites(
         return {"papers": [], "total": 0}
     result = await db.execute(
         sa_select(Paper).options(
-            selectinload(Paper.features),
+            selectinload(Paper.features).defer(PaperFeatures.embedding),
             selectinload(Paper.scores),
         ).where(Paper.id.in_(ids))
     )
@@ -311,7 +311,7 @@ async def get_reading_history(
     read_map = {r[0]: r[1] for r in rows}
     presult = await db.execute(
         sa_select(Paper).options(
-            selectinload(Paper.features),
+            selectinload(Paper.features).defer(PaperFeatures.embedding),
             selectinload(Paper.scores),
         ).where(Paper.id.in_(ids))
     )
@@ -463,6 +463,7 @@ async def get_suggestions(
 
     # 查论文数分布
     from sqlalchemy import text as sa_text
+    from app.cache_util import ttl_cache
     sf_dist = {}
     kw_dist = {}
     try:
@@ -473,15 +474,21 @@ async def get_suggestions(
         )
         sf_dist = {r[0]: r[1] for r in sf_rows.all()}
 
-        kw_result = await db.execute(
-            sa_select(Paper.keywords_cn)
-            .where(Paper.keywords_cn.isnot(None))
-        )
-        for (kws,) in kw_result.all():
-            for kw in (kws or []):
-                kw = (kw or "").strip()
-                if kw:
-                    kw_dist[kw] = kw_dist.get(kw, 0) + 1
+        # 全库关键词频次聚合（无索引 json_each 展开）与用户无关，120s TTL 缓存
+        async def _kw_dist():
+            kw_result = await db.execute(
+                sa_select(Paper.keywords_cn)
+                .where(Paper.keywords_cn.isnot(None))
+            )
+            dist = {}
+            for (kws,) in kw_result.all():
+                for kw in (kws or []):
+                    kw = (kw or "").strip()
+                    if kw:
+                        dist[kw] = dist.get(kw, 0) + 1
+            return dist
+
+        kw_dist = await ttl_cache("personal-suggestions:kw-dist", 120, _kw_dist)
     except Exception:
         pass
 
@@ -678,7 +685,7 @@ async def get_read_later_papers(
         return {"papers": [], "total": 0}
     result = await db.execute(
         sa_select(Paper).options(
-            selectinload(Paper.features),
+            selectinload(Paper.features).defer(PaperFeatures.embedding),
             selectinload(Paper.scores),
         ).where(Paper.id.in_(ids))
     )

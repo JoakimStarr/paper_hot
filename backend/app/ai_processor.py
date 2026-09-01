@@ -111,21 +111,6 @@ class AIProcessor:
             logger.warning(f"compute_embedding failed: {e}")
             return None
 
-    def compute_embedding(self, text: str) -> Optional[str]:
-        """生成文本 embedding（JSON 字符串，落库前序列化）。同步阻塞版：仅供非协程场景调用。"""
-        try:
-            from app.ai_service import ai_trend_service
-            if text is None or not str(text).strip():
-                return None
-            vecs = ai_trend_service.embed_texts([str(text)])
-            if not vecs or not vecs[0]:
-                return None
-            import json
-            return json.dumps(vecs[0])
-        except Exception as e:
-            logger.warning(f"compute_embedding failed: {e}")
-            return None
-
     def classify_topic(self, abstract: str, title: str) -> Optional[str]:
         combined_text = f"{title} {abstract}".lower()
 

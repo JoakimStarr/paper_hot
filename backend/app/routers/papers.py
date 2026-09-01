@@ -893,12 +893,6 @@ async def paper_topic_relevance(
         return {"score": round(rule_score, 2), "reason": reason, "ai_used": False, "overlaps": overlap}
 
 
-@router.get("/papers/{paper_id}/analyses")
-async def get_paper_analyses(paper_id: str, db: AsyncSession = Depends(get_db)):
-    records = await PaperAnalysisCRUD.get_history(db, paper_id)
-    return [{"id": r.id, "analysis": r.analysis, "model": r.model, "created_at": _isoformat_utc(r.created_at)} for r in records]
-
-
 @router.get("/papers/{paper_id}/analyses/latest")
 async def get_latest_analysis(paper_id: str, db: AsyncSession = Depends(get_db)):
     record = await PaperAnalysisCRUD.get_latest(db, paper_id)
@@ -1010,21 +1004,6 @@ async def clear_chat_messages(paper_id: str, db: AsyncSession = Depends(get_db),
     await PaperChatCRUD.clear_chats(db, paper_id)
     await db.commit()
     return {"status": "cleared"}
-
-
-@router.post("/papers/{paper_id}/recompute-similarities")
-async def recompute_paper_similarities(paper_id: str, db: AsyncSession = Depends(get_db), token: bool = Depends(verify_token)):
-    paper = await PaperCRUD.get_paper_by_id(db, paper_id)
-    if not paper:
-        raise HTTPException(status_code=404, detail="Paper not found")
-
-    try:
-        from app.similarity import compute_and_store_for_paper
-        await compute_and_store_for_paper(db, paper_id)
-        await db.commit()
-        return {"status": "success", "message": "Similarities recomputed"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Recompute failed: {str(e)}")
 
 
 @router.get("/authors/{author_name:path}/papers")
@@ -1158,48 +1137,58 @@ async def search_suggest(
     limit: int = Query(8, ge=1, le=20),
     db: AsyncSession = Depends(get_db)
 ):
+    from app.cache_util import ttl_cache
     from sqlalchemy import text as sa_text
     from app.models import Paper as PaperModel
     from sqlalchemy import select as sa_select
 
     suggestions: list[dict] = []
     half = max(limit // 3, 2)
+    pattern = q.lower()
+
+    # 重型聚合（json_each 全表展开 + GROUP BY）60s 缓存；逐击键只做内存 LIKE 过滤，
+    # 避免每次输入都重扫全库（json_each 无法走索引）
+    async def _keyword_freq():
+        result = await db.execute(
+            sa_text("""
+                SELECT value as kw, COUNT(*) as cnt FROM papers, json_each(keywords_cn)
+                WHERE keywords_cn IS NOT NULL AND length(value) > 1
+                GROUP BY kw ORDER BY cnt DESC
+            """)
+        )
+        return [(str(r[0]), r[1]) for r in result]
+
+    async def _author_freq():
+        result = await db.execute(
+            sa_text("""
+                SELECT value as author_name, COUNT(*) as cnt FROM papers, json_each(authors)
+                WHERE authors IS NOT NULL AND length(value) > 1
+                GROUP BY author_name ORDER BY cnt DESC
+            """)
+        )
+        return [(str(r[0]), r[1]) for r in result]
 
     try:
-        kw_result = await db.execute(
-            sa_text("""
-                SELECT kw, COUNT(*) as cnt FROM (
-                    SELECT value as kw FROM papers, json_each(keywords_cn)
-                    WHERE keywords_cn IS NOT NULL
-                )
-                WHERE kw LIKE :pattern AND length(kw) > 1
-                GROUP BY kw ORDER BY cnt DESC LIMIT :lim
-            """),
-            {"pattern": f"%{q}%", "lim": half}
-        )
-        for row in kw_result:
-            val = str(row[0])
-            if not val.startswith('[') and not val.startswith('"') and val.strip():
-                suggestions.append({"text": val, "type": "keyword", "count": row[1]})
+        kw_freq = await ttl_cache("search-suggest:keywords", 60, _keyword_freq)
+        kw_picked = 0
+        for kw, cnt in kw_freq:
+            if kw_picked >= half:
+                break
+            if kw.strip() and not kw.startswith('[') and not kw.startswith('"') and pattern in kw.lower():
+                suggestions.append({"text": kw, "type": "keyword", "count": cnt})
+                kw_picked += 1
     except Exception:
         pass
 
     try:
-        author_result = await db.execute(
-            sa_text("""
-                SELECT author_name, COUNT(*) as cnt FROM (
-                    SELECT value as author_name FROM papers, json_each(authors)
-                    WHERE authors IS NOT NULL
-                )
-                WHERE author_name LIKE :pattern AND length(author_name) > 1
-                GROUP BY author_name ORDER BY cnt DESC LIMIT :lim
-            """),
-            {"pattern": f"%{q}%", "lim": half}
-        )
-        for row in author_result:
-            val = str(row[0])
-            if val.strip() and not val.startswith('[') and not val.startswith('"'):
-                suggestions.append({"text": val, "type": "author", "count": row[1]})
+        author_freq = await ttl_cache("search-suggest:authors", 60, _author_freq)
+        author_picked = 0
+        for name, cnt in author_freq:
+            if author_picked >= half:
+                break
+            if name.strip() and not name.startswith('[') and not name.startswith('"') and pattern in name.lower():
+                suggestions.append({"text": name, "type": "author", "count": cnt})
+                author_picked += 1
     except Exception:
         pass
 
@@ -1247,22 +1236,27 @@ async def get_subfield_distribution(
 async def get_keyword_distribution(
     db: AsyncSession = Depends(get_db)
 ):
-    """关键词论文数分布（json_each 展开 keywords_cn 统计）。"""
+    """关键词论文数分布（json_each 展开 keywords_cn 统计）。
+    全库 json_each 无法走索引，300s TTL 缓存。
+    """
+    from app.cache_util import ttl_cache
     from sqlalchemy import text as sa_text
 
-    result = await db.execute(
-        sa_text(
-            "SELECT json_each.value AS kw, COUNT(*) AS cnt "
-            "FROM papers, json_each(papers.keywords_cn) "
-            "WHERE papers.keywords_cn IS NOT NULL "
-            "GROUP BY json_each.value "
-            "ORDER BY cnt DESC"
+    async def _compute():
+        result = await db.execute(
+            sa_text(
+                "SELECT json_each.value AS kw, COUNT(*) AS cnt "
+                "FROM papers, json_each(papers.keywords_cn) "
+                "WHERE papers.keywords_cn IS NOT NULL "
+                "GROUP BY json_each.value "
+                "ORDER BY cnt DESC"
+            )
         )
-    )
-    distribution = [
-        {"keyword": row[0], "count": row[1]}
-        for row in result.fetchall()
-    ]
-    return {"distribution": distribution}
+        return [
+            {"keyword": row[0], "count": row[1]}
+            for row in result.fetchall()
+        ]
+
+    return {"distribution": await ttl_cache("keyword-distribution", 300, _compute)}
 
 

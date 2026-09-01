@@ -387,7 +387,9 @@ async def backfill_embeddings(
         )
     client = ai_trend_service.clients[provider]
     try:
-        client.embeddings.create(model=bare_model, input=["test"])
+        # 同步阻塞调用必须经 to_thread 下放线程池：embedding 服务超时（如本地 ollama 首次加载）
+        # 时，若直接 await 之外的同步调用，会冻结整个事件循环（见 CODEBUDDY 阻塞 IO 禁令）
+        await asyncio.to_thread(client.embeddings.create, model=bare_model, input=["test"])
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -513,16 +515,22 @@ async def _retrieve_similar_papers(db: AsyncSession, topic: str, k: int = 30):
     if not all_rows:
         return [], "tfidf"
 
-    corpus = [_tokenize(f"{r[2]} {(r[3] or '')[:500]}") for r in all_rows]
-    vectorizer = TfidfVectorizer(tokenizer=lambda x: x.split(), token_pattern=None, max_features=10000)
-    matrix = vectorizer.fit_transform(corpus + [_tokenize(topic)])
-    sims = cosine_similarity(matrix[-1], matrix[:-1]).ravel()
-    order = sims.argsort()[::-1][:k]
+    def _tfidf_topk():
+        # 全库 jieba 分词 + 向量化 + 余弦是纯 CPU 重活，必须下放线程池，
+        # 否则 embedding 不可用期间每次检索都会阻塞整个事件循环数秒
+        corpus = [_tokenize(f"{r[2]} {(r[3] or '')[:500]}") for r in all_rows]
+        vectorizer = TfidfVectorizer(tokenizer=lambda x: x.split(), token_pattern=None, max_features=10000)
+        matrix = vectorizer.fit_transform(corpus + [_tokenize(topic)])
+        sims = cosine_similarity(matrix[-1], matrix[:-1]).ravel()
+        order = sims.argsort()[::-1][:k]
+        return order, sims[order]
+
+    order, top_sims = await asyncio.to_thread(_tfidf_topk)
 
     papers = []
-    for i in order:
+    for i, s in zip(order, top_sims):
         r = all_rows[i]
-        papers.append(_paper_brief(r, float(sims[i])))
+        papers.append(_paper_brief(r, float(s)))
     return papers, "tfidf"
 
 

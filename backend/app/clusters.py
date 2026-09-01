@@ -170,69 +170,76 @@ async def compute_keyword_trends(db, top: int = 12, keywords: list[str] | None =
 
     - yearly: 每个关键词的逐年论文数
     - 动量：近 12 个月 vs 前 12 个月；比值 ≥1.3 新兴、≤0.7 衰退
+    全库扫描较重，300s TTL 缓存（key 含 top 与关键词集合）。
     """
-    from sqlalchemy import select as sa_select
-    from app.models import Paper
-    from datetime import datetime, timedelta, timezone
+    from app.cache_util import ttl_cache
 
-    # published_at 比较基准：与 utcnow 同值的 naive-UTC（无弃用告警的等价写法）
-    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=365)
-    prev_cut = cutoff - timedelta(days=365)
+    async def _compute():
+        from sqlalchemy import select as sa_select
+        from app.models import Paper
+        from datetime import datetime, timedelta, timezone
 
-    result = await db.execute(
-        sa_select(Paper.keywords_cn, Paper.published_at)
-        .where(Paper.keywords_cn.isnot(None))
-    )
-    yearly: dict[str, dict[str, int]] = {}
-    last12: Counter = Counter()
-    prev12: Counter = Counter()
+        # published_at 比较基准：与 utcnow 同值的 naive-UTC（无弃用告警的等价写法）
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=365)
+        prev_cut = cutoff - timedelta(days=365)
 
-    for raw, pub in result.fetchall():
-        if not pub:
-            continue
-        year = str(pub)[:4]
-        dt = pub if isinstance(pub, datetime) else None
-        fresh = dt is not None and dt >= cutoff
-        aging = dt is not None and prev_cut <= dt < cutoff
-        for kw in raw or []:
-            kw = (kw or "").strip()
-            if not kw:
+        result = await db.execute(
+            sa_select(Paper.keywords_cn, Paper.published_at)
+            .where(Paper.keywords_cn.isnot(None))
+        )
+        yearly: dict[str, dict[str, int]] = {}
+        last12: Counter = Counter()
+        prev12: Counter = Counter()
+
+        for raw, pub in result.fetchall():
+            if not pub:
                 continue
-            yearly.setdefault(kw, {})
-            yearly[kw][year] = yearly[kw].get(year, 0) + 1
-            if fresh:
-                last12[kw] += 1
-            elif aging:
-                prev12[kw] += 1
+            year = str(pub)[:4]
+            dt = pub if isinstance(pub, datetime) else None
+            fresh = dt is not None and dt >= cutoff
+            aging = dt is not None and prev_cut <= dt < cutoff
+            for kw in raw or []:
+                kw = (kw or "").strip()
+                if not kw:
+                    continue
+                yearly.setdefault(kw, {})
+                yearly[kw][year] = yearly[kw].get(year, 0) + 1
+                if fresh:
+                    last12[kw] += 1
+                elif aging:
+                    prev12[kw] += 1
 
-    years = sorted({y for d in yearly.values() for y in d})
+        years = sorted({y for d in yearly.values() for y in d})
 
-    def _series(name: str) -> dict:
-        yd = yearly.get(name, {})
-        l12, p12 = last12.get(name, 0), prev12.get(name, 0)
-        return {
-            "name": name,
-            "yearly": [{"year": y, "count": yd.get(y, 0)} for y in years],
-            "total": sum(yd.values()),
-            "last12": l12,
-            "prev12": p12,
-            "trend": _momentum_tag(l12, p12),
-        }
+        def _series(name: str) -> dict:
+            yd = yearly.get(name, {})
+            l12, p12 = last12.get(name, 0), prev12.get(name, 0)
+            return {
+                "name": name,
+                "yearly": [{"year": y, "count": yd.get(y, 0)} for y in years],
+                "total": sum(yd.values()),
+                "last12": l12,
+                "prev12": p12,
+                "trend": _momentum_tag(l12, p12),
+            }
 
-    if keywords:
-        wanted = [k.strip() for k in keywords if k.strip() in yearly]
-        series = [_series(k) for k in wanted]
-    else:
-        # 默认取「近一年最热」的 top 个关键词，图表更有当下意义
-        hottest = [kw for kw, _ in last12.most_common(top)]
-        if len(hottest) < top:
-            extra = sorted(yearly, key=lambda k: sum(yearly[k].values()), reverse=True)
-            for kw in extra:
-                if kw not in hottest:
-                    hottest.append(kw)
-                if len(hottest) >= top:
-                    break
-        series = [_series(k) for k in hottest[:top]]
+        if keywords:
+            wanted = [k.strip() for k in keywords if k.strip() in yearly]
+            series = [_series(k) for k in wanted]
+        else:
+            # 默认取「近一年最热」的 top 个关键词，图表更有当下意义
+            hottest = [kw for kw, _ in last12.most_common(top)]
+            if len(hottest) < top:
+                extra = sorted(yearly, key=lambda k: sum(yearly[k].values()), reverse=True)
+                for kw in extra:
+                    if kw not in hottest:
+                        hottest.append(kw)
+                    if len(hottest) >= top:
+                        break
+            series = [_series(k) for k in hottest[:top]]
 
-    series.sort(key=lambda s: s["last12"], reverse=True)
-    return {"years": years, "series": series}
+        series.sort(key=lambda s: s["last12"], reverse=True)
+        return {"years": years, "series": series}
+
+    kw_key = ",".join(sorted({k.strip() for k in (keywords or [])})) or "top"
+    return await ttl_cache(f"keyword-trends:{top}:{kw_key}", 300, _compute)
